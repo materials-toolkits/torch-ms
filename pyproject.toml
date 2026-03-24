@@ -1,0 +1,9 @@
+[project]
+name = "pycrystalgen"
+version = "0.1.0"
+description = "A Python library for crystal generation"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+
