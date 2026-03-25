@@ -4,11 +4,19 @@ version = "0.1.0"
 description = "A Python library for crystal generation"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "numpy>=2.2.6",
+    "torch>=2.11.0",
+]
 
 [dependency-groups]
 dev = [
+    "black>=26.3.1",
     "pytest>=9.0.2",
 ]
 
+[tool.pytest.ini_options]
+testpaths = [
+    "tests",
+]
 
