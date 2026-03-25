@@ -335,3 +335,206 @@ class TestStructuresEdgeCases:
                 x=torch.empty(0, 3),
                 z=torch.tensor([], dtype=torch.long),
             )
+
+
+@pytest.fixture
+def two_structures():
+    return [
+        Structures(
+            lattice=torch.randn(1, 3, 3),
+            x=torch.randn(2, 3),
+            z=torch.tensor([1, 6]),
+        ),
+        Structures(
+            lattice=torch.randn(1, 3, 3),
+            x=torch.randn(2, 3),
+            z=torch.tensor([8, 1]),
+        ),
+    ]
+
+
+@pytest.fixture
+def two_structures_with_energy():
+    return [
+        Structures(
+            lattice=torch.randn(1, 3, 3),
+            x=torch.randn(2, 3),
+            z=torch.tensor([1, 6]),
+            total_energy=torch.tensor([-5.0]),
+            energy_above_hull=torch.tensor([0.1]),
+            band_gap=torch.tensor([1.5]),
+        ),
+        Structures(
+            lattice=torch.randn(1, 3, 3),
+            x=torch.randn(3, 3),
+            z=torch.tensor([8, 1, 6]),
+            total_energy=torch.tensor([-3.0]),
+            energy_above_hull=torch.tensor([0.2]),
+            band_gap=torch.tensor([2.0]),
+        ),
+    ]
+
+
+class TestStructuresCollate:
+    def test_empty_list_raises(self):
+        with pytest.raises(ValueError, match="cannot be empty"):
+            Structures.collate([])
+
+    def test_single_structure(self):
+        s = Structures(
+            lattice=torch.randn(1, 3, 3),
+            x=torch.randn(2, 3),
+            z=torch.tensor([1, 6]),
+        )
+
+        batched = Structures.collate([s])
+
+        assert batched.lattice.shape == (1, 3, 3)
+        assert batched.x.shape == (2, 3)
+        assert batched.z.shape == (2,)
+        assert batched.num_atoms.shape == (1,)
+        assert batched.batch.shape == (2,)
+        assert torch.equal(batched.batch, torch.tensor([0, 0]))
+
+    def test_two_structures_equal_atoms(self, two_structures):
+        batched = Structures.collate(two_structures)
+
+        assert batched.num_atoms.shape == (2,)
+        assert torch.equal(batched.num_atoms, torch.tensor([2, 2]))
+        assert batched.batch.shape == (4,)
+        assert torch.equal(batched.batch, torch.tensor([0, 0, 1, 1]))
+
+    def test_two_structures_different_atoms(self):
+        structures = [
+            Structures(
+                lattice=torch.randn(1, 3, 3),
+                x=torch.randn(1, 3),
+                z=torch.tensor([1]),
+            ),
+            Structures(
+                lattice=torch.randn(1, 3, 3),
+                x=torch.randn(3, 3),
+                z=torch.tensor([8, 1, 6]),
+            ),
+        ]
+
+        batched = Structures.collate(structures)
+
+        assert torch.equal(batched.num_atoms, torch.tensor([1, 3]))
+        assert torch.equal(batched.batch, torch.tensor([0, 1, 1, 1]))
+
+    def test_ptr_computation(self, two_structures):
+        batched = Structures.collate(two_structures)
+
+        assert batched.ptr.shape == (3,)
+        assert torch.equal(batched.ptr, torch.tensor([0, 2, 4]))
+
+    def test_all_structures_have_optionals(self, two_structures_with_energy):
+        batched = Structures.collate(two_structures_with_energy)
+
+        assert batched.total_energy.shape == (2,)
+        assert torch.equal(batched.total_energy, torch.tensor([-5.0, -3.0]))
+        assert torch.equal(batched.energy_above_hull, torch.tensor([0.1, 0.2]))
+        assert torch.equal(batched.band_gap, torch.tensor([1.5, 2.0]))
+
+    def test_no_structures_have_optionals(self, two_structures):
+        batched = Structures.collate(two_structures)
+
+        assert batched.total_energy.shape == (2,)
+        assert batched.energy_above_hull.shape == (2,)
+        assert batched.band_gap.shape == (2,)
+        assert torch.isnan(batched.total_energy).all()
+        assert torch.isnan(batched.energy_above_hull).all()
+        assert torch.isnan(batched.band_gap).all()
+
+
+class TestStructuresSeparate:
+    def test_single_structure(self):
+        s = Structures(
+            lattice=torch.randn(1, 3, 3),
+            x=torch.randn(2, 3),
+            z=torch.tensor([1, 6]),
+        )
+
+        separated = Structures.separate(s)
+
+        assert len(separated) == 1
+        assert separated[0].lattice.shape == (1, 3, 3)
+        assert separated[0].x.shape == (2, 3)
+        assert separated[0].z.shape == (2,)
+
+    def test_multiple_structures(self, two_structures):
+        batched = Structures.collate(two_structures)
+        separated = Structures.separate(batched)
+
+        assert len(separated) == 2
+        assert separated[0].lattice.shape == (1, 3, 3)
+        assert separated[1].lattice.shape == (1, 3, 3)
+
+    def test_ptr_single_atom(self):
+        s = Structures(
+            lattice=torch.randn(1, 3, 3),
+            x=torch.randn(1, 3),
+            z=torch.tensor([1]),
+        )
+
+        separated = Structures.separate(s)
+
+        assert torch.equal(separated[0].ptr, torch.tensor([0, 1]))
+
+    def test_ptr_multiple_atoms(self):
+        s = Structures(
+            lattice=torch.randn(1, 3, 3),
+            x=torch.randn(3, 3),
+            z=torch.tensor([1, 6, 8]),
+        )
+
+        separated = Structures.separate(s)
+
+        assert torch.equal(separated[0].ptr, torch.tensor([0, 3]))
+
+    def test_preserves_lattice(self, two_structures):
+        batched = Structures.collate(two_structures)
+        separated = Structures.separate(batched)
+
+        assert torch.allclose(two_structures[0].lattice, separated[0].lattice)
+        assert torch.allclose(two_structures[1].lattice, separated[1].lattice)
+
+    def test_preserves_optionals(self, two_structures_with_energy):
+        batched = Structures.collate(two_structures_with_energy)
+        separated = Structures.separate(batched)
+
+        assert torch.equal(separated[0].total_energy, torch.tensor([-5.0]))
+        assert torch.equal(separated[1].total_energy, torch.tensor([-3.0]))
+        assert torch.equal(separated[0].energy_above_hull, torch.tensor([0.1]))
+        assert torch.equal(separated[1].energy_above_hull, torch.tensor([0.2]))
+
+
+class TestStructuresRoundTrip:
+    def test_roundtrip_data_integrity(self, two_structures):
+        batched = Structures.collate(two_structures)
+        separated = Structures.separate(batched)
+
+        for orig, sep in zip(two_structures, separated):
+            assert torch.allclose(orig.lattice, sep.lattice)
+            assert torch.allclose(orig.x, sep.x)
+            assert torch.equal(orig.z, sep.z)
+            assert torch.equal(orig.num_atoms, sep.num_atoms)
+
+    def test_roundtrip_shapes(self, two_structures):
+        batched = Structures.collate(two_structures)
+        separated = Structures.separate(batched)
+
+        for orig, sep in zip(two_structures, separated):
+            assert orig.lattice.shape == sep.lattice.shape
+            assert orig.x.shape == sep.x.shape
+            assert orig.z.shape == sep.z.shape
+
+    def test_roundtrip_optionals_mixed(self, two_structures_with_energy):
+        batched = Structures.collate(two_structures_with_energy)
+        separated = Structures.separate(batched)
+
+        for orig, sep in zip(two_structures_with_energy, separated):
+            assert torch.equal(orig.total_energy, sep.total_energy)
+            assert torch.equal(orig.energy_above_hull, sep.energy_above_hull)
+            assert torch.equal(orig.band_gap, sep.band_gap)

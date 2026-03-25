@@ -167,9 +167,64 @@ class Structures:
         setattr(self, field, tensor)
 
     @classmethod
-    def collate(cls, strctures: list[Structures]) -> Structures:
-        pass
+    def collate(cls, structures: list[Structures]) -> Structures:
+        if len(structures) == 0:
+            raise ValueError("structures list cannot be empty")
+
+        device = structures[0].device()
+
+        lattice = torch.cat([s.lattice for s in structures], dim=0)
+        x = torch.cat([s.x for s in structures], dim=0)
+        z = torch.cat([s.z for s in structures], dim=0)
+        num_atoms = torch.cat([s.num_atoms for s in structures], dim=0)
+
+        batch = torch.arange(
+            len(structures), dtype=torch.int64, device=device
+        ).repeat_interleave(num_atoms)
+
+        ptr = F.pad(torch.cumsum(num_atoms, dim=0), (1, 0), value=0)
+
+        total_energy = torch.cat([s.total_energy for s in structures])
+        energy_above_hull = torch.cat([s.energy_above_hull for s in structures])
+        band_gap = torch.cat([s.band_gap for s in structures])
+
+        return cls(
+            lattice=lattice,
+            x=x,
+            z=z,
+            num_atoms=num_atoms,
+            batch=batch,
+            ptr=ptr,
+            total_energy=total_energy,
+            energy_above_hull=energy_above_hull,
+            band_gap=band_gap,
+            _validate=True,
+        )
 
     @classmethod
-    def separate(cls, strctures: Structures) -> list[Structures]:
-        pass
+    def separate(cls, structures: Structures) -> list[Structures]:
+        n_structs = len(structures.num_atoms)
+        result = []
+
+        for i in range(n_structs):
+            start = structures.ptr[i].item()
+            end = structures.ptr[i + 1].item()
+
+            struct = cls(
+                lattice=structures.lattice[i : i + 1],
+                x=structures.x[start:end],
+                z=structures.z[start:end],
+                num_atoms=structures.num_atoms[i : i + 1],
+                batch=structures.batch[start:end],
+                ptr=torch.tensor(
+                    [0, structures.ptr[i + 1] - structures.ptr[i]],
+                    device=structures.device(),
+                ),
+                total_energy=structures.total_energy[i : i + 1],
+                energy_above_hull=structures.energy_above_hull[i : i + 1],
+                band_gap=structures.band_gap[i : i + 1],
+                _validate=True,
+            )
+            result.append(struct)
+
+        return result
