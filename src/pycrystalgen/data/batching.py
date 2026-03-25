@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 import torch
+import torch.nn.functional as F
 import numpy as np
 import numpy.typing as npt
 
@@ -52,6 +53,9 @@ class Structures:
         n_struct = len(self.lattice)
         n_atoms = len(self.z)
 
+        if n_struct > 1 and not hasattr(self,"num_atoms"):
+            raise InvalidStructure("must specify \"num_atoms\" when multiple structures are given")
+
         self.to_tensor("lattice", torch.float32, (n_struct, 3, 3), device)
         self.to_tensor("x", torch.float32, (n_atoms, 3), device)
         self.to_tensor("z", torch.int64, (n_atoms,), device)
@@ -69,16 +73,16 @@ class Structures:
             torch.int64,
             (n_atoms,),
             device,
-            default=lambda struct: torch.zeros_like(struct.z),
+            default=lambda struct: torch.arange(
+                0, n_struct, dtype=torch.int32, device=device
+            ).repeat_interleave(self.num_atoms, dim=0),
         )
         self.to_tensor(
             "ptr",
             torch.int64,
-            (n_struct+1,),
+            (n_struct + 1,),
             device,
-            default=lambda struct:torch.tensor(
-                [0, n_atoms], dtype=torch.int64, device=device
-            ),
+            default=lambda struct: F.pad(torch.cumsum(struct.num_atoms,dim=0),(1,0),value=0),
         )
         self.to_tensor(
             "total_energy",
@@ -87,7 +91,7 @@ class Structures:
             device,
             default=lambda struct: torch.full_like(
                 struct.num_atoms, fill_value=torch.nan, dtype=torch.float32
-            )
+            ),
         )
         self.to_tensor(
             "energy_above_hull",
@@ -96,7 +100,7 @@ class Structures:
             device,
             default=lambda struct: torch.full_like(
                 struct.num_atoms, fill_value=torch.nan, dtype=torch.float32
-            )
+            ),
         )
         self.to_tensor(
             "band_gap",
@@ -105,7 +109,7 @@ class Structures:
             device,
             default=lambda struct: torch.full_like(
                 struct.num_atoms, fill_value=torch.nan, dtype=torch.float32
-            )
+            ),
         )
 
     def device(self) -> torch.device:
@@ -134,7 +138,7 @@ class Structures:
             tensor = values
 
         if tensor.dtype != dtype:
-            tensor = tensor.type_as(dtype)
+            tensor = tensor.type(dtype)
 
         if tensor.shape != shape:
             raise InvalidStructure(
