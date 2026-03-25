@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
+from typing import Callable
 
 import torch
 import numpy as np
@@ -39,66 +40,113 @@ class Structures:
         if self._validate:
             return
 
-        self.lattice = self.to_tensor(self.lattice, torch.float32)
-        self.x = self.to_tensor(self.x, torch.float32)
-        self.z = self.to_tensor(self.z, torch.int64)
-
-        if self.num_atoms is None:
-            self.num_atoms = torch.tensor(
-                [self.z.shape[0]], dtype=torch.int64, device=self.z.device
-            )
-        else:
-            self.num_atoms = self.to_tensor(self.num_atoms, torch.int64)
-
-        if self.batch is None:
-            self.batch = torch.zeros_like(self.z)
-        else:
-            self.batch = self.to_tensor(self.batch, torch.int64)
-
-        if self.ptr is None:
-            self.ptr = torch.tensor(
-                [0, self.z.shape[0]], dtype=torch.int64, device=self.z.device
-            )
-        else:
-            self.ptr = self.to_tensor(self.ptr, torch.int64)
-
-        if self.total_energy is None:
-            self.total_energy = torch.full_like(
-                self.num_atoms, fill_value=torch.nan, dtype=torch.float32
-            )
-        else:
-            self.total_energy = self.to_tensor(self.total_energy, torch.float32)
-
-        if self.energy_above_hull is None:
-            self.energy_above_hull = torch.full_like(
-                self.total_energy, fill_value=torch.nan
-            )
-        else:
-            self.energy_above_hull = self.to_tensor(
-                self.energy_above_hull, torch.float32
-            )
-
-        if self.band_gap is None:
-            self.band_gap = torch.full_like(self.total_energy, fill_value=torch.nan)
-        else:
-            self.band_gap = self.to_tensor(self.band_gap, torch.float32)
+        self.check_tensors()
 
         self._validate = True
 
-    @classmethod
+    def check_tensors(self):
+        device = torch.device("cpu")
+        if isinstance(self.lattice, torch.Tensor):
+            device = self.lattice.device
+
+        n_struct = len(self.lattice)
+        n_atoms = len(self.z)
+
+        self.to_tensor("lattice", torch.float32, (n_struct, 3, 3), device)
+        self.to_tensor("x", torch.float32, (n_atoms, 3), device)
+        self.to_tensor("z", torch.int64, (n_atoms,), device)
+        self.to_tensor(
+            "num_atoms",
+            torch.int64,
+            (n_struct,),
+            device,
+            default=lambda struct: torch.tensor(
+                [n_atoms], dtype=torch.int64, device=device
+            ),
+        )
+        self.to_tensor(
+            "batch",
+            torch.int64,
+            (n_atoms,),
+            device,
+            default=lambda struct: torch.zeros_like(struct.z),
+        )
+        self.to_tensor(
+            "ptr",
+            torch.int64,
+            (n_struct+1,),
+            device,
+            default=lambda struct:torch.tensor(
+                [0, n_atoms], dtype=torch.int64, device=device
+            ),
+        )
+        self.to_tensor(
+            "total_energy",
+            torch.float32,
+            (n_struct,),
+            device,
+            default=lambda struct: torch.full_like(
+                struct.num_atoms, fill_value=torch.nan, dtype=torch.float32
+            )
+        )
+        self.to_tensor(
+            "energy_above_hull",
+            torch.float32,
+            (n_struct,),
+            device,
+            default=lambda struct: torch.full_like(
+                struct.num_atoms, fill_value=torch.nan, dtype=torch.float32
+            )
+        )
+        self.to_tensor(
+            "band_gap",
+            torch.float32,
+            (n_struct,),
+            device,
+            default=lambda struct: torch.full_like(
+                struct.num_atoms, fill_value=torch.nan, dtype=torch.float32
+            )
+        )
+
+    def device(self) -> torch.device:
+        return self.lattice.device
+
     def to_tensor(
-        cls, values: torch.Tensor | npt.ArrayLike, dtype: torch.Tensor.type
+        self,
+        field: str,
+        dtype: torch.Tensor.type,
+        shape: torch.Size,
+        device: torch.device,
+        default: Callable[[Self], torch.Tensor] = None,
     ) -> torch.Tensor:
-        if not isinstance(values, torch.Tensor):
+        values = getattr(self, field)
+
+        if values is None:
+            if default is None:
+                raise InvalidStructure(f'no default value for "{field}"')
+            tensor = default(self)
+        elif not isinstance(values, torch.Tensor):
             try:
-                return torch.tensor(values, dtype=dtype)
+                tensor = torch.tensor(values, dtype=dtype)
             except TypeError as e:
-                raise InvalidStructure(e)
+                raise InvalidStructure(f"invalid field {field}: {e}")
+        else:
+            tensor = values
 
-        if values.dtype != dtype:
-            return values.type_as(dtype)
+        if tensor.dtype != dtype:
+            tensor = tensor.type_as(dtype)
 
-        return values
+        if tensor.shape != shape:
+            raise InvalidStructure(
+                f'invalid shape {tensor.shape} for field "{field}", must be {shape}'
+            )
+
+        if tensor.device != device:
+            raise InvalidStructure(
+                f'inconsistend device for field "{field}", {device}!={tensor.device}'
+            )
+
+        setattr(self, field, tensor)
 
     @classmethod
     def collate(cls, strctures: list[Structures]) -> Structures:
