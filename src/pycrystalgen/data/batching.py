@@ -53,8 +53,16 @@ class Structures:
         n_struct = len(self.lattice)
         n_atoms = len(self.z)
 
-        if n_struct > 1 and not hasattr(self,"num_atoms"):
-            raise InvalidStructure("must specify \"num_atoms\" when multiple structures are given")
+        if n_struct < 1:
+            raise InvalidStructure("must contain at least one crystal")
+
+        if n_atoms < 1:
+            raise InvalidStructure("must contain at least one atom per crystal")
+
+        if n_struct > 1 and not hasattr(self, "num_atoms"):
+            raise InvalidStructure(
+                'must specify "num_atoms" when multiple structures are given'
+            )
 
         self.to_tensor("lattice", torch.float32, (n_struct, 3, 3), device)
         self.to_tensor("x", torch.float32, (n_atoms, 3), device)
@@ -68,6 +76,10 @@ class Structures:
                 [n_atoms], dtype=torch.int64, device=device
             ),
         )
+
+        if (self.num_atoms <= 0).any():
+            raise InvalidStructure("must contain at least one atom per crystal")
+
         self.to_tensor(
             "batch",
             torch.int64,
@@ -82,7 +94,9 @@ class Structures:
             torch.int64,
             (n_struct + 1,),
             device,
-            default=lambda struct: F.pad(torch.cumsum(struct.num_atoms,dim=0),(1,0),value=0),
+            default=lambda struct: F.pad(
+                torch.cumsum(struct.num_atoms, dim=0), (1, 0), value=0
+            ),
         )
         self.to_tensor(
             "total_energy",

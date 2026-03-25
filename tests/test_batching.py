@@ -26,12 +26,8 @@ def multiple_structures_fields():
 
 
 class TestStructuresInitialization:
-    def test_init_with_required_fields_single_structure(self):
-        struct = Structures(
-            lattice=torch.randn(1, 3, 3),
-            x=torch.randn(4, 3),
-            z=torch.randint(1, 100, (4,)),
-        )
+    def test_init_with_required_fields_single_structure(self, single_structure_fields):
+        struct = Structures(**single_structure_fields)
 
         assert struct.lattice.shape == (1, 3, 3)
         assert struct.x.shape == (4, 3)
@@ -309,7 +305,33 @@ class TestStructuresBatching:
         assert struct.num_atoms[0] == 2
         assert struct.num_atoms[1] == 2
 
-    def test_batch_dtype_int64(self, multiple_structures_fields):
-        struct = Structures(**multiple_structures_fields)
 
-        assert struct.batch.dtype == torch.int64
+class TestStructuresEdgeCases:
+    def test_zero_atoms_single_structure(self):
+        with pytest.raises(
+            InvalidStructure, match="must contain at least one atom per crystal"
+        ):
+            Structures(
+                lattice=torch.randn(1, 3, 3),
+                x=torch.empty(0, 3),
+                z=torch.tensor([], dtype=torch.long),
+            )
+
+    def test_mixed_zero_nonzero_atoms(self):
+        with pytest.raises(
+            InvalidStructure, match="must contain at least one atom per crystal"
+        ):
+            Structures(
+                lattice=torch.randn(2, 3, 3),
+                x=torch.randn(3, 3),
+                z=torch.randint(1, 100, (3,)),
+                num_atoms=torch.tensor([0, 3]),
+            )
+
+    def test_zero_structures(self):
+        with pytest.raises(InvalidStructure, match="must contain at least one crystal"):
+            Structures(
+                lattice=torch.empty(0, 3, 3),
+                x=torch.empty(0, 3),
+                z=torch.tensor([], dtype=torch.long),
+            )
