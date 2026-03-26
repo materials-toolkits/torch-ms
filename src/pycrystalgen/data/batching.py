@@ -136,6 +136,9 @@ class Structures:
                 0, n_struct, dtype=torch.int32, device=device
             ).repeat_interleave(self.num_atoms, dim=0),
         )
+        if (self.batch[:-1]>self.batch[1:]).any():
+            raise InvalidStructure("atoms of a structures mush be continues and index in ascending order in the field \"batch\"")
+
         self.to_tensor(
             "ptr",
             dtype=torch.int64,
@@ -145,6 +148,9 @@ class Structures:
                 torch.cumsum(struct.num_atoms, dim=0), (1, 0), value=0
             ),
         )
+        if (self.ptr[:-1]>self.ptr[1:]).any():
+            raise InvalidStructure("atoms of a structures mush be continues and index in ascending order in the field \"ptr\"")
+
         self.to_tensor(
             "total_energy",
             dtype=torch.float32,

@@ -21,6 +21,7 @@ class HDF5Dataset(Dataset):
         return self.data_file["num_atoms"].shape[0]
 
     def __getitem__(self, idx):
+        # idx should be in acending order
         if isinstance(idx, slice):
             indices = list(range(*idx.indices(len(self))))
         elif isinstance(idx, int):
