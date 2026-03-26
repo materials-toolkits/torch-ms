@@ -5,6 +5,7 @@ description = "A Python library for crystal generation"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "h5py>=3.16.0",
     "numpy>=2.2.6",
     "torch>=2.11.0",
 ]
