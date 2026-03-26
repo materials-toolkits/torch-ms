@@ -1,3 +1,5 @@
+"""HDF5 dataset implementation for loading and saving crystal structures."""
+
 import dataclasses
 import os
 from collections.abc import Iterable
@@ -13,15 +15,21 @@ from .batching import Structures
 
 
 class HDF5Dataset(Dataset):
+    """HDF5 dataset for loading crystal structures from HDF5 files."""
+
     def __init__(self, hdf5_file: str | os.PathLike, transform=None):
         self.data_file = h5py.File(hdf5_file, "r")
         self.transform = transform
 
     def __len__(self) -> int:
-        return self.data_file["num_atoms"].shape[0]
+        """Return the number of structures in the dataset."""
+        return self.data_file["num_atoms"].shape[0]  # pylint: disable=no-member
 
     def __getitem__(self, idx):
-        # idx should be in acending order
+        """Get structures by index.
+
+        Supports int, slice, tensor, or iterable of indices. Should be in ascending order.
+        """
         if isinstance(idx, slice):
             indices = list(range(*idx.indices(len(self))))
         elif isinstance(idx, int):
@@ -74,6 +82,7 @@ class HDF5Dataset(Dataset):
 
     @classmethod
     def get_tensor_type(cls, annotated_type: str) -> Union[torch.dtype, None]:
+        """Get torch dtype from annotated type string."""
         types = {"LongTensor": np.int64, "FloatTensor": np.float32}
 
         for annot, dtype in types.items():
@@ -86,6 +95,7 @@ class HDF5Dataset(Dataset):
     def from_structures(
         cls, hdf5_file: str | os.PathLike, structures: Structures | Iterable[Structures]
     ):
+        """Save structures to HDF5 file."""
         if isinstance(structures, Structures):
             iterator = iter((structures,))
         else:
