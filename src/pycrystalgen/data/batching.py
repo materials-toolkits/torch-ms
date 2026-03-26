@@ -1,41 +1,58 @@
+"""Batching utilities for crystal structures."""
+
 from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Callable
 
 import torch
 import torch.nn.functional as F
-import numpy as np
-import numpy.typing as npt
 
 
 class InvalidStructure(Exception):
-    pass
+    """Exception raised when a structure has invalid data."""
 
 
 @dataclass
 class Structures:
-    lattice: torch.FloatTensor  # lattice shape (shape: n_{struct}x3x3)
-    x: (
-        torch.FloatTensor
-    )  # atomic cooridanate inside ov the lattice, clipped between 0 and 1 (shape: n_{atoms}x3)
-    z: torch.LongTensor  # atomic number (shape: n_{atoms})
-    num_atoms: torch.LongTensor | None = None  # number of atoms (shape: n_{struct})
-    batch: torch.LongTensor | None = None  # batch index of the atoms (shape: n_{atoms})
-    ptr: torch.LongTensor | None = (
-        None  # index of atoms from structue i (shape: n_{struct}+1)
-    )
-    total_energy: torch.FloatTensor | None = (
-        None  # total energy of a structure in eV/atoms (shape: n_{struct})
-    )
-    energy_above_hull: torch.FloatTensor | None = (
-        None  # energy above the hull of a structure in eV/atoms (shape: n_{struct})
-    )
-    band_gap: torch.FloatTensor | None = (
-        None  # band gap of a structure in eV (shape: n_{struct})
-    )
-    _validate: bool = (
-        False  # is data already validate or should we check and fill default value?
-    )
+    """Container for batched crystal structures and their properties.
+
+    Attributes:
+        lattice: Lattice vectors with shape (n_struct, 3, 3).
+        x: Atomic coordinates normalized to [0, 1) with shape (n_atoms, 3).
+        z: Atomic numbers with shape (n_atoms,).
+        num_atoms: Number of atoms per structure with shape (n_struct,).
+        batch: Batch index for each atom with shape (n_atoms,).
+        ptr: Index pointers for each structure with shape (n_struct + 1,).
+        total_energy: Total energy per structure in eV with shape (n_struct,).
+        energy_above_hull: Energy above hull per structure in eV with shape (n_struct,).
+        band_gap: Band gap per structure in eV with shape (n_struct,).
+
+    Example:
+        Creating a Diamond crystal structure (C, a=3.567 A):
+
+        >>> a = 3.567
+        >>> lattice_vecs = [[0, a/2, a/2], [a/2, 0, a/2], [a/2, a/2, 0]]
+        >>> lattice = torch.tensor([lattice_vecs], dtype=torch.float32)
+        >>> positions = [[0, 0, 0], [0.25, 0.25, 0.25]]
+        >>> coords = torch.tensor(positions, dtype=torch.float32) * a
+        >>> z = torch.tensor([6, 6], dtype=torch.int64)  # Carbon
+        >>> energy = torch.tensor([-7.37 * 2], dtype=torch.float32)  # cohesive energy
+        >>> struct = Structures(lattice=lattice, x=coords, z=z, total_energy=energy)
+        >>> struct.num_atoms
+        tensor([2])
+    """
+
+    lattice: torch.FloatTensor
+    x: torch.FloatTensor
+    z: torch.LongTensor
+    num_atoms: torch.LongTensor | None = None
+    batch: torch.LongTensor | None = None
+    ptr: torch.LongTensor | None = None
+    total_energy: torch.FloatTensor | None = None
+    energy_above_hull: torch.FloatTensor | None = None
+    band_gap: torch.FloatTensor | None = None
+    _validate: bool = False
 
     def __post_init__(self):
         if self._validate:
@@ -46,6 +63,11 @@ class Structures:
         self._validate = True
 
     def check_tensors(self):
+        """Validate structure data and convert fields to proper tensors.
+
+        Raises:
+            InvalidStructure: If lattice or atom data is invalid.
+        """
         device = torch.device("cpu")
         if isinstance(self.lattice, torch.Tensor):
             device = self.lattice.device
@@ -64,14 +86,29 @@ class Structures:
                 'must specify "num_atoms" when multiple structures are given'
             )
 
-        self.to_tensor("lattice", torch.float32, (n_struct, 3, 3), device)
-        self.to_tensor("x", torch.float32, (n_atoms, 3), device)
-        self.to_tensor("z", torch.int64, (n_atoms,), device)
+        self.to_tensor(
+            "lattice",
+            dtype=torch.float32,
+            shape=(n_struct, 3, 3),
+            device=device,
+        )
+        self.to_tensor(
+            "x",
+            dtype=torch.float32,
+            shape=(n_atoms, 3),
+            device=device,
+        )
+        self.to_tensor(
+            "z",
+            dtype=torch.int64,
+            shape=(n_atoms,),
+            device=device,
+        )
         self.to_tensor(
             "num_atoms",
-            torch.int64,
-            (n_struct,),
-            device,
+            dtype=torch.int64,
+            shape=(n_struct,),
+            device=device,
             default=lambda struct: torch.tensor(
                 [n_atoms], dtype=torch.int64, device=device
             ),
@@ -82,61 +119,82 @@ class Structures:
 
         self.to_tensor(
             "batch",
-            torch.int64,
-            (n_atoms,),
-            device,
+            dtype=torch.int64,
+            shape=(n_atoms,),
+            device=device,
             default=lambda struct: torch.arange(
                 0, n_struct, dtype=torch.int32, device=device
             ).repeat_interleave(self.num_atoms, dim=0),
         )
         self.to_tensor(
             "ptr",
-            torch.int64,
-            (n_struct + 1,),
-            device,
+            dtype=torch.int64,
+            shape=(n_struct + 1,),
+            device=device,
             default=lambda struct: F.pad(
                 torch.cumsum(struct.num_atoms, dim=0), (1, 0), value=0
             ),
         )
         self.to_tensor(
             "total_energy",
-            torch.float32,
-            (n_struct,),
-            device,
+            dtype=torch.float32,
+            shape=(n_struct,),
+            device=device,
             default=lambda struct: torch.full_like(
                 struct.num_atoms, fill_value=torch.nan, dtype=torch.float32
             ),
         )
         self.to_tensor(
             "energy_above_hull",
-            torch.float32,
-            (n_struct,),
-            device,
+            dtype=torch.float32,
+            shape=(n_struct,),
+            device=device,
             default=lambda struct: torch.full_like(
                 struct.num_atoms, fill_value=torch.nan, dtype=torch.float32
             ),
         )
         self.to_tensor(
             "band_gap",
-            torch.float32,
-            (n_struct,),
-            device,
+            dtype=torch.float32,
+            shape=(n_struct,),
+            device=device,
             default=lambda struct: torch.full_like(
                 struct.num_atoms, fill_value=torch.nan, dtype=torch.float32
             ),
         )
 
     def device(self) -> torch.device:
+        """Get the device of the lattice tensor.
+
+        Returns:
+            torch.device: Device on which the structure tensors are placed.
+        """
         return self.lattice.device
 
     def to_tensor(
         self,
         field: str,
+        *,
         dtype: torch.Tensor.type,
-        shape: torch.Size,
+        shape: tuple[int, ...],
         device: torch.device,
-        default: Callable[[Self], torch.Tensor] = None,
+        default: Callable[["Structures"], torch.Tensor] | None = None,
     ) -> torch.Tensor:
+        """Convert a field to a tensor with specified properties.
+
+        Args:
+            field: Name of the attribute to convert.
+            dtype: Target tensor dtype.
+            shape: Expected tensor shape.
+            device: Target tensor device.
+            default: Optional factory function to create default values.
+
+        Returns:
+            The converted tensor.
+
+        Raises:
+            InvalidStructure: If field value is invalid or incompatible.
+        """
         values = getattr(self, field)
 
         if values is None:
@@ -147,7 +205,7 @@ class Structures:
             try:
                 tensor = torch.tensor(values, dtype=dtype)
             except TypeError as e:
-                raise InvalidStructure(f"invalid field {field}: {e}")
+                raise InvalidStructure(f"invalid field {field}: {e}") from e
         else:
             tensor = values
 
@@ -168,6 +226,34 @@ class Structures:
 
     @classmethod
     def collate(cls, structures: list[Structures]) -> Structures:
+        """Combine multiple structures into a single batched structure.
+
+        Args:
+            structures: List of Structures to batch together.
+
+        Returns:
+            A single Structures object with concatenated tensors.
+
+        Raises:
+            ValueError: If structures list is empty.
+
+        Example:
+            Batching two Diamond structures (cohesive energy = -7.37 eV/atom):
+
+            >>> a = 3.567
+            >>> lattice_vecs = [[0, a/2, a/2], [a/2, 0, a/2], [a/2, a/2, 0]]
+            >>> lattice = torch.tensor([lattice_vecs], dtype=torch.float32)
+            >>> positions = [[0, 0, 0], [0.25, 0.25, 0.25]]
+            >>> coords = torch.tensor(positions, dtype=torch.float32) * a
+            >>> z = torch.tensor([6, 6], dtype=torch.int64)
+            >>> energy = torch.tensor([-7.37 * 2], dtype=torch.float32)
+            >>> struct = Structures(lattice=lattice, x=coords, z=z, total_energy=energy)
+            >>> batched = Structures.collate([struct, struct])
+            >>> batched.lattice.shape
+            torch.Size([2, 3, 3])
+            >>> batched.total_energy
+            tensor([-14.7400, -14.7400])
+        """
         if len(structures) == 0:
             raise ValueError("structures list cannot be empty")
 
@@ -203,6 +289,30 @@ class Structures:
 
     @classmethod
     def separate(cls, structures: Structures) -> list[Structures]:
+        """Split a batched structure into individual structures.
+
+        Args:
+            structures: A batched Structures object.
+
+        Returns:
+            List of individual Structures objects.
+
+        Example:
+            >>> a = 3.567
+            >>> lattice_vecs = [[0, a/2, a/2], [a/2, 0, a/2], [a/2, a/2, 0]]
+            >>> lattice = torch.tensor([lattice_vecs], dtype=torch.float32)
+            >>> positions = [[0, 0, 0], [0.25, 0.25, 0.25]]
+            >>> coords = torch.tensor(positions, dtype=torch.float32) * a
+            >>> z = torch.tensor([6, 6], dtype=torch.int64)
+            >>> energy = torch.tensor([-7.37 * 2], dtype=torch.float32)
+            >>> struct = Structures(lattice=lattice, x=coords, z=z, total_energy=energy)
+            >>> batched = Structures.collate([struct, struct])
+            >>> individual = Structures.separate(batched)
+            >>> len(individual)
+            2
+            >>> individual[0].total_energy
+            tensor([-14.7400])
+        """
         n_structs = len(structures.num_atoms)
         result = []
 

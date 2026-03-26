@@ -33,4 +33,5 @@ max-line-length = 88
 [tool.pylint.design]
 max-args = 10
 max-locals = 20
+max-attributes = 12
 
