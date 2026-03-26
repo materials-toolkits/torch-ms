@@ -263,7 +263,7 @@ class Structures:
             [0.75, 0.25, 0.75],
             [0.25, 0.75, 0.75],
         ]
-        coords = torch.tensor(positions, dtype=torch.float32) * a
+        coords = torch.tensor(positions, dtype=torch.float32)
         z = torch.tensor([element] * 8, dtype=torch.int64)
 
         return cls(
