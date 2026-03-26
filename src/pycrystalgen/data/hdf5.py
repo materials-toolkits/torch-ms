@@ -25,34 +25,49 @@ class HDF5Dataset(Dataset):
             idx = idx.tolist()
 
         if isinstance(idx, slice):
-            indices = np.array(list(range(*idx.indices(len(self)))),dtype=torch.int64)
+            indices = np.array(list(range(*idx.indices(len(self)))), dtype=torch.int64)
         elif isinstance(idx, int):
-            indices = np.array([idx],dtype=np.int64)
+            indices = np.array([idx], dtype=np.int64)
         elif isinstance(idx, torch.Tensor):
             indices = idx.type(torch.int64).flatten().numpy()
         else:
-            indices = np.array(idx,dtype=np.int64)
+            indices = np.array(idx, dtype=np.int64)
 
         # Load structure data from indices
         lattice = torch.from_numpy(self.data_file["lattice"][indices])
         num_atoms = torch.from_numpy(self.data_file["num_atoms"][indices])
         ptr = torch.from_numpy(self.data_file["ptr"][indices])
         total_energy = torch.from_numpy(self.data_file["total_energy"][indices])
-        energy_above_hull = torch.from_numpy(self.data_file["energy_above_hull"][indices])
+        energy_above_hull = torch.from_numpy(
+            self.data_file["energy_above_hull"][indices]
+        )
         band_gap = torch.from_numpy(self.data_file["band_gap"][indices])
 
         # Computing indices of atoms in the dataset
-        batch = torch.arange(num_atoms.shape[0],dtype=torch.int64).repeat_interleave(num_atoms)
-        atoms_idx = torch.arange(batch.shape[0],dtype=torch.int64)
-        atoms_ptr = F.pad(num_atoms.cumsum(0),(1,0),value=0)
-        atoms_idx += ptr[batch]-atoms_ptr[batch]
+        batch = torch.arange(num_atoms.shape[0], dtype=torch.int64).repeat_interleave(
+            num_atoms
+        )
+        atoms_idx = torch.arange(batch.shape[0], dtype=torch.int64)
+        atoms_ptr = F.pad(num_atoms.cumsum(0), (1, 0), value=0)
+        atoms_idx += ptr[batch] - atoms_ptr[batch]
 
         # Load atoms from atom's indices
         x = torch.from_numpy(self.data_file["x"][atoms_idx])
         z = torch.from_numpy(self.data_file["z"][atoms_idx])
-        
+
         # Build validated structures
-        samples = Structures(lattice=lattice,x=x,z=z,num_atoms=num_atoms,batch=batch,ptr=atoms_ptr,total_energy=total_energy,energy_above_hull=energy_above_hull,band_gap=band_gap,_validate=True)
+        samples = Structures(
+            lattice=lattice,
+            x=x,
+            z=z,
+            num_atoms=num_atoms,
+            batch=batch,
+            ptr=atoms_ptr,
+            total_energy=total_energy,
+            energy_above_hull=energy_above_hull,
+            band_gap=band_gap,
+            _validate=True,
+        )
 
         if self.transform is not None:
             samples = self.transform(samples)
