@@ -71,7 +71,7 @@ class TestGetItem:
         HDF5Dataset.from_structures(hdf5_path, [mixed_batch])
         dataset = HDF5Dataset(hdf5_path)
 
-        result = dataset[[1, 0]]
+        result = dataset[[1, 2]]
 
         assert torch.equal(
             result.z,

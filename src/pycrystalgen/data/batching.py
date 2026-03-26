@@ -288,7 +288,7 @@ class Structures:
             (8 atoms per conventional cell: 4 cations + 4 anions).
 
         References:
-            https://lampx.tugraz.at/~hadley/ss1/crystalstructure/structures/zincblende/zincblende.php
+            http://lampz.tugraz.at/~hadley/ss1/crystalstructure/structures/zincblende/zincblende_jsmol.php
         """
         lattice = torch.tensor(
             [[[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]]],

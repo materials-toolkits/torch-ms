@@ -21,13 +21,10 @@ class HDF5Dataset(Dataset):
         return self.data_file["num_atoms"].shape[0]
 
     def __getitem__(self, idx):
-        if torch.is_tensor(idx):
-            idx = idx.tolist()
-
         if isinstance(idx, slice):
-            indices = np.array(list(range(*idx.indices(len(self)))), dtype=torch.int64)
+            indices = list(range(*idx.indices(len(self))))
         elif isinstance(idx, int):
-            indices = np.array([idx], dtype=np.int64)
+            indices = [idx]
         elif isinstance(idx, torch.Tensor):
             indices = idx.type(torch.int64).flatten().numpy()
         else:
