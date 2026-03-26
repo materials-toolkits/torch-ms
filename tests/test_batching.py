@@ -228,7 +228,7 @@ class TestStructuresValidation:
         fields = multiple_structures_fields.copy()
         fields["x"] = torch.randn(4, 3).cuda()
 
-        with pytest.raises(InvalidStructure, match="inconsistend device"):
+        with pytest.raises(InvalidStructure, match="inconsistent device"):
             Structures(**fields)
 
 

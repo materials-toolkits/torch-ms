@@ -13,7 +13,7 @@ Alternative with `pip`:
 pip install uv
 ```
 
-### Add dependancies
+### Add dependencies
 
 ```bash
 uv add 'requests==2.31.0'
@@ -33,7 +33,7 @@ Run testing with `pytest`:
 uv run pytest
 ```
 
-## Formating
+## Formatting
 
 Format all files with `black`:
 ```bash

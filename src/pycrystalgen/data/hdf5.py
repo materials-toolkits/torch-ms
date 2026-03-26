@@ -28,7 +28,8 @@ class HDF5Dataset(Dataset):
     def __getitem__(self, idx):
         """Get structures by index.
 
-        Supports int, slice, tensor, or iterable of indices. Should be in ascending order.
+        Supports int, slice, tensor, or iterable of indices.
+        Should be in ascending order.
         """
         if isinstance(idx, slice):
             indices = list(range(*idx.indices(len(self))))
