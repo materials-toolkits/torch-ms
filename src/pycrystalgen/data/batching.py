@@ -263,8 +263,49 @@ class Structures:
             [0.75, 0.25, 0.75],
             [0.25, 0.75, 0.75],
         ]
-        coords = torch.tensor(positions, dtype=torch.float32)
+        coords = torch.tensor(positions, dtype=torch.float32) * a
         z = torch.tensor([element] * 8, dtype=torch.int64)
+
+        return cls(
+            lattice=lattice,
+            x=coords,
+            z=z,
+        )
+
+    @classmethod
+    def zincblende(
+        cls, a: float = 5.41, cation: int = 30, anion: int = 16
+    ) -> Structures:
+        """Create a zincblende (sphalerite) crystal structure.
+
+        Args:
+            a: Lattice parameter in Angstroms (default: 5.41 Å for ZnS).
+            cation: Atomic number for cation (default: 30 for Zn).
+            anion: Atomic number for anion (default: 16 for S).
+
+        Returns:
+            Structures object with zincblende crystal structure
+            (8 atoms per conventional cell: 4 cations + 4 anions).
+
+        References:
+            https://lampx.tugraz.at/~hadley/ss1/crystalstructure/structures/zincblende/zincblende.php
+        """
+        lattice = torch.tensor(
+            [[[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]]],
+            dtype=torch.float32,
+        )
+        positions = [
+            [0.0, 0.0, 0.0],
+            [0.5, 0.5, 0.0],
+            [0.5, 0.0, 0.5],
+            [0.0, 0.5, 0.5],
+            [0.25, 0.25, 0.25],
+            [0.75, 0.75, 0.25],
+            [0.75, 0.25, 0.75],
+            [0.25, 0.75, 0.75],
+        ]
+        coords = torch.tensor(positions, dtype=torch.float32) * a
+        z = torch.tensor([anion] * 4 + [cation] * 4, dtype=torch.int64)
 
         return cls(
             lattice=lattice,
