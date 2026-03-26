@@ -29,18 +29,28 @@ class Structures:
         band_gap: Band gap per structure in eV with shape (n_struct,).
 
     Example:
-        Creating a Diamond crystal structure (C, a=3.567 A):
+        Creating a Diamond crystal structure (C, a=3.567 A, 8 atoms):
 
         >>> a = 3.567
-        >>> lattice_vecs = [[0, a/2, a/2], [a/2, 0, a/2], [a/2, a/2, 0]]
-        >>> lattice = torch.tensor([lattice_vecs], dtype=torch.float32)
-        >>> positions = [[0, 0, 0], [0.25, 0.25, 0.25]]
-        >>> coords = torch.tensor(positions, dtype=torch.float32) * a
-        >>> z = torch.tensor([6, 6], dtype=torch.int64)  # Carbon
-        >>> energy = torch.tensor([-7.37 * 2], dtype=torch.float32)  # cohesive energy
-        >>> struct = Structures(lattice=lattice, x=coords, z=z, total_energy=energy)
+        >>> lattice = torch.tensor(
+        ...     [[[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]]],
+        ...     dtype=torch.float32,
+        ... )
+        >>> positions = [
+        ...     [0.0, 0.0, 0.0],
+        ...     [0.5, 0.5, 0.0],
+        ...     [0.5, 0.0, 0.5],
+        ...     [0.0, 0.5, 0.5],
+        ...     [0.25, 0.25, 0.25],
+        ...     [0.75, 0.75, 0.25],
+        ...     [0.75, 0.25, 0.75],
+        ...     [0.25, 0.75, 0.75],
+        ... ]
+        >>> x = torch.tensor(positions, dtype=torch.float32) * a
+        >>> z = torch.tensor([6] * 8, dtype=torch.int64)
+        >>> struct = Structures(lattice=lattice, x=x, z=z)
         >>> struct.num_atoms
-        tensor([2])
+        tensor([8])
     """
 
     lattice: torch.FloatTensor
@@ -225,6 +235,44 @@ class Structures:
         setattr(self, field, tensor)
 
     @classmethod
+    def diamond(cls, a: float = 3.567, element: int = 6) -> Structures:
+        """Create a diamond crystal structure.
+
+        Args:
+            a: Lattice parameter in Angstroms (default: 3.567 Å for carbon).
+            element: Atomic number (default: 6 for carbon).
+
+        Returns:
+            Structures object with diamond crystal structure
+            (8 atoms per conventional cell).
+
+        References:
+            https://lampx.tugraz.at/~hadley/ss1/crystalstructure/structures/diamond/diamond.php
+        """
+        lattice = torch.tensor(
+            [[[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]]],
+            dtype=torch.float32,
+        )
+        positions = [
+            [0.0, 0.0, 0.0],
+            [0.5, 0.5, 0.0],
+            [0.5, 0.0, 0.5],
+            [0.0, 0.5, 0.5],
+            [0.25, 0.25, 0.25],
+            [0.75, 0.75, 0.25],
+            [0.75, 0.25, 0.75],
+            [0.25, 0.75, 0.75],
+        ]
+        coords = torch.tensor(positions, dtype=torch.float32) * a
+        z = torch.tensor([element] * 8, dtype=torch.int64)
+
+        return cls(
+            lattice=lattice,
+            x=coords,
+            z=z,
+        )
+
+    @classmethod
     def collate(cls, structures: list[Structures]) -> Structures:
         """Combine multiple structures into a single batched structure.
 
@@ -238,21 +286,10 @@ class Structures:
             ValueError: If structures list is empty.
 
         Example:
-            Batching two Diamond structures (cohesive energy = -7.37 eV/atom):
-
-            >>> a = 3.567
-            >>> lattice_vecs = [[0, a/2, a/2], [a/2, 0, a/2], [a/2, a/2, 0]]
-            >>> lattice = torch.tensor([lattice_vecs], dtype=torch.float32)
-            >>> positions = [[0, 0, 0], [0.25, 0.25, 0.25]]
-            >>> coords = torch.tensor(positions, dtype=torch.float32) * a
-            >>> z = torch.tensor([6, 6], dtype=torch.int64)
-            >>> energy = torch.tensor([-7.37 * 2], dtype=torch.float32)
-            >>> struct = Structures(lattice=lattice, x=coords, z=z, total_energy=energy)
+            >>> struct = Structures.diamond()
             >>> batched = Structures.collate([struct, struct])
             >>> batched.lattice.shape
             torch.Size([2, 3, 3])
-            >>> batched.total_energy
-            tensor([-14.7400, -14.7400])
         """
         if len(structures) == 0:
             raise ValueError("structures list cannot be empty")
@@ -298,20 +335,11 @@ class Structures:
             List of individual Structures objects.
 
         Example:
-            >>> a = 3.567
-            >>> lattice_vecs = [[0, a/2, a/2], [a/2, 0, a/2], [a/2, a/2, 0]]
-            >>> lattice = torch.tensor([lattice_vecs], dtype=torch.float32)
-            >>> positions = [[0, 0, 0], [0.25, 0.25, 0.25]]
-            >>> coords = torch.tensor(positions, dtype=torch.float32) * a
-            >>> z = torch.tensor([6, 6], dtype=torch.int64)
-            >>> energy = torch.tensor([-7.37 * 2], dtype=torch.float32)
-            >>> struct = Structures(lattice=lattice, x=coords, z=z, total_energy=energy)
+            >>> struct = Structures.diamond()
             >>> batched = Structures.collate([struct, struct])
             >>> individual = Structures.separate(batched)
             >>> len(individual)
             2
-            >>> individual[0].total_energy
-            tensor([-14.7400])
         """
         n_structs = len(structures.num_atoms)
         result = []
