@@ -1,6 +1,7 @@
 import pytest
 import torch
 import numpy as np
+from unittest.mock import patch
 
 from pycrystalgen.data import Structures
 from pycrystalgen.data.batching import InvalidStructure
@@ -26,25 +27,32 @@ def multiple_structures_fields():
 
 
 class TestStructuresInitialization:
-    def test_init_with_required_fields_single_structure(self, single_structure_fields):
+    @patch.object(Structures, "check_tensors")
+    def test_init_with_required_fields_single_structure(
+        self, mock_check, single_structure_fields
+    ):
         struct = Structures(**single_structure_fields)
 
+        mock_check.assert_called_once()
         assert struct.lattice.shape == (1, 3, 3)
         assert struct.x.shape == (4, 3)
         assert struct.z.shape == (4,)
         assert struct._validate is True
 
+    @patch.object(Structures, "check_tensors")
     def test_init_with_required_fields_multiple_structures(
-        self, multiple_structures_fields
+        self, mock_check, multiple_structures_fields
     ):
         struct = Structures(**multiple_structures_fields)
 
+        mock_check.assert_called_once()
         assert struct.lattice.shape == (2, 3, 3)
         assert struct.x.shape == (4, 3)
         assert struct.z.shape == (4,)
         assert struct._validate is True
 
-    def test_init_with_all_fields(self, multiple_structures_fields):
+    @patch.object(Structures, "check_tensors")
+    def test_init_with_all_fields(self, mock_check, multiple_structures_fields):
         fields = multiple_structures_fields.copy()
         fields.update(
             {
@@ -56,33 +64,23 @@ class TestStructuresInitialization:
         )
         struct = Structures(**fields)
 
-        assert struct.num_atoms is not None
-        assert struct.batch is not None
-        assert struct.ptr is not None
-        assert struct.total_energy is not None
-        assert struct.energy_above_hull is not None
-        assert struct.band_gap is not None
+        mock_check.assert_called_once()
         assert torch.equal(struct.num_atoms, torch.tensor([2, 2]))
         assert torch.equal(struct.batch, torch.tensor([0, 0, 1, 1]))
-        assert torch.equal(struct.ptr, torch.tensor([0, 2, 4]))
+        assert torch.equal(struct.total_energy, torch.tensor([-5.0, -3.0]))
+        assert torch.equal(struct.energy_above_hull, torch.tensor([0.1, 0.2]))
+        assert torch.equal(struct.band_gap, torch.tensor([1.5, 2.0]))
 
-    def test_init_single_structure(self):
-        struct = Structures(
-            lattice=torch.randn(1, 3, 3),
-            x=torch.randn(3, 3),
-            z=torch.randint(1, 100, (3,)),
-        )
-
-        assert struct.lattice.shape == (1, 3, 3)
-        assert struct.x.shape == (3, 3)
-        assert struct.z.shape == (3,)
-
-    def test_init_validate_flag_skips_validation(self, single_structure_fields):
+    @patch.object(Structures, "check_tensors")
+    def test_init_validate_flag_skips_validation(
+        self, mock_check, single_structure_fields
+    ):
         fields = single_structure_fields.copy()
         fields["_validate"] = True
 
         struct = Structures(**fields)
 
+        mock_check.assert_not_called()
         assert struct._validate is True
 
 
