@@ -26,17 +26,24 @@ Run `python main.py` inside uv's virtual env.
 uv run python main.py
 ```
 
-## Testing
+## Testing
 
-Run testing with `pytest`.
+Run testing with `pytest`:
 ```bash
 uv run pytest
 ```
 
 ## Formating
 
-Format all files with `black`.
+Format all files with `black`:
 ```bash
 uv run black .
+```
+
+## Linter
+
+Check with `pylint`:
+```bash
+uv run pylint .
 ```
 
