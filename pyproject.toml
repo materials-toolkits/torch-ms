@@ -4,6 +4,35 @@ version = "0.1.0"
 description = "A Python library for crystal generation"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "h5py>=3.16.0",
+    "numpy>=2.2.6",
+    "torch>=2.11.0",
+]
 
+[dependency-groups]
+dev = [
+    "black>=26.3.1",
+    "pylint>=4.0.5",
+    "pytest>=9.0.2",
+]
+
+[tool.pytest.ini_options]
+testpaths = [
+    "tests",
+]
+
+[tool.pylint.master]
+source = ["src/pycrystalgen"]
+recursive = true
+ignore = [".venv","tests"]
+
+
+[tool.pylint.format]
+max-line-length = 88
+
+[tool.pylint.design]
+max-args = 10
+max-locals = 20
+max-attributes = 12
 

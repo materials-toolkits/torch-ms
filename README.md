@@ -13,7 +13,7 @@ Alternative with `pip`:
 pip install uv
 ```
 
-### Add dependancies
+### Add dependencies
 
 ```bash
 uv add 'requests==2.31.0'
@@ -24,5 +24,26 @@ uv add 'requests==2.31.0'
 Run `python main.py` inside uv's virtual env.
 ```bash
 uv run python main.py
+```
+
+## Testing
+
+Run testing with `pytest`:
+```bash
+uv run pytest
+```
+
+## Formatting
+
+Format all files with `black`:
+```bash
+uv run black .
+```
+
+## Linter
+
+Check with `pylint`:
+```bash
+uv run pylint .
 ```
 

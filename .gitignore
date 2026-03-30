@@ -4,6 +4,7 @@ __pycache__/
 .vscode/
 *.swp
 *.swo
+*.egg-info
 .cache
 build/
 dist/
