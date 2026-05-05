@@ -15,6 +15,7 @@ dependencies = [
 dev = [
     "ase>=3.28.0",
     "black>=26.3.1",
+    "poethepoet>=0.34.0",
     "pylint>=4.0.5",
     "pymatgen>=2025.10.7",
     "pyright>=1.1.408",
@@ -25,6 +26,13 @@ dev = [
 
 [project.scripts]
 preprocessing = "pycrystalgen.data.preprocessing:main"
+
+[tool.poe.tasks]
+sync.sequence = [
+    {cmd = "uv sync"},
+    {cmd = "uv run pyright --createstub torch"},
+]
+build = "uv build"
 
 [tool.pytest.ini_options]
 testpaths = [
@@ -52,4 +60,5 @@ max-line-length = 88
 max-args = 10
 max-locals = 20
 max-attributes = 12
+
 
