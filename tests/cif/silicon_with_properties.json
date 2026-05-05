@@ -1,0 +1,77 @@
+{
+    "cell_parameters": {
+        "a": 5.43,
+        "b": 5.43,
+        "c": 5.43,
+        "alpha": 90.0,
+        "beta": 90.0,
+        "gamma": 90.0
+    },
+    "num_atoms": 8,
+    "atoms": [
+        {
+            "coords": [
+                0.0,
+                0.0,
+                0.0
+            ],
+            "element": "Si"
+        },
+        {
+            "coords": [
+                0.0,
+                0.5,
+                0.5
+            ],
+            "element": "Si"
+        },
+        {
+            "coords": [
+                0.5,
+                0.5,
+                0.0
+            ],
+            "element": "Si"
+        },
+        {
+            "coords": [
+                0.5,
+                0.0,
+                0.5
+            ],
+            "element": "Si"
+        },
+        {
+            "coords": [
+                0.75,
+                0.25,
+                0.75
+            ],
+            "element": "Si"
+        },
+        {
+            "coords": [
+                0.25,
+                0.25,
+                0.25
+            ],
+            "element": "Si"
+        },
+        {
+            "coords": [
+                0.25,
+                0.75,
+                0.75
+            ],
+            "element": "Si"
+        },
+        {
+            "coords": [
+                0.75,
+                0.75,
+                0.25
+            ],
+            "element": "Si"
+        }
+    ]
+}

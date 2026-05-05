@@ -4,6 +4,7 @@ import dataclasses
 import os
 from collections.abc import Iterable
 from typing import Union
+import logging
 
 import h5py
 import numpy as np
@@ -12,6 +13,8 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset
 
 from .batching import Structures
+
+logger = logging.getLogger(__name__)
 
 
 class HDF5Dataset(Dataset):
@@ -102,7 +105,11 @@ class HDF5Dataset(Dataset):
         else:
             iterator = iter(structures)
 
-        first = next(iterator)
+        try:
+            first = next(iterator)
+        except StopIteration:
+            logger.warning(f'Empty iterator when building "{hdf5_file}"')
+            return
 
         data_file = h5py.File(hdf5_file, "w")
 

@@ -1,0 +1,108 @@
+#------------------------------------------------------------------------------
+#$Date: 2015-01-27 20:58:39 +0100 (Tue 27 de Jan de 2015) $
+#$Revision: 130149 $
+#$URL: svn://www.crystallography.net/cod/cif/1/00/71/1007133.cif $
+#------------------------------------------------------------------------------
+#
+# This file is available in the Crystallography Open Database (COD),
+# http://www.crystallography.net/
+#
+# All data on this site have been placed in the public domain by the
+# contributors.
+#
+data_1007133
+loop_
+_publ_author_name
+'Rzaigui, M'
+'Kbir Ariguib, N'
+'Averbuch-Pouchot, M T'
+'Durif, A'
+_publ_section_title
+;
+Crystal Structure of Triclinic Ce P~5~ O~14~: A New Type of
+Ultraphosphate
+;
+_journal_coden_ASTM              JSSCBI
+_journal_name_full               'Journal of Solid State Chemistry'
+_journal_page_first              61
+_journal_page_last               65
+_journal_paper_doi               10.1016/0022-4596(84)90198-1
+_journal_volume                  52
+_journal_year                    1984
+_chemical_formula_structural     'Ce P5 O14'
+_chemical_formula_sum            'Ce O14 P5'
+_chemical_name_systematic        'Cerium phyllo-14-oxopentaphosphate'
+_space_group_IT_number           1
+_symmetry_cell_setting           triclinic
+_symmetry_equiv_pos_as_xyz       x,y,z
+_symmetry_Int_Tables_number      1
+_symmetry_space_group_name_Hall  'P 1'
+_symmetry_space_group_name_H-M   'P 1'
+_cell_angle_alpha                110.12(5)
+_cell_angle_beta                 102.68(5)
+_cell_angle_gamma                82.13(5)
+_cell_formula_units_Z            2
+_cell_length_a                   9.227(5)
+_cell_length_b                   8.890(5)
+_cell_length_c                   7.219(4)
+_cell_volume                     541.2
+_exptl_crystal_density_meas      3.19
+_refine_ls_R_factor_all          0.029
+_cod_database_code               1007133
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_symmetry_multiplicity
+_atom_site_Wyckoff_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+_atom_site_occupancy
+_atom_site_attached_hydrogens
+_atom_site_calc_flag
+Ce1 Ce3+ 1 a 0. 0. 0. 1. 0 d
+Ce2 Ce3+ 1 a 0.46469(3) 0.50580(4) 0.53310(6) 1. 0 d
+P1 P5+ 1 a 0.1272(2) 0.0521(2) 0.5675(3) 1. 0 d
+P2 P5+ 1 a 0.1553(2) 0.3997(2) 0.7406(3) 1. 0 d
+P3 P5+ 1 a 0.1486(2) 0.6200(2) 0.1518(3) 1. 0 d
+P4 P5+ 1 a 0.8759(2) 0.5883(2) 0.6283(3) 1. 0 d
+P5 P5+ 1 a 0.9082(2) 0.4669(2) 0.2013(3) 1. 0 d
+P6 P5+ 1 a 0.6009(2) 0.6054(2) 0.1177(3) 1. 0 d
+P7 P5+ 1 a 0.6779(2) 0.9402(2) 0.2111(3) 1. 0 d
+P8 P5+ 1 a 0.4024(2) 0.1177(2) 0.1051(3) 1. 0 d
+P9 P5+ 1 a 0.6733(2) 0.1195(2) 0.6374(3) 1. 0 d
+P10 P5+ 1 a 0.4346(2) 0.9568(2) 0.6850(3) 1. 0 d
+O1 O2- 1 a 0.1473(6) 0.2268(5) 0.7409(8) 1. 0 d
+O2 O2- 1 a 0.0848(6) 0.9525(6) 0.6696(8) 1. 0 d
+O3 O2- 1 a 0.0446(6) 0.0703(7) 0.3798(8) 1. 0 d
+O4 O2- 1 a 0.2097(5) 0.4864(7) 0.9679(9) 1. 0 d
+O5 O2- 1 a -0.0117(6) 0.4504(7) 0.6890(9) 1. 0 d
+O6 O2- 1 a 0.2503(6) 0.4162(7) 0.6122(9) 1. 0 d
+O7 O2- 1 a 0.9792(5) 0.5666(6) 0.1091(8) 1. 0 d
+O8 O2- 1 a 0.1369(7) 0.7782(6) 0.1202(11) 1. 0 d
+O9 O2- 1 a 0.2308(6) 0.5920(7) 0.3360(9) 1. 0 d
+O10 O2- 1 a 0.9232(6) 0.5777(6) 0.4234(8) 1. 0 d
+O11 O2- 1 a 0.9117(8) 0.7459(6) 0.7710(9) 1. 0 d
+O12 O2- 1 a 0.7277(5) 0.5302(7) 0.5897(9) 1. 0 d
+O13 O2- 1 a 0.7409(5) 0.4730(6) 0.1053(8) 1. 0 d
+O14 O2- 1 a 0.9720(6) 0.3034(6) 0.1727(9) 1. 0 d
+O15 O2- 1 a 0.6958(6) 0.7651(5) 0.2128(10) 1. 0 d
+O16 O2- 1 a 0.5237(6) 0.5896(6) 0.9132(8) 1. 0 d
+O17 O2- 1 a 0.5215(6) 0.6036(7) 0.2718(9) 1. 0 d
+O18 O2- 1 a 0.7365(5) 0.0445(6) 0.4316(8) 1. 0 d
+O19 O2- 1 a 0.5048(5) 0.9756(6) 0.1699(8) 1. 0 d
+O20 O2- 1 a 0.7567(5) 0.9696(7) 0.0738(8) 1. 0 d
+O21 O2- 1 a 0.4448(5) 0.0954(5) 0.8914(8) 1. 0 d
+O22 O2- 1 a 0.2491(5) 0.0800(7) 0.0811(9) 1. 0 d
+O23 O2- 1 a 0.4564(7) 0.2738(6) 0.2381(9) 1. 0 d
+O24 O2- 1 a 0.5730(5) 0.9725(6) 0.6064(8) 1. 0 d
+O25 O2- 1 a 0.8017(5) 0.1232(6) 0.7991(8) 1. 0 d
+O26 O2- 1 a 0.5736(6) 0.2628(6) 0.6339(9) 1. 0 d
+O27 O2- 1 a 0.3008(5) 0.0081(6) 0.5413(8) 1. 0 d
+O28 O2- 1 a 0.4320(6) 0.7973(6) 0.6974(9) 1. 0 d
+loop_
+_atom_type_symbol
+_atom_type_oxidation_number
+Ce3+ 3.000
+P5+ 5.000
+O2- -2.000
