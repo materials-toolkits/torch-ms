@@ -1,0 +1,53 @@
+{
+    "cell_parameters": {
+        "a": 3.8967,
+        "b": 3.8967,
+        "c": 3.8967,
+        "alpha": 90.0,
+        "beta": 90.0,
+        "gamma": 90.0
+    },
+    "num_atoms": 5,
+    "atoms": [
+        {
+            "coords": [
+                0.0,
+                0.0,
+                0.0
+            ],
+            "element": "Ca"
+        },
+        {
+            "coords": [
+                0.5,
+                0.5,
+                0.5
+            ],
+            "element": "Ti"
+        },
+        {
+            "coords": [
+                0.0,
+                0.5,
+                0.5
+            ],
+            "element": "O"
+        },
+        {
+            "coords": [
+                0.5,
+                0.0,
+                0.5
+            ],
+            "element": "O"
+        },
+        {
+            "coords": [
+                0.5,
+                0.5,
+                0.0
+            ],
+            "element": "O"
+        }
+    ]
+}

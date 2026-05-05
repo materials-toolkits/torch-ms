@@ -1,11 +1,15 @@
 .venv
 .env
 __pycache__/
+.pytest_cache/
+.ruff_cache/
 .vscode/
+AGENTS.md
 *.swp
 *.swo
 *.egg-info
 .cache
+*.egg-info
 build/
 dist/
 

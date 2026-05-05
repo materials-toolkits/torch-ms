@@ -8,19 +8,36 @@ dependencies = [
     "h5py>=3.16.0",
     "numpy>=2.2.6",
     "torch>=2.11.0",
+    "tqdm>=4.67.3",
 ]
 
 [dependency-groups]
 dev = [
+    "ase>=3.28.0",
     "black>=26.3.1",
     "pylint>=4.0.5",
+    "pymatgen>=2025.10.7",
+    "pyright>=1.1.408",
     "pytest>=9.0.2",
+    "pytest-timeout>=2.4.0",
+    "spglib>=2.7.0",
 ]
+
+[project.scripts]
+preprocessing = "pycrystalgen.data.preprocessing:main"
 
 [tool.pytest.ini_options]
 testpaths = [
     "tests",
 ]
+timeout = 3
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+
+[tool.black]
+target-version = ["py310"]
 
 [tool.pylint.master]
 source = ["src/pycrystalgen"]
