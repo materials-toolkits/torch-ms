@@ -127,7 +127,7 @@ class Graph:
         assert self.structures is not None
 
         edges_frac = (
-            self.structures.x[self.edge_index[0]]
+            self.structures.x[self.edge_index[1]]
             + self.edge_shift
             - self.structures.x[self.edge_index[0]]
         )

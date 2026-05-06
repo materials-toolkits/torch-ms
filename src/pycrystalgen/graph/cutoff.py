@@ -33,23 +33,20 @@ def cutoff(structures: Structures, radius: float) -> Graph:
         pair_idx,
     )
 
-    print(pair_idx)
-    global_i = pair_idx[0]
-    global_j = atom_index[pair_idx[1]]
-    print(global_j)
-
-    mask = (global_i != global_j) & (dists <= radius)
-
-    senders = global_i[mask]
-    receivers = global_j[mask]
-    edge_batch = structures.batch[senders]
-    num_edges = torch.bincount(edge_batch, minlength=n_struct)
+    real_target = atom_index[pair_idx[1]]
+    mask = (pair_idx[0] != real_target) & (dists <= radius)
 
     edge_shift = supercell.x[pair_idx[1][mask]].floor().long()
 
+    pair_idx[1] = real_target
+
+    pair_idx = pair_idx[:, mask]
+    edge_batch = structures.batch[pair_idx[0]]
+    num_edges = torch.bincount(edge_batch, minlength=n_struct)
+
     return Graph(
         structures=structures,
-        edge_index=torch.stack([senders, receivers]),
+        edge_index=pair_idx,
         edge_shift=edge_shift,
         num_atoms=structures.num_atoms,
         num_edges=num_edges,
