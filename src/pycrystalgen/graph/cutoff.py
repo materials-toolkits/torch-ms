@@ -5,7 +5,9 @@ from jaxtyping import Float, Int
 from pycrystalgen.data.batching import Structures
 
 
-def lattice_heights(lattice: Float[torch.Tensor, "n 3 3"]) -> Float[torch.Tensor, "n 3"]:
+def lattice_heights(
+    lattice: Float[torch.Tensor, "n 3 3"],
+) -> Float[torch.Tensor, "n 3"]:
     """Compute the perpendicular height of unit cells along each lattice direction.
 
     h_i = |a_i · n̂_i| where n̂_i = normalize(a_j × a_k) is the unit normal to the opposite face.
@@ -17,9 +19,9 @@ def lattice_heights(lattice: Float[torch.Tensor, "n 3 3"]) -> Float[torch.Tensor
         Heights in Ångströms with shape (n, 3).
     """
 
-    normal = torch.cross(lattice[:,[1,0,0]], lattice[:,[2,2,1]],dim=-1)
-    unit = F.normalize(normal,dim=-1)
-    heights = (lattice*unit).sum(-1).abs()
+    normal = torch.cross(lattice[:, [1, 0, 0]], lattice[:, [2, 2, 1]], dim=-1)
+    unit = F.normalize(normal, dim=-1)
+    heights = (lattice * unit).sum(-1).abs()
 
     return heights
 

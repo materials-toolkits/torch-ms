@@ -322,6 +322,7 @@ class TestNonP1Symmetry:
         errors = compare_structures(structures, expected)
         assert not errors, "\n".join(errors)
 
+
 @pytest.mark.skip(reason="Only P1 structures are supported")
 class TestProperties:
     """Tests for energy and band gap parsing in CIF files."""
@@ -542,7 +543,6 @@ class TestPymatgen:
             "V2O3",
         ],
     )
-
     @pytest.mark.skip(reason="Only P1 structures are supported")
     def test_pymatgen_cif(self, cif_name: str):
         """Test parsing of pymatgen CIF files."""

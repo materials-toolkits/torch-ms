@@ -204,7 +204,7 @@ class CifParser:
 
         space_group = int(space_group_match.group(1))
 
-        if space_group!=1:
+        if space_group != 1:
             raise NotImplemented("Spacegroups other that P1 are not supported")
 
         return space_group
