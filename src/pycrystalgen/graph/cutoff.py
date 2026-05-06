@@ -3,6 +3,7 @@ import torch.nn.functional as F
 from jaxtyping import Float, Int
 
 from pycrystalgen.data.batching import Structures
+from pycrystalgen.graph.scatter import batched_cartesian_product_3
 
 
 def lattice_heights(
@@ -29,35 +30,60 @@ def lattice_heights(
 def centered_supercell(
     structures: Structures,
     radius: float,
-) -> tuple[Float[torch.Tensor, "tiles_atoms 3"], Int[torch.Tensor, "tiles_atoms 3"]]:
+) -> tuple[
+    Float[torch.Tensor, "total 3"],
+    Int[torch.Tensor, "total 3"],
+    Int[torch.Tensor, "total"],
+]:
     """Generate a supercell with all borders at distance >= radius from the central cell.
 
     Args:
-        structures: Single-structure Structures object. x must be fractional coordinates.
+        structures: Batched Structures object. x must be fractional coordinates.
         radius: Minimum border distance in Ångströms.
 
     Returns:
-        positions: Cartesian positions of all tiled atoms, shape (n_tiles * n_atoms, 3).
-        offsets: Integer image shifts per atom, shape (n_tiles * n_atoms, 3).
+        positions: Cartesian positions of all tiled atoms, shape (total, 3).
+        offsets: Integer image shifts per atom, shape (total, 3).
+        atom_index: Index into structures.x for each output atom, shape (total,).
     """
-
     device = structures.device()
-    L = structures.lattice[0]           # (3, 3)
-    n_atoms = int(structures.num_atoms[0])
-    cart = structures.x @ L             # (n_atoms, 3) fractional → Cartesian
 
-    n = torch.ceil(radius / lattice_heights(structures.lattice)[0].clamp_min(1e-8)).long()  # (3,)
+    # repetitions per axis per structure: (n_struct, 3)
+    n = torch.ceil(radius / lattice_heights(structures.lattice).clamp_min(1e-8)).long()
 
-    shifts = torch.cartesian_prod(
-        torch.arange(-n[0], n[0] + 1, device=device),
-        torch.arange(-n[1], n[1] + 1, device=device),
-        torch.arange(-n[2], n[2] + 1, device=device),
-    )  # (n_tiles, 3)
+    # all shift combinations, 0-based, then centered
+    sizes = 2 * n + 1                                                    # (n_struct, 3)
+    shift_idx, tile_batch, tile_ptr = batched_cartesian_product_3(
+        sizes[:, 0], sizes[:, 1], sizes[:, 2]
+    )                                                                    # (total_tiles, 3)
+    shifts = shift_idx - n[tile_batch]                                   # (total_tiles, 3)
 
-    positions = (cart[None] + (shifts.float() @ L)[:, None]).reshape(-1, 3)
-    offsets = shifts.repeat_interleave(n_atoms, dim=0)
+    # fractional → Cartesian: (n_atoms, 3)
+    cart = torch.bmm(
+        structures.x.unsqueeze(1),
+        structures.lattice[structures.batch],
+    ).squeeze(1)
 
-    return positions, offsets
+    # Cartesian displacement per tile: (total_tiles, 3)
+    shift_cart = torch.bmm(
+        shifts.float().unsqueeze(1),
+        structures.lattice[tile_batch],
+    ).squeeze(1)
+
+    # expand: tiles (outer) × atoms (inner)
+    total_tiles = int(tile_ptr[-1])
+    num_atoms_per_tile = structures.num_atoms[tile_batch]                # (total_tiles,)
+    output_ptr = F.pad(torch.cumsum(num_atoms_per_tile, dim=0), (1, 0), value=0)
+    total_output = int(output_ptr[-1])
+
+    atom_tile  = torch.arange(total_tiles, device=device).repeat_interleave(num_atoms_per_tile)
+    local_atom = torch.arange(total_output, device=device) - output_ptr[atom_tile]
+    atom_index = local_atom + structures.ptr[tile_batch[atom_tile]]      # global atom index
+
+    positions = cart[atom_index] + shift_cart[atom_tile]
+    offsets   = shifts[atom_tile]
+
+    return positions, offsets, atom_index
 
 
 def cutoff(structures: Structures) -> torch.LongTensor:
