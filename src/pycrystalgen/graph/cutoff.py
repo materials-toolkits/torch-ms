@@ -16,6 +16,18 @@ def cutoff(structures: Structures, radius: float) -> Graph:
 
     Returns:
         Graph with edge_index, edge_shift, and batch bookkeeping tensors.
+
+    Example:
+        Compute nearest-neighbour distances in zincblende ZnS (a = 5.41 Å).
+        The Zn–S bond length is a√3/4 ≈ 2.34 Å; each atom has 4 neighbours.
+
+        >>> from pycrystalgen.data.batching import Structures
+        >>> structure = Structures.zincblende()
+        >>> graph = cutoff(structure, 3.0)
+        >>> graph.edges_distances().unique().round(decimals=2)
+        tensor([2.3400])
+        >>> graph.num_edges
+        tensor([32])
     """
     device = structures.device()
     n_struct = len(structures.num_atoms)
