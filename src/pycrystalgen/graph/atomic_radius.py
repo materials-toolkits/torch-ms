@@ -42,8 +42,8 @@ def _first_shell_mask(
     sort2 = torch.argsort(batch[sort1], stable=True)
     sort_idx = sort1[sort2]
 
-    sb = batch[sort_idx]   # sorted batch indices
-    sd = dists[sort_idx]   # sorted distances
+    sb = batch[sort_idx]  # sorted batch indices
+    sd = dists[sort_idx]  # sorted distances
 
     # Local position of each edge within its structure (0-based).
     struct_counts = torch.bincount(sb, minlength=n_struct)
