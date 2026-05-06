@@ -38,7 +38,9 @@ build = "uv build"
 [tool.pytest.ini_options]
 testpaths = [
     "tests",
+    "src",
 ]
+addopts = "--doctest-modules"
 timeout = 3
 
 [tool.pyright]

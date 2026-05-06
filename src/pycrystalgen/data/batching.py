@@ -36,7 +36,7 @@ class Structures:
         ...     [[[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]]],
         ...     dtype=torch.float32,
         ... )
-        >>> positions = [
+        >>> x = [
         ...     [0.0, 0.0, 0.0],
         ...     [0.5, 0.5, 0.0],
         ...     [0.5, 0.0, 0.5],
@@ -46,7 +46,6 @@ class Structures:
         ...     [0.75, 0.25, 0.75],
         ...     [0.25, 0.75, 0.75],
         ... ]
-        >>> x = torch.tensor(positions, dtype=torch.float32) * a
         >>> z = torch.tensor([6] * 8, dtype=torch.int64)
         >>> struct = Structures(lattice=lattice, x=x, z=z)
         >>> struct.num_atoms
@@ -275,7 +274,7 @@ class Structures:
             [0.75, 0.25, 0.75],
             [0.25, 0.75, 0.75],
         ]
-        coords = torch.tensor(positions, dtype=torch.float32) * a
+        coords = torch.tensor(positions, dtype=torch.float32)
         z = torch.tensor([element] * 8, dtype=torch.int64)
 
         return cls(
@@ -316,7 +315,7 @@ class Structures:
             [0.75, 0.25, 0.75],
             [0.25, 0.75, 0.75],
         ]
-        coords = torch.tensor(positions, dtype=torch.float32) * a
+        coords = torch.tensor(positions, dtype=torch.float32)
         z = torch.tensor([anion] * 4 + [cation] * 4, dtype=torch.int64)
 
         return cls(

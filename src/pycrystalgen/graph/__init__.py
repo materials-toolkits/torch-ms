@@ -1,10 +1,9 @@
 from pycrystalgen.graph.cutoff import centered_supercell, cutoff, lattice_heights
 from pycrystalgen.graph.graph import Graph, InvalidGraph
-from pycrystalgen.graph.scatter import (
+from pycrystalgen.graph.sparse import (
     batched_cartesian_product_2,
     batched_cartesian_product_3,
-    scatter_mean,
-    scatter_sum,
+    scatter,
 )
 
 __all__ = [
@@ -15,6 +14,5 @@ __all__ = [
     "Graph",
     "InvalidGraph",
     "lattice_heights",
-    "scatter_mean",
-    "scatter_sum",
+    "scatter",
 ]
