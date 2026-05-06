@@ -41,14 +41,18 @@ def centered_supercell(
         offsets: Integer image shifts per atom, shape (n_tiles * n_atoms, 3).
     """
 
-    heights = lattice_heights(structures.lattice)
-    n = torch.ceil(radius / heights.clamp_min(0)).long()
+    device = structures.device()
+    L = structures.lattice[0]           # (3, 3)
+    n_atoms = int(structures.num_atoms[0])
+    cart = structures.x @ L             # (n_atoms, 3) fractional → Cartesian
+
+    n = torch.ceil(radius / lattice_heights(structures.lattice)[0].clamp_min(1e-8)).long()  # (3,)
 
     shifts = torch.cartesian_prod(
         torch.arange(-n[0], n[0] + 1, device=device),
         torch.arange(-n[1], n[1] + 1, device=device),
         torch.arange(-n[2], n[2] + 1, device=device),
-    )  # (n_tiles, 3) int64
+    )  # (n_tiles, 3)
 
     positions = (cart[None] + (shifts.float() @ L)[:, None]).reshape(-1, 3)
     offsets = shifts.repeat_interleave(n_atoms, dim=0)

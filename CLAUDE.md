@@ -58,6 +58,28 @@ node_c = local_t % N_t          + offset
 
 Functions that build graph data return tuples, not dataclass instances.
 
+## Batched cartesian product helpers
+
+`batched_cartesian_product_2` and `batched_cartesian_product_3` in
+`src/pycrystalgen/graph/scatter.py` implement the mixed-radix pattern above as reusable
+helpers. Use them instead of re-implementing the pattern inline.
+
+```python
+from pycrystalgen.graph.scatter import batched_cartesian_product_2, batched_cartesian_product_3
+
+# pairs — each structure can have different sizes
+indices, batch, ptr = batched_cartesian_product_2(sizes_a, sizes_b)
+# indices: (total, 2),  indices[:, 0] = first dim,  indices[:, 1] = second dim
+
+# triplets
+indices, batch, ptr = batched_cartesian_product_3(sizes_a, sizes_b, sizes_c)
+# indices: (total, 3)
+```
+
+Indices are 0-based within each structure. To get centered shift vectors (e.g. -n..+n),
+subtract the offset after: `shifts = indices - n[batch]`.
+Device is derived from `sizes_a` internally — no need to pass it explicitly.
+
 ## Scatter aggregation
 
 Use `scatter_sum` and `scatter_mean` from `src/pycrystalgen/graph/scatter.py` to aggregate
