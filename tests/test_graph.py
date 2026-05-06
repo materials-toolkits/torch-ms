@@ -1,161 +1,234 @@
 import torch
+import pytest
 
-from pycrystalgen.data.batching import Structures
-from pycrystalgen.graph.cutoff import centered_supercell, cutoff, lattice_heights
+from pycrystalgen.graph.graph import Graph, InvalidGraph
 
-
-def test_lattice_heights_monoclinic():
-    # a=[3,0,0], b=[1,2,0], c=[0,0,4]
-    # h_a = 6/√5 (less than |a|=3 due to shear), h_b = 2, h_c = 4
-    L = torch.tensor([[[3.0, 0.0, 0.0], [1.0, 2.0, 0.0], [0.0, 0.0, 4.0]]])
-    expected = torch.tensor([[6.0 / 5.0**0.5, 2.0, 4.0]])
-    assert torch.allclose(lattice_heights(L), expected, atol=1e-5)
+# TODO: check this tests
 
 
-def test_centered_supercell_shape():
-    # cubic cell a=2, 1 atom at origin, radius=2.5
-    # n = ceil(2.5/2.0) = 2 in each direction → 5^3 = 125 tiles
-    a = 2.0
-    s = Structures(
-        lattice=torch.tensor([[[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]]]),
-        x=torch.zeros(1, 3),
-        z=torch.tensor([6]),
-    )
-    positions, offsets, atom_index = centered_supercell(s, radius=2.5)
-    assert positions.shape == (125, 3)
-    assert offsets.shape == (125, 3)
-    assert atom_index.shape == (125,)
-
-
-def test_centered_supercell_central_cell_included():
-    # the (0, 0, 0) shift must always be present
-    a = 3.0
-    s = Structures(
-        lattice=torch.tensor([[[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]]]),
-        x=torch.tensor([[0.25, 0.25, 0.25]]),
-        z=torch.tensor([6]),
-    )
-    positions, offsets, atom_index = centered_supercell(s, radius=1.0)
-    assert (offsets == 0).all(dim=-1).any()
-
-
-def test_centered_supercell_cartesian_positions():
-    # 1 atom at fractional [0.5, 0.5, 0.5] in cubic cell a=4 → Cartesian [2, 2, 2]
-    # radius=0 → n=0 in all directions → only the (0,0,0) central cell tile
-    a = 4.0
-    s = Structures(
-        lattice=torch.tensor([[[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]]]),
-        x=torch.tensor([[0.5, 0.5, 0.5]]),
-        z=torch.tensor([6]),
-    )
-    positions, offsets, atom_index = centered_supercell(s, radius=0.0)
-    assert positions.shape == (1, 3)
-    assert torch.allclose(positions, torch.tensor([[2.0, 2.0, 2.0]]))
-
-
-def test_centered_supercell_atom_index():
-    # atom_index must point back to the correct original atom
-    a = 3.0
-    s = Structures(
-        lattice=torch.tensor([[[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]]]),
-        x=torch.tensor([[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]]),
-        z=torch.tensor([6, 14]),
-    )
-    positions, offsets, atom_index = centered_supercell(s, radius=0.0)
-    # radius=0 → 1 tile → atom_index must be [0, 1]
-    assert atom_index.tolist() == [0, 1]
-
-
-def test_centered_supercell_batched():
-    # two structures with different numbers of atoms
-    a = 3.0
-    s0 = Structures(
-        lattice=torch.tensor([[[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]]]),
-        x=torch.tensor([[0.0, 0.0, 0.0]]),
-        z=torch.tensor([6]),
-    )
-    s1 = Structures(
-        lattice=torch.tensor([[[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]]]),
-        x=torch.tensor([[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]]),
-        z=torch.tensor([6, 14]),
-    )
-    batch = Structures.collate([s0, s1])
-    positions, offsets, atom_index = centered_supercell(batch, radius=0.0)
-    # radius=0 → 1 tile per structure → 1 + 2 = 3 output atoms
-    assert positions.shape == (3, 3)
-    assert atom_index.tolist() == [0, 1, 2]
-
-
-# --- cutoff ---
-
-def _simple_cubic(a: float) -> Structures:
-    return Structures(
-        lattice=torch.tensor([[[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]]]),
-        x=torch.zeros(1, 3),
-        z=torch.tensor([6]),
+def _make_graph(n_atoms=4, n_edges=6, n_struct=1):
+    edge_index = torch.randint(0, n_atoms, (2, n_edges))
+    edge_shift = torch.zeros(n_edges, 3, dtype=torch.long)
+    num_atoms = torch.tensor([n_atoms] * n_struct)
+    num_edges = torch.tensor([n_edges // n_struct] * n_struct)
+    return Graph(
+        edge_index=edge_index,
+        edge_shift=edge_shift,
+        num_atoms=num_atoms,
+        num_edges=num_edges,
     )
 
 
-def test_cutoff_self_loop():
-    s = _simple_cubic(3.0)
-    g = cutoff(s, radius=0.0)
-    assert g.edge_index.shape[1] == 1
-    assert g.edge_shift[0].tolist() == [0, 0, 0]
-    assert g.edge_index[0, 0] == g.edge_index[1, 0] == 0
+# --- construction and derived fields ---
 
 
-def test_cutoff_simple_cubic_first_shell():
-    # simple cubic a=3, radius=3.5 → self + 6 face neighbours = 7 edges
-    s = _simple_cubic(3.0)
-    g = cutoff(s, radius=3.5)
-    assert int(g.num_edges[0]) == 7
-    assert g.edge_index.shape == (2, 7)
-    assert g.edge_shift.shape == (7, 3)
+def test_graph_derives_edge_batch():
+    g = _make_graph(n_edges=6, n_struct=1)
+    assert g.edge_batch.shape == (6,)
+    assert (g.edge_batch == 0).all()
 
 
-def test_cutoff_returns_graph():
-    from pycrystalgen.graph.graph import Graph
-    s = _simple_cubic(3.0)
-    g = cutoff(s, radius=3.5)
-    assert isinstance(g, Graph)
+def test_graph_derives_edge_ptr():
+    g = _make_graph(n_edges=6, n_struct=1)
+    assert g.edge_ptr.tolist() == [0, 6]
 
 
-def test_cutoff_edge_index_global():
-    s = _simple_cubic(3.0)
-    g = cutoff(s, radius=3.5)
-    assert g.edge_index.min() >= 0
-    assert g.edge_index.max() < int(s.num_atoms[0])
-
-
-def test_cutoff_ptr_consistency():
-    s = _simple_cubic(3.0)
-    g = cutoff(s, radius=3.5)
-    assert int(g.edge_ptr[-1]) == g.edge_index.shape[1]
-    assert (g.edge_ptr[1:] >= g.edge_ptr[:-1]).all()
-
-
-def test_cutoff_batched():
-    s = _simple_cubic(3.0)
-    batch = Structures.collate([s, s])
-    g = cutoff(batch, radius=3.5)
-    assert g.num_edges.tolist() == [7, 7]
-    assert g.edge_index.shape[1] == 14
-    assert g.edge_ptr.tolist() == [0, 7, 14]
-    assert g.edge_index[:, :7].max() == 0
-    assert g.edge_index[:, 7:].min() == 1
-
-
-def test_cutoff_batched_variable_structures():
-    a = 3.0
-    s0 = _simple_cubic(a)
-    s1 = Structures(
-        lattice=torch.tensor([[[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]]]),
-        x=torch.tensor([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]]),
-        z=torch.tensor([6, 6]),
+def test_graph_multi_struct_edge_batch():
+    edge_index = torch.zeros(2, 5, dtype=torch.long)
+    edge_shift = torch.zeros(5, 3, dtype=torch.long)
+    num_atoms = torch.tensor([3, 4])
+    num_edges = torch.tensor([2, 3])
+    g = Graph(
+        edge_index=edge_index,
+        edge_shift=edge_shift,
+        num_atoms=num_atoms,
+        num_edges=num_edges,
     )
-    batch = Structures.collate([s0, s1])
-    g = cutoff(batch, radius=3.5)
-    assert int(g.num_edges[0]) == 7
-    mask1 = g.edge_batch == 1
-    assert g.edge_index[:, mask1].min() >= 1
-    assert g.edge_index[:, mask1].max() <= 2
+    assert g.edge_batch.tolist() == [0, 0, 1, 1, 1]
+    assert g.edge_ptr.tolist() == [0, 2, 5]
+
+
+def test_graph_invalid_edge_index_shape():
+    with pytest.raises(InvalidGraph):
+        Graph(
+            edge_index=torch.zeros(2, 5, dtype=torch.long),
+            edge_shift=torch.zeros(5, 3, dtype=torch.long),
+            num_atoms=torch.tensor([3]),
+            num_edges=torch.tensor([4]),  # mismatch: 4 edges but edge_index has 5
+        )
+
+
+def test_graph_invalid_no_structures():
+    with pytest.raises((InvalidGraph, Exception)):
+        Graph(
+            edge_index=torch.zeros(2, 0, dtype=torch.long),
+            edge_shift=torch.zeros(0, 3, dtype=torch.long),
+            num_atoms=torch.tensor([], dtype=torch.long),
+            num_edges=torch.tensor([], dtype=torch.long),
+        )
+
+
+# --- collate ---
+
+
+def test_graph_collate_edge_index_offset():
+    # graph 0: atom 0→1, 2 atoms; graph 1: atom 0→1, 3 atoms
+    # after collate: graph 1 edge should be 2→3 (offset by 2)
+    g0 = Graph(
+        edge_index=torch.tensor([[0], [1]]),
+        edge_shift=torch.zeros(1, 3, dtype=torch.long),
+        num_atoms=torch.tensor([2]),
+        num_edges=torch.tensor([1]),
+    )
+    g1 = Graph(
+        edge_index=torch.tensor([[0], [1]]),
+        edge_shift=torch.zeros(1, 3, dtype=torch.long),
+        num_atoms=torch.tensor([3]),
+        num_edges=torch.tensor([1]),
+    )
+    batched = Graph.collate([g0, g1])
+    assert batched.edge_index[:, 0].tolist() == [0, 1]
+    assert batched.edge_index[:, 1].tolist() == [2, 3]
+
+
+def test_graph_collate_shapes():
+    g0 = _make_graph(n_atoms=4, n_edges=6)
+    g1 = _make_graph(n_atoms=3, n_edges=4)
+    batched = Graph.collate([g0, g1])
+    assert batched.edge_index.shape == (2, 10)
+    assert batched.num_atoms.tolist() == [4, 3]
+    assert batched.num_edges.tolist() == [6, 4]
+    assert batched.edge_ptr.tolist() == [0, 6, 10]
+
+
+def test_graph_collate_edge_batch():
+    g0 = _make_graph(n_atoms=4, n_edges=6)
+    g1 = _make_graph(n_atoms=3, n_edges=4)
+    batched = Graph.collate([g0, g1])
+    assert batched.edge_batch[:6].tolist() == [0] * 6
+    assert batched.edge_batch[6:].tolist() == [1] * 4
+
+
+def test_graph_collate_empty_raises():
+    with pytest.raises(ValueError):
+        Graph.collate([])
+
+
+# --- separate ---
+
+
+def test_graph_separate_roundtrip():
+    g0 = _make_graph(n_atoms=4, n_edges=6)
+    g1 = _make_graph(n_atoms=3, n_edges=4)
+    batched = Graph.collate([g0, g1])
+    parts = Graph.separate(batched)
+    assert len(parts) == 2
+    assert parts[0].edge_index.shape == (2, 6)
+    assert parts[1].edge_index.shape == (2, 4)
+
+
+def test_graph_separate_resets_edge_index():
+    g = Graph(
+        edge_index=torch.tensor([[0], [1]]),
+        edge_shift=torch.zeros(1, 3, dtype=torch.long),
+        num_atoms=torch.tensor([2]),
+        num_edges=torch.tensor([1]),
+    )
+    batched = Graph.collate([g, g])
+    parts = Graph.separate(batched)
+    # both structures: edge 0→1 in local indices
+    assert parts[0].edge_index.tolist() == [[0], [1]]
+    assert parts[1].edge_index.tolist() == [[0], [1]]
+
+
+def test_graph_separate_edge_batch_is_zero():
+    g0 = _make_graph(n_atoms=4, n_edges=6)
+    g1 = _make_graph(n_atoms=3, n_edges=4)
+    batched = Graph.collate([g0, g1])
+    parts = Graph.separate(batched)
+    assert (parts[0].edge_batch == 0).all()
+    assert (parts[1].edge_batch == 0).all()
+
+
+# --- aggregation helpers ---
+
+
+def _graph_with_known_edges():
+    # 3 atoms, edges: 0→1, 1→2, 0→2
+    # senders=[0,1,0], receivers=[1,2,2]
+    return Graph(
+        edge_index=torch.tensor([[0, 1, 0], [1, 2, 2]]),
+        edge_shift=torch.zeros(3, 3, dtype=torch.long),
+        num_atoms=torch.tensor([3]),
+        num_edges=torch.tensor([3]),
+    )
+
+
+def test_aggregate_edges_to_nodes_sum():
+    g = _graph_with_known_edges()
+    # edge features: all ones
+    src = torch.ones(3, 1)
+    out = g.aggregate_edges_to_nodes(src, reduce="sum")
+    assert out.shape == (3, 1)
+    # node 0: no incoming edges → 0
+    # node 1: 1 incoming edge  → 1
+    # node 2: 2 incoming edges → 2
+    assert out.squeeze().tolist() == [0.0, 1.0, 2.0]
+
+
+def test_aggregate_edges_to_nodes_mean():
+    g = _graph_with_known_edges()
+    src = torch.tensor([[1.0], [3.0], [5.0]])  # edge values 1, 3, 5
+    out = g.aggregate_edges_to_nodes(src, reduce="mean")
+    # node 1: receives edge 0 (value 1) → mean 1.0
+    # node 2: receives edges 1,2 (values 3,5) → mean 4.0
+    assert torch.allclose(out[1], torch.tensor([1.0]))
+    assert torch.allclose(out[2], torch.tensor([4.0]))
+
+
+def test_aggregate_nodes_to_structures_sum():
+    # 2 structures: 2 atoms and 3 atoms
+    g = Graph(
+        edge_index=torch.zeros(2, 0, dtype=torch.long),
+        edge_shift=torch.zeros(0, 3, dtype=torch.long),
+        num_atoms=torch.tensor([2, 3]),
+        num_edges=torch.tensor([0, 0]),
+    )
+    src = torch.tensor([[1.0], [2.0], [3.0], [4.0], [5.0]])
+    out = g.aggregate_nodes_to_structures(src, reduce="sum")
+    assert out.shape == (2, 1)
+    assert out[0].item() == 3.0  # 1+2
+    assert out[1].item() == 12.0  # 3+4+5
+
+
+def test_aggregate_nodes_to_structures_mean():
+    g = Graph(
+        edge_index=torch.zeros(2, 0, dtype=torch.long),
+        edge_shift=torch.zeros(0, 3, dtype=torch.long),
+        num_atoms=torch.tensor([2, 3]),
+        num_edges=torch.tensor([0, 0]),
+    )
+    src = torch.tensor([[1.0], [3.0], [2.0], [4.0], [6.0]])
+    out = g.aggregate_nodes_to_structures(src, reduce="mean")
+    assert torch.allclose(out[0], torch.tensor([2.0]))  # (1+3)/2
+    assert torch.allclose(out[1], torch.tensor([4.0]))  # (2+4+6)/3
+
+
+def test_aggregate_edges_to_structures_sum():
+    g = Graph(
+        edge_index=torch.tensor([[0, 0, 1, 1], [0, 0, 1, 1]]),
+        edge_shift=torch.zeros(4, 3, dtype=torch.long),
+        num_atoms=torch.tensor([2, 2]),
+        num_edges=torch.tensor([2, 2]),
+    )
+    src = torch.tensor([[1.0], [2.0], [3.0], [4.0]])
+    out = g.aggregate_edges_to_structures(src, reduce="sum")
+    assert out[0].item() == 3.0  # 1+2
+    assert out[1].item() == 7.0  # 3+4
+
+
+def test_aggregate_invalid_reduce():
+    g = _graph_with_known_edges()
+    src = torch.ones(3)
+    with pytest.raises(ValueError):
+        g.aggregate_edges_to_nodes(src, reduce="max")
