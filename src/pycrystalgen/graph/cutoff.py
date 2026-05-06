@@ -3,7 +3,8 @@ import torch.nn.functional as F
 from jaxtyping import Float, Int
 
 from pycrystalgen.data.batching import Structures
-from pycrystalgen.graph.scatter import batched_cartesian_product_3
+from pycrystalgen.graph.graph import Graph
+from pycrystalgen.graph.scatter import batched_cartesian_product_2, batched_cartesian_product_3
 
 
 def lattice_heights(
@@ -86,5 +87,46 @@ def centered_supercell(
     return positions, offsets, atom_index
 
 
-def cutoff(structures: Structures) -> torch.LongTensor:
-    pass
+def cutoff(structures: Structures, radius: float) -> Graph:
+    """Build a radius-cutoff graph for a batch of crystal structures.
+
+    Args:
+        structures: Batched Structures object. x must be fractional coordinates.
+        radius: Cutoff radius in Ångströms.
+
+    Returns:
+        Graph with edge_index, edge_shift, and batch bookkeeping tensors.
+    """
+    device = structures.device()
+    n_struct = len(structures.num_atoms)
+
+    positions, offsets, atom_index = centered_supercell(structures, radius)
+    supercell_batch = structures.batch[atom_index]
+
+    num_supercell = torch.bincount(supercell_batch, minlength=n_struct)
+    supercell_ptr = F.pad(torch.cumsum(num_supercell, dim=0), (1, 0), value=0)
+
+    cart = torch.bmm(
+        structures.x.unsqueeze(1),
+        structures.lattice[structures.batch],
+    ).squeeze(1)
+
+    pair_idx, pair_batch, _ = batched_cartesian_product_2(structures.num_atoms, num_supercell)
+
+    global_i = pair_idx[:, 0] + structures.ptr[pair_batch]
+    global_j = pair_idx[:, 1] + supercell_ptr[pair_batch]
+
+    mask = (positions[global_j] - cart[global_i]).norm(dim=-1) <= radius
+
+    receivers  = global_i[mask]
+    senders    = atom_index[global_j[mask]]
+    edge_batch = structures.batch[receivers]
+    num_edges  = torch.bincount(edge_batch, minlength=n_struct)
+
+    return Graph(
+        edge_index=torch.stack([senders, receivers]),
+        edge_shift=offsets[global_j[mask]],
+        num_atoms=structures.num_atoms,
+        num_edges=num_edges,
+        _validate=False,
+    )
