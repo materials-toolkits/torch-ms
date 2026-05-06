@@ -7,6 +7,7 @@ from typing import Callable
 
 import torch
 import torch.nn.functional as F
+from jaxtyping import Float, Int
 
 
 class InvalidStructure(Exception):
@@ -52,15 +53,15 @@ class Structures:
         tensor([8])
     """
 
-    lattice: torch.FloatTensor
-    x: torch.FloatTensor
-    z: torch.LongTensor
-    num_atoms: torch.LongTensor | None = None
-    batch: torch.LongTensor | None = None
-    ptr: torch.LongTensor | None = None
-    total_energy: torch.FloatTensor | None = None
-    energy_above_hull: torch.FloatTensor | None = None
-    band_gap: torch.FloatTensor | None = None
+    lattice: Float[torch.Tensor, "n_struct 3 3"]
+    x: Float[torch.Tensor, "n_atoms 3"]
+    z: Int[torch.Tensor, "n_atoms"]
+    num_atoms: Int[torch.Tensor, "n_struct"] | None = None
+    batch: Int[torch.Tensor, "n_atoms"] | None = None
+    ptr: Int[torch.Tensor, "n_struct+1"] | None = None
+    total_energy: Float[torch.Tensor, "n_struct"] | None = None
+    energy_above_hull: Float[torch.Tensor, "n_struct"] | None = None
+    band_gap: Float[torch.Tensor, "n_struct"] | None = None
     _validate: bool = False
 
     def __post_init__(self):

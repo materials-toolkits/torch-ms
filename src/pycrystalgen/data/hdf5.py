@@ -87,7 +87,12 @@ class HDF5Dataset(Dataset):
     @classmethod
     def get_tensor_type(cls, annotated_type: str) -> Union[torch.dtype, None]:
         """Get torch dtype from annotated type string."""
-        types = {"LongTensor": np.int64, "FloatTensor": np.float32}
+        types = {
+            "LongTensor": np.int64,
+            "FloatTensor": np.float32,
+            "Int[": np.int64,
+            "Float[": np.float32,
+        }
 
         for annot, dtype in types.items():
             if annot in annotated_type:
