@@ -1,4 +1,5 @@
-from pycrystalgen.graph.cutoff import centered_supercell, cutoff, lattice_heights
+from pycrystalgen.graph.cutoff import cutoff
+from pycrystalgen.graph.geometry import centered_supercell, lattice_heights
 from pycrystalgen.graph.graph import Graph, InvalidGraph
 from pycrystalgen.graph.sparse import (
     batched_cartesian_product_2,

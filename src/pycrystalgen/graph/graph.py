@@ -3,17 +3,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Literal
+from typing import Callable
 
 import torch
+from torch._prims_common import Tensor
 import torch.nn.functional as F
 from jaxtyping import Float, Int
 
-from pycrystalgen.graph.scatter import scatter_mean, scatter_sum
+from pycrystalgen.data.batching import Structures
+from pycrystalgen.graph.geometry import edges_distances
+from pycrystalgen.graph.sparse import scatter
 
 
 class InvalidGraph(Exception):
     """Exception raised when a graph has invalid data."""
+
+
+class InvalidStructures(Exception):
+    """Exception raised when references on structures is not a Structures object"""
 
 
 @dataclass
@@ -34,11 +41,12 @@ class Graph:
 
     edge_index: Int[torch.Tensor, "2 n_edges"]
     edge_shift: Int[torch.Tensor, "n_edges 3"]
-    num_atoms:  Int[torch.Tensor, "n_struct"]
-    num_edges:  Int[torch.Tensor, "n_struct"]
+    num_atoms: Int[torch.Tensor, "n_struct"]
+    num_edges: Int[torch.Tensor, "n_struct"]
     edge_batch: Int[torch.Tensor, "n_edges"] | None = None
-    edge_ptr:   Int[torch.Tensor, "n_struct+1"] | None = None
-    _validate:  bool = False
+    edge_ptr: Int[torch.Tensor, "n_struct+1"] | None = None
+    structures: Structures | None = None
+    _validate: bool = False
 
     def __post_init__(self):
         if self._validate:
@@ -52,6 +60,14 @@ class Graph:
         Raises:
             InvalidGraph: If edge or structure data is invalid.
         """
+
+        if (self.structures is not None) and (
+            not isinstance(self.structures, Structures)
+        ):
+            raise InvalidStructures(
+                "reference to structures must be a Structures object"
+            )
+
         device = torch.device("cpu")
         if isinstance(self.edge_index, torch.Tensor):
             device = self.edge_index.device
@@ -64,14 +80,20 @@ class Graph:
         # convert num_edges early to compute n_edges
         if not isinstance(self.num_edges, torch.Tensor):
             try:
-                self.num_edges = torch.tensor(self.num_edges, dtype=torch.int64, device=device)
+                self.num_edges = torch.tensor(
+                    self.num_edges, dtype=torch.int64, device=device
+                )
             except TypeError as e:
                 raise InvalidGraph(f"invalid field num_edges: {e}") from e
 
         n_edges = int(self.num_edges.sum())
 
-        self.to_tensor("edge_index", dtype=torch.int64, shape=(2, n_edges), device=device)
-        self.to_tensor("edge_shift", dtype=torch.int64, shape=(n_edges, 3), device=device)
+        self.to_tensor(
+            "edge_index", dtype=torch.int64, shape=(2, n_edges), device=device
+        )
+        self.to_tensor(
+            "edge_shift", dtype=torch.int64, shape=(n_edges, 3), device=device
+        )
         self.to_tensor("num_atoms", dtype=torch.int64, shape=(n_struct,), device=device)
         self.to_tensor("num_edges", dtype=torch.int64, shape=(n_struct,), device=device)
 
@@ -83,8 +105,9 @@ class Graph:
             dtype=torch.int64,
             shape=(n_edges,),
             device=device,
-            default=lambda g: torch.arange(n_struct, dtype=torch.int64, device=device)
-            .repeat_interleave(g.num_edges),
+            default=lambda g: torch.arange(
+                n_struct, dtype=torch.int64, device=device
+            ).repeat_interleave(g.num_edges),
         )
         if n_edges > 0 and (self.edge_batch[:-1] > self.edge_batch[1:]).any():
             raise InvalidGraph("edges must be ordered by structure in edge_batch")
@@ -100,37 +123,44 @@ class Graph:
     def device(self) -> torch.device:
         return self.edge_index.device
 
+    def edges_distances(self) -> Float[torch.Tensor, "n_edges"]:
+        assert self.structures is not None
+
+        edges_frac = (
+            self.structures.x[self.edge_index[0]]
+            + self.edge_shift
+            - self.structures.x[self.edge_index[0]]
+        )
+        return torch.bmm(
+            self.structures.lattice[self.edge_batch], edges_frac.unsqueeze(-1)
+        ).norm(dim=(-2, -1))
+
     def aggregate_edges_to_nodes(
         self,
         src: Float[torch.Tensor, "n_edges ..."],
-        reduce: Literal["sum", "mean"] = "sum",
+        reduce: str = "sum",
     ) -> Float[torch.Tensor, "n_atoms ..."]:
         """Aggregate per-edge features to receiver nodes (message passing).
 
         Args:
             src: Per-edge features, shape (n_edges, *).
-            reduce: Aggregation function — 'sum' or 'mean'.
+            reduce: Reduction passed to scatter — 'sum', 'mean', 'amax', etc.
 
         Returns:
             Per-node aggregated features, shape (n_atoms, *).
         """
-        n_atoms = int(self.num_atoms.sum())
-        if reduce == "sum":
-            return scatter_sum(src, self.edge_index[1], n_atoms)
-        if reduce == "mean":
-            return scatter_mean(src, self.edge_index[1], n_atoms)
-        raise ValueError(f"unknown reduce {reduce!r}, expected 'sum' or 'mean'")
+        return scatter(src, self.edge_index[1], int(self.num_atoms.sum()), reduce)
 
     def aggregate_nodes_to_structures(
         self,
         src: Float[torch.Tensor, "n_atoms ..."],
-        reduce: Literal["sum", "mean"] = "sum",
+        reduce: str = "sum",
     ) -> Float[torch.Tensor, "n_struct ..."]:
         """Aggregate per-node features to structures (global pooling).
 
         Args:
             src: Per-node features, shape (n_atoms, *).
-            reduce: Aggregation function — 'sum' or 'mean'.
+            reduce: Reduction passed to scatter — 'sum', 'mean', 'amax', etc.
 
         Returns:
             Per-structure aggregated features, shape (n_struct, *).
@@ -138,33 +168,23 @@ class Graph:
         node_batch = torch.arange(
             len(self.num_atoms), device=self.device()
         ).repeat_interleave(self.num_atoms)
-        n_struct = len(self.num_atoms)
-        if reduce == "sum":
-            return scatter_sum(src, node_batch, n_struct)
-        if reduce == "mean":
-            return scatter_mean(src, node_batch, n_struct)
-        raise ValueError(f"unknown reduce {reduce!r}, expected 'sum' or 'mean'")
+        return scatter(src, node_batch, len(self.num_atoms), reduce)
 
     def aggregate_edges_to_structures(
         self,
         src: Float[torch.Tensor, "n_edges ..."],
-        reduce: Literal["sum", "mean"] = "sum",
+        reduce: str = "sum",
     ) -> Float[torch.Tensor, "n_struct ..."]:
         """Aggregate per-edge features to structures (global pooling).
 
         Args:
             src: Per-edge features, shape (n_edges, *).
-            reduce: Aggregation function — 'sum' or 'mean'.
+            reduce: Reduction passed to scatter — 'sum', 'mean', 'amax', etc.
 
         Returns:
             Per-structure aggregated features, shape (n_struct, *).
         """
-        n_struct = len(self.num_edges)
-        if reduce == "sum":
-            return scatter_sum(src, self.edge_batch, n_struct)
-        if reduce == "mean":
-            return scatter_mean(src, self.edge_batch, n_struct)
-        raise ValueError(f"unknown reduce {reduce!r}, expected 'sum' or 'mean'")
+        return scatter(src, self.edge_batch, len(self.num_edges), reduce)
 
     def to_tensor(
         self,
@@ -228,9 +248,9 @@ class Graph:
             [g.edge_index + off for g, off in zip(graphs, atom_offsets)], dim=1
         )
         edge_shift = torch.cat([g.edge_shift for g in graphs], dim=0)
-        num_atoms  = torch.cat([g.num_atoms for g in graphs], dim=0)
-        num_edges  = torch.cat([g.num_edges for g in graphs], dim=0)
-        edge_ptr   = F.pad(torch.cumsum(num_edges, dim=0), (1, 0), value=0)
+        num_atoms = torch.cat([g.num_atoms for g in graphs], dim=0)
+        num_edges = torch.cat([g.num_edges for g in graphs], dim=0)
+        edge_ptr = F.pad(torch.cumsum(num_edges, dim=0), (1, 0), value=0)
         edge_batch = torch.arange(
             len(num_atoms), device=edge_index.device
         ).repeat_interleave(num_edges)
@@ -264,14 +284,20 @@ class Graph:
             e_end = int(graph.edge_ptr[i + 1])
             n_edges_i = e_end - e_start
 
-            result.append(cls(
-                edge_index=graph.edge_index[:, e_start:e_end] - atom_ptr[i],
-                edge_shift=graph.edge_shift[e_start:e_end],
-                num_atoms=graph.num_atoms[i : i + 1],
-                num_edges=graph.num_edges[i : i + 1],
-                edge_batch=torch.zeros(n_edges_i, dtype=torch.int64, device=graph.device()),
-                edge_ptr=torch.tensor([0, n_edges_i], dtype=torch.int64, device=graph.device()),
-                _validate=True,
-            ))
+            result.append(
+                cls(
+                    edge_index=graph.edge_index[:, e_start:e_end] - atom_ptr[i],
+                    edge_shift=graph.edge_shift[e_start:e_end],
+                    num_atoms=graph.num_atoms[i : i + 1],
+                    num_edges=graph.num_edges[i : i + 1],
+                    edge_batch=torch.zeros(
+                        n_edges_i, dtype=torch.int64, device=graph.device()
+                    ),
+                    edge_ptr=torch.tensor(
+                        [0, n_edges_i], dtype=torch.int64, device=graph.device()
+                    ),
+                    _validate=True,
+                )
+            )
 
         return result

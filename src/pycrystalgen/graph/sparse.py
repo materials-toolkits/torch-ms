@@ -31,6 +31,9 @@ def scatter(
         >>> scatter(src, index, n_out=3, reduce="mean")
         tensor([1.5000, 3.0000, 4.0000])
     """
+    _VALID = {"sum", "mean", "prod", "amax", "amin"}
+    if reduce not in _VALID:
+        raise ValueError(f"unknown reduce {reduce!r}, expected one of {sorted(_VALID)}")
     out = src.new_zeros(n_out, *src.shape[1:])
     idx = index.view(-1, *([1] * (src.dim() - 1))).expand_as(src)
     return out.scatter_reduce_(0, idx, src, reduce=reduce, include_self=False)
@@ -93,7 +96,7 @@ def batched_cartesian_product_2(
     local = torch.arange(total, device=device) - ptr[batch]
 
     idx_a = local // sizes_b[batch] + ptr_a[batch]
-    idx_b = local %  sizes_b[batch] + ptr_b[batch]
+    idx_b = local % sizes_b[batch] + ptr_b[batch]
 
     return torch.stack([idx_a, idx_b], dim=-1), batch, ptr
 
@@ -175,7 +178,7 @@ def batched_cartesian_product_3(
     Sc = sizes_c[batch]
 
     idx_a = local // (Sb * Sc) + ptr_a[batch]
-    idx_b = (local // Sc) % Sb  + ptr_b[batch]
-    idx_c = local %  Sc         + ptr_c[batch]
+    idx_b = (local // Sc) % Sb + ptr_b[batch]
+    idx_c = local % Sc + ptr_c[batch]
 
     return torch.stack([idx_a, idx_b, idx_c], dim=-1), batch, ptr
