@@ -2,7 +2,7 @@ from typing import Literal
 
 import torch
 import torch.nn.functional as F
-from jaxtyping import Float, Int, UInt32, Num
+from jaxtyping import Bool, Float, Int, UInt32, Num
 
 
 def mix32(x: UInt32[torch.Tensor, "..."]) -> UInt32[torch.Tensor, "..."]:
@@ -221,3 +221,41 @@ def batched_cartesian_product_3(
     idx_c = local % Sc + ptr_c[batch]
 
     return torch.stack([idx_a, idx_b, idx_c], dim=-1), batch, ptr
+
+
+def equivalent_partition(
+    a: Int[torch.Tensor, "n_nodes"],
+    b: Int[torch.Tensor, "n_nodes"],
+    batch: Int[torch.Tensor, "n_nodes"],
+) -> Bool[torch.Tensor, "n_graphs"]:
+    """Check whether a and b define the same partition of nodes in each graph.
+
+    Two partitions are equivalent when the mapping from a-classes to b-classes
+    is a bijection within each graph: every a-class maps to exactly one b-class
+    and vice versa.
+
+    Args:
+        a: Partition labels under scheme A, shape (n_nodes,).
+        b: Partition labels under scheme B, shape (n_nodes,).
+        batch: Graph index per node, shape (n_nodes,).
+
+    Returns:
+        Boolean tensor of shape (n_graphs,), True where the partitions are equivalent.
+
+    Example:
+        >>> a = torch.tensor([0, 0, 1, 0, 0, 1])
+        >>> b = torch.tensor([5, 5, 9, 5, 9, 9])
+        >>> batch = torch.tensor([0, 0, 0, 1, 1, 1])
+        >>> equivalent_partition(a, b, batch)
+        tensor([ True, False])
+    """
+    partition_map = torch.unique(torch.stack([a, b, batch]), dim=1)
+
+    sources_a = torch.unique(partition_map[[0, 2]], dim=1)
+    sources_b = torch.unique(partition_map[[1, 2]], dim=1)
+
+    count_a = torch.bincount(sources_a[1])
+    count_b = torch.bincount(sources_b[1])
+    count_pairs = torch.bincount(partition_map[2])
+
+    return (count_a == count_b) & (count_a == count_pairs)

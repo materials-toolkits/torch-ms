@@ -3,7 +3,7 @@ import torch
 
 from pycrystalgen.data.batching import Structures
 from pycrystalgen.graph.atomic_radius import atomic_radius
-from pycrystalgen.graph.sparse import scatter
+from pycrystalgen.graph.sparse import scatter, equivalent_partition
 
 
 def mix(x):
@@ -99,3 +99,30 @@ def test_scatter_hash():
     assert original_hash[0] == hash_single(x0)
     assert original_hash[1] == hash_single(x1)
     assert original_hash[2] == hash_single(x2)
+
+
+def test_equivalent_partition_true():
+    # a and b define the same grouping: {0,1} and {2} in graph 0
+    a = torch.tensor([0, 0, 1])
+    b = torch.tensor([7, 7, 3])
+    batch = torch.zeros(3, dtype=torch.long)
+    result = equivalent_partition(a, b, batch)
+    assert result.tolist() == [True]
+
+
+def test_equivalent_partition_false_same_counts():
+    # a-class 0 maps to b-classes {0,1} — not a bijection, but count_a == count_b
+    a = torch.tensor([0, 0, 1])
+    b = torch.tensor([0, 1, 1])
+    batch = torch.zeros(3, dtype=torch.long)
+    result = equivalent_partition(a, b, batch)
+    assert result.tolist() == [False]
+
+
+def test_equivalent_partition_batched():
+    # graph 0: equivalent, graph 1: not equivalent
+    a = torch.tensor([0, 0, 1,  0, 0, 1])
+    b = torch.tensor([5, 5, 9,  5, 9, 9])
+    batch = torch.tensor([0, 0, 0, 1, 1, 1])
+    result = equivalent_partition(a, b, batch)
+    assert result.tolist() == [True, False]
