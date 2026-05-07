@@ -1,7 +1,9 @@
+from math import e
 from pycrystalgen.graph.atomic_radius import atomic_radius
 from pycrystalgen.graph.cutoff import cutoff
 from pycrystalgen.graph.geometry import centered_supercell, lattice_heights
 from pycrystalgen.graph.graph import Graph, InvalidGraph
+from pycrystalgen.graph.coloring import color_refinement
 from pycrystalgen.graph.sparse import (
     batched_cartesian_product_2,
     batched_cartesian_product_3,
@@ -18,4 +20,4 @@ __all__ = [
     "InvalidGraph",
     "lattice_heights",
     "scatter",
-]
+    ]

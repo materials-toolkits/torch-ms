@@ -51,20 +51,66 @@ def initial_coloring(
 
     return mix32(((pz + pd) & 0xFFFFFFFF).to(torch.uint32))
 
-def color_refinement(structures:Structures, graph: Graph) -> UInt32[torch.Tensor, "n_structures 4"]:
-    colors = initial_coloring(structures, graph)
-    mask = torch.ones_like(structures.num_atoms,dtype=torch.bool)
 
-    next_color = None
+def _xor4(c: torch.Tensor) -> torch.Tensor:
+    c = c.to(torch.int64)
+    return c[:, 0] ^ c[:, 1] ^ c[:, 2] ^ c[:, 3]
+
+
+def color_refinement(
+    structures: Structures,
+    graph: Graph,
+) -> UInt32[torch.Tensor, "n_structures 4"]:
+    """Run Weisfeiler-Lehman color refinement and return a per-structure hash.
+
+    Iteratively replaces each node's color with a hash of its neighbors' colors,
+    restricted to structures whose partition is still changing. Stops when no
+    structure's partition changes.
+
+    Args:
+        structures: Batched Structures, used for atomic numbers and batch indices.
+        graph: Graph built from structures.
+
+    Returns:
+        128-bit hash per structure, shape (n_structures, 4), dtype uint32.
+
+    Example:
+        >>> from pycrystalgen.data.batching import Structures
+        >>> from pycrystalgen.graph.atomic_radius import atomic_radius
+        >>> structures = Structures.zincblende()
+        >>> graph = atomic_radius(structures)
+        >>> h = color_refinement(structures, graph)
+        >>> h.shape
+        torch.Size([1, 4])
+    """
+    colors = initial_coloring(structures, graph)
+    mask = torch.ones_like(structures.num_atoms, dtype=torch.bool)
+
     while True:
-        mask_edge = mask[graph.edge_batch[graph.edge_index[0]]]
+        mask_edge = mask[graph.edge_batch]
         mask_nodes = mask[structures.batch]
 
-        next_color = colors.clone()
-        next_color = scatter(colors[graph.edge_index[1,mask]], graph.edge_index[0,mask],colors.shape[0],reduce="hash")
+        next_color = scatter(
+            colors[graph.edge_index[1, mask_edge]],
+            graph.edge_index[0, mask_edge],
+            colors.shape[0],
+            reduce="hash",
+        ).to(torch.uint32)
+        next_color = torch.where(
+            mask_nodes.unsqueeze(-1),
+            next_color.to(torch.int64),
+            colors.to(torch.int64),
+        ).to(torch.uint32)
 
-        if equivalent_partition(colors, next_color,structures.batch).all():
+        equivalent = equivalent_partition(_xor4(colors), _xor4(next_color), structures.batch)
+        
+        print(equivalent)
+
+        if equivalent.all():
             break
 
-    return scatter(colors,structures.batch,structures.num_atoms.shape[0],reduce="hash")
+        colors = next_color
+        mask = ~equivalent
+
+    return scatter(colors, structures.batch, structures.num_atoms.shape[0], reduce="hash")
 
