@@ -1,0 +1,70 @@
+import torch
+from jaxtyping import UInt32
+
+from pycrystalgen.data.batching import Structures
+from pycrystalgen.graph.graph import Graph
+from pycrystalgen.graph.sparse import equivalent_partition, mix32, scatter
+
+
+def initial_coloring(
+    structures: Structures,
+    graph: Graph,
+) -> UInt32[torch.Tensor, "n_atoms 4"]:
+    """Assign a 128-bit hash color to each atom based on atomic number and degree.
+
+    Treats {z, degree} as an unordered 2-element set and hashes it into four
+    independent uint32 values: mix32 each element, sum [mix^1, mix^2, mix^3, mix^4]
+    across the set (power-sum construction, inspired by scatter hash), then
+    mix32 each component.
+
+    Two atoms with the same atomic number and degree receive the same color.
+    Collisions between distinct (z, degree) pairs are possible but negligible.
+
+    Args:
+        structures: Batched Structures containing atomic numbers z, shape (n_atoms,).
+        graph: Graph built from structures; must cover all atoms.
+
+    Returns:
+        Hash color per atom, shape (n_atoms, 4), dtype uint32.
+
+    Example:
+        >>> from pycrystalgen.data.batching import Structures
+        >>> from pycrystalgen.graph.atomic_radius import atomic_radius
+        >>> structures = Structures.zincblende()
+        >>> graph = atomic_radius(structures, scaling=1.1)
+        >>> colors = initial_coloring(structures, graph)
+        >>> colors.shape
+        torch.Size([8, 4])
+        >>> colors.unique(dim=0).shape[0]  # Zn and S both have degree 4 → 2 colors
+        2
+    """
+    n_atoms = int(structures.num_atoms.sum())
+    device = structures.device()
+
+    degree = torch.bincount(graph.edge_index[1], minlength=n_atoms)
+
+    mz = mix32(structures.z.to(torch.uint32)).to(torch.int64)
+    md = mix32(degree.to(torch.uint32)).to(torch.int64)
+
+    pz = torch.cumprod(mz.unsqueeze(-1).expand(-1, 4), dim=-1) & 0xFFFFFFFF
+    pd = torch.cumprod(md.unsqueeze(-1).expand(-1, 4), dim=-1) & 0xFFFFFFFF
+
+    return mix32(((pz + pd) & 0xFFFFFFFF).to(torch.uint32))
+
+def color_refinement(structures:Structures, graph: Graph) -> UInt32[torch.Tensor, "n_structures 4"]:
+    colors = initial_coloring(structures, graph)
+    mask = torch.ones_like(structures.num_atoms,dtype=torch.bool)
+
+    next_color = None
+    while True:
+        mask_edge = mask[graph.edge_batch[graph.edge_index[0]]]
+        mask_nodes = mask[structures.batch]
+
+        next_color = colors.clone()
+        next_color = scatter(colors[graph.edge_index[1,mask]], graph.edge_index[0,mask],colors.shape[0],reduce="hash")
+
+        if equivalent_partition(colors, next_color,structures.batch).all():
+            break
+
+    return scatter(colors,structures.batch,structures.num_atoms.shape[0],reduce="hash")
+

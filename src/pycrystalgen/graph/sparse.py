@@ -28,7 +28,6 @@ def scatter(
     index: Int[torch.Tensor, "n"],
     n_out: int,
     reduce: Literal["sum", "mean", "prod", "amax", "amin", "hash"] = "sum",
-    expand_hash: int = 1,
 ) -> Float[torch.Tensor, "n_out ..."]:
     """Aggregate src values into n_out slots according to index.
 
@@ -36,8 +35,9 @@ def scatter(
         src: Source tensor of shape (N, *).
         index: Slot index for each row, shape (N,).
         n_out: Number of output slots.
-        reduce: Reduction — any value accepted by scatter_reduce_:
-            "sum", "mean", "prod", "amax", "amin".
+        reduce: Reduction to apply. "sum", "mean", "prod", "amax", "amin" are
+            forwarded to scatter_reduce_. "hash" computes a permutation-invariant
+            hash of the contributing elements via power sums of mix32 values.
 
     Returns:
         Tensor of shape (n_out, *). Empty slots are zero.
@@ -56,21 +56,14 @@ def scatter(
 
     if reduce == "hash":
         mix = mix32(src)
-        if expand_hash == 1:
-            h1 = mix.to(torch.int64)
-            h2 = (h1 * h1) & 0xFFFFFFFF
-            h3 = (h2 * h1) & 0xFFFFFFFF
-            h = (
-                scatter(torch.stack([h1, h2, h3], dim=-1), index, n_out, reduce="sum")
-                & 0xFFFFFFFF
-            )
-            h = h[..., 0] ^ h[..., 1] ^ h[..., 2]
-        else:
-            h = (
-                torch.cumprod(mix.unsqueeze(-1).expand(*mix.shape, expand_hash), dim=-1)
-                & 0xFFFFFFFF
-            )
-            h = scatter(h, index, n_out, reduce="sum") & 0xFFFFFFFF
+        h1 = mix.to(torch.int64)
+        h2 = (h1 * h1) & 0xFFFFFFFF
+        h3 = (h2 * h1) & 0xFFFFFFFF
+        h = (
+            scatter(torch.stack([h1, h2, h3], dim=-1), index, n_out, reduce="sum")
+            & 0xFFFFFFFF
+        )
+        h = h[..., 0] ^ h[..., 1] ^ h[..., 2]
         return mix32(h)
 
     out = src.new_zeros(n_out, *src.shape[1:])
