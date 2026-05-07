@@ -91,7 +91,8 @@ def atomic_radius(
             are dropped. Set to 0 to disable. Default: 0.5.
 
     Returns:
-        Graph with edge_index, edge_shift, and batch bookkeeping tensors.
+        Undirected Graph: for every edge (i, j, s) the reverse (j, i, -s) is
+        also present, giving a symmetric sparse matrix.
 
     Example:
         Nearest-neighbour graph for zincblende ZnS with scaling=1.1.
@@ -152,6 +153,17 @@ def atomic_radius(
         pair_idx = pair_idx[:, gap_mask]
         edge_shift = edge_shift[gap_mask]
         edge_batch = edge_batch[gap_mask]
+
+    # Keep only bidirectional edges so the sparse matrix is symmetric.
+    # An edge (i, j, s) is kept iff (j, i, -s) also exists in the edge list.
+    n_edges = pair_idx.shape[1]
+    fwd = torch.cat([pair_idx.t(), edge_shift], dim=1)
+    rev = torch.cat([pair_idx[[1, 0]].t(), -edge_shift], dim=1)
+    _, uid = torch.unique(torch.cat([fwd, rev], dim=0), dim=0, return_inverse=True)
+    bidi_mask = torch.isin(uid[:n_edges], uid[n_edges:])
+    pair_idx = pair_idx[:, bidi_mask]
+    edge_shift = edge_shift[bidi_mask]
+    edge_batch = edge_batch[bidi_mask]
 
     num_edges = torch.bincount(edge_batch, minlength=n_struct)
 

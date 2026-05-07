@@ -16,9 +16,9 @@ def mix32(x: UInt32[torch.Tensor, "..."]) -> UInt32[torch.Tensor, "..."]:
     """
     x = x.to(torch.int64).clone()
     x ^= x >> 16
-    x = (x*0x85ebca6b)&0xffffffff
+    x = (x * 0x85EBCA6B) & 0xFFFFFFFF
     x ^= x >> 13
-    x = (x*0xc2b2ae35)&0xffffffff
+    x = (x * 0xC2B2AE35) & 0xFFFFFFFF
     x ^= x >> 16
     return x.to(torch.uint32)
 
@@ -28,7 +28,7 @@ def scatter(
     index: Int[torch.Tensor, "n"],
     n_out: int,
     reduce: Literal["sum", "mean", "prod", "amax", "amin", "hash"] = "sum",
-    expand_hash:int=1
+    expand_hash: int = 1,
 ) -> Float[torch.Tensor, "n_out ..."]:
     """Aggregate src values into n_out slots according to index.
 
@@ -54,17 +54,23 @@ def scatter(
     if reduce not in _VALID:
         raise ValueError(f"unknown reduce {reduce!r}, expected one of {sorted(_VALID)}")
 
-    if reduce=="hash":
+    if reduce == "hash":
         mix = mix32(src)
-        if expand_hash==1:
+        if expand_hash == 1:
             h1 = mix.to(torch.int64)
-            h2 = (h1*h1)&0xffffffff
-            h3 = (h2*h1)&0xffffffff
-            h = scatter(torch.stack([h1, h2, h3],dim=-1), index, n_out, reduce="sum")&0xffffffff
-            h = h[...,0]^h[...,1]^h[...,2]
+            h2 = (h1 * h1) & 0xFFFFFFFF
+            h3 = (h2 * h1) & 0xFFFFFFFF
+            h = (
+                scatter(torch.stack([h1, h2, h3], dim=-1), index, n_out, reduce="sum")
+                & 0xFFFFFFFF
+            )
+            h = h[..., 0] ^ h[..., 1] ^ h[..., 2]
         else:
-            h = torch.cumprod(mix.unsqueeze(-1).expand(*mix.shape,expand_hash),dim=-1)&0xffffffff
-            h = scatter(h, index, n_out, reduce="sum")&0xffffffff
+            h = (
+                torch.cumprod(mix.unsqueeze(-1).expand(*mix.shape, expand_hash), dim=-1)
+                & 0xFFFFFFFF
+            )
+            h = scatter(h, index, n_out, reduce="sum") & 0xFFFFFFFF
         return mix32(h)
 
     out = src.new_zeros(n_out, *src.shape[1:])
