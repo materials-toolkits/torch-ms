@@ -10,9 +10,10 @@ import torch
 
 from pycrystalgen.data import HDF5Dataset, Structures
 from pycrystalgen.estimator import EnergyEstimator, OrbEnergyModel
-from pycrystalgen.estimator import calibration, weights
+from pycrystalgen.estimator import calibration
+from pycrystalgen.estimator.orb import weights
 from pycrystalgen.estimator.energy import atom_batches, to_device
-from pycrystalgen.estimator.orb import (
+from pycrystalgen.estimator.orb.model import (
     COVALENT_RADII,
     MAX_NEIGHBORS,
     RADIUS,
@@ -697,3 +698,195 @@ def test_fit_absolute_loss_ignores_outliers():
         calibration.fit_element_correction(
             z, num_atoms, predicted, target, loss="huber"
         )
+
+
+# energy above the hull
+
+
+def hull_file(tmp_path, model: OrbEnergyModel, shift: float = 0.0):
+    """Hull of zincblende ZnS, of its elements and of sodium, from the model."""
+    from pycrystalgen.data.hull import save_hull
+
+    zinc = Structures.diamond(a=5.6, element=30)
+    sulfur = Structures.diamond(a=5.6, element=16)
+    sodium = Structures.diamond(a=7.0, element=11)
+    parts = [zinc, sulfur, sodium, Structures.zincblende()]
+    batch = Structures.collate(parts)
+    energy = EnergyEstimator(model)(batch).numpy()
+    # zincblende is put below the line between its elements
+    energy[3] = (energy[0] + energy[1]) / 2 - 8 * (0.5 + shift)
+
+    path = tmp_path / "hull.hdf5"
+    save_hull(path, batch.z.numpy(), batch.num_atoms.numpy(), energy)
+    return path, energy
+
+
+def test_energy_above_hull(tmp_path, float_model):
+    from pycrystalgen.data.hull import energy_above_reference, load_hull
+
+    path, reference = hull_file(tmp_path, float_model)
+    estimator = EnergyEstimator(float_model, hull=load_hull(path))
+
+    structures = Structures.collate(
+        [
+            Structures.diamond(a=5.6, element=30),  # on the hull
+            Structures.zincblende(),  # above: its energy was lowered in the hull
+            Structures.diamond(a=5.4, element=30),  # another energy for zinc
+            Structures.diamond(),  # carbon is not in the hull
+        ]
+    )
+    above = estimator.energy_above_hull(structures)
+
+    assert above.shape == (4,) and above.dtype == torch.float64
+    assert above[0].abs() < 1e-6
+    # zincblende: its energy in the hull is 0.5 eV/atom below the line between
+    # its elements, the estimated one is at some distance of this line
+    elements = estimator(
+        Structures.collate(
+            [
+                Structures.diamond(a=5.6, element=30),
+                Structures.diamond(a=5.6, element=16),
+            ]
+        )
+    )
+    from_line = estimator(Structures.zincblende())[0] / 8 - elements.mean() / 8
+    assert torch.isclose(above[1], 0.5 + from_line, atol=1e-5)
+    assert above[2].abs() > 1e-6
+    assert torch.isnan(above[3])
+
+    expected = energy_above_reference(
+        load_hull(path),
+        structures.z.numpy(),
+        structures.num_atoms.numpy(),
+        estimator(structures).numpy(),
+    )
+    np.testing.assert_allclose(above.numpy(), expected, equal_nan=True)
+
+
+def test_energy_above_hull_can_be_negative(tmp_path, float_model):
+    from pycrystalgen.data.hull import load_hull
+
+    # in this hull, zincblende is 0.2 eV/atom above the line between its elements
+    path, _ = hull_file(tmp_path, float_model, shift=-0.7)
+    estimator = EnergyEstimator(float_model, hull=load_hull(path))
+
+    above = estimator.energy_above_hull(Structures.zincblende())
+
+    # the estimated energy of zincblende is on this line: below it or above it
+    # by the same amount as the reference
+    line = (
+        EnergyEstimator(float_model)(
+            Structures.collate(
+                [
+                    Structures.diamond(a=5.6, element=30),
+                    Structures.diamond(a=5.6, element=16),
+                ]
+            )
+        ).mean()
+        / 8
+    )
+    energy = EnergyEstimator(float_model)(Structures.zincblende()) / 8
+    assert torch.isclose(above[0], (energy - line)[0], atol=1e-5)
+
+
+def test_energy_above_hull_needs_a_hull(float_model):
+    estimator = EnergyEstimator(float_model)
+
+    with pytest.raises(ValueError, match="hull"):
+        estimator.energy_above_hull(Structures.diamond())
+
+
+@pytest.mark.timeout(60)
+def test_predict_energy_above_hull(tmp_path, float_model):
+    from pycrystalgen.data.hull import load_hull
+
+    path, _ = hull_file(tmp_path, float_model)
+    estimator = EnergyEstimator(float_model, hull=load_hull(path))
+
+    parts = [
+        Structures.zincblende(),
+        Structures.diamond(a=5.4, element=30),
+        Structures.diamond(),
+        Structures.diamond(a=5.6, element=16),
+        Structures.zincblende(a=5.6),
+    ]
+    HDF5Dataset.from_structures(tmp_path / "data.hdf5", [Structures.collate(parts)])
+    dataset = HDF5Dataset(tmp_path / "data.hdf5")
+
+    energy, above = estimator.predict_energy_above_hull(dataset, max_atoms=10)
+    expected = torch.cat([estimator.energy_above_hull(part) for part in parts]).numpy()
+
+    np.testing.assert_allclose(energy, estimator.predict(dataset), rtol=1e-4)
+    np.testing.assert_allclose(above, expected, atol=1e-5, equal_nan=True)
+    assert np.isnan(above[2]) and abs(above[3]) < 1e-6
+
+    energy, above = estimator.predict_energy_above_hull(dataset, np.array([1, 4]))
+    np.testing.assert_allclose(above, expected[[1, 4]], atol=1e-5)
+    assert energy.shape == (2,)
+
+
+def test_from_pretrained_loads_correction_and_hull(tmp_path, float_model, monkeypatch):
+    path, _ = hull_file(tmp_path, float_model)
+    correction = np.zeros(128)
+    correction[30] = 0.25
+    calibration.save_correction(
+        tmp_path / "correction.hdf5",
+        correction,
+        np.zeros(128, dtype=np.int64),
+        model="orb-v3-conservative-inf-mpa",
+    )
+    loaded = []
+
+    def from_pretrained(name, device=None):
+        loaded.append((name, device))
+        return float_model
+
+    monkeypatch.setattr(OrbEnergyModel, "from_pretrained", from_pretrained)
+
+    estimator = EnergyEstimator.from_pretrained(
+        correction_file=tmp_path / "correction.hdf5", hull_file=path
+    )
+
+    assert loaded == [("orb-v3-conservative-inf-mpa", None)]
+    assert estimator.hull is not None and (30, 16)[::-1] in estimator.hull.stable
+    # 8 zinc atoms: the correction moves zinc 0.25 eV/atom above its reference
+    above = estimator.energy_above_hull(Structures.diamond(a=5.6, element=30))
+    assert torch.isclose(above[0], torch.tensor(0.25, dtype=torch.float64), atol=1e-5)
+
+
+def test_from_hub_downloads_correction_and_hull(tmp_path, float_model, monkeypatch):
+    import sys
+    import types
+
+    path, _ = hull_file(tmp_path, float_model)
+    calibration.save_correction(
+        tmp_path / "correction.hdf5",
+        np.zeros(128),
+        np.zeros(128, dtype=np.int64),
+        model="orb-v3-conservative-inf-mpa",
+    )
+    files = {
+        "energy_correction_orb.hdf5": tmp_path / "correction.hdf5",
+        "hull.hdf5": path,
+    }
+    calls = []
+
+    def hf_hub_download(repo_id, filename, repo_type=None):
+        calls.append((repo_id, filename, repo_type))
+        return str(files[filename])
+
+    fake_hub = types.ModuleType("huggingface_hub")
+    fake_hub.hf_hub_download = hf_hub_download
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub)
+    monkeypatch.setattr(
+        OrbEnergyModel, "from_pretrained", lambda name, device=None: float_model
+    )
+
+    estimator = EnergyEstimator.from_hub()
+
+    assert calls == [
+        ("materials-toolkits/lematerial", "energy_correction_orb.hdf5", "dataset"),
+        ("materials-toolkits/lematerial", "hull.hdf5", "dataset"),
+    ]
+    assert estimator.hull is not None and estimator.correction is not None
+    assert estimator.energy_above_hull(Structures.zincblende()).shape == (1,)

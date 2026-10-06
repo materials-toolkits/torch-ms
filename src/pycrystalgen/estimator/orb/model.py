@@ -1,6 +1,6 @@
 # Derived from orb-models (https://github.com/orbital-materials/orb-models),
 # Copyright 2024 Orbital Materials, Inc., licensed under the Apache License,
-# Version 2.0 (see LICENSE-ORB in this directory).
+# Version 2.0 (see LICENSE in this directory).
 #
 # Changes: this file is a rewrite of the energy prediction of the orb-v3
 # conservative model, for inference only. Forces, stress, charges, dispersion,
@@ -34,7 +34,7 @@ from jaxtyping import Float, Int
 from torch import nn
 
 from pycrystalgen.data.batching import Structures
-from pycrystalgen.estimator.weights import download
+from pycrystalgen.estimator.orb.weights import download
 from pycrystalgen.graph.cutoff import cutoff, nearest_neighbors
 from pycrystalgen.graph.graph import Graph
 
@@ -439,14 +439,14 @@ class OrbEnergyModel(nn.Module):
     @classmethod
     def from_pretrained(
         cls,
-        name: str = "orb-v3-conservative-inf-omat",
+        name: str = "orb-v3-conservative-inf-mpa",
         device: torch.device | str | None = None,
         cache: str | os.PathLike | None = None,
     ) -> OrbEnergyModel:
         """Load a model with pretrained weights, downloaded on the first call.
 
         Args:
-            name: Name of the weights, see pycrystalgen.estimator.weights.
+            name: Name of the weights, see pycrystalgen.estimator.orb.weights.
             device: Device of the model.
             cache: Directory of the downloaded weights.
         """

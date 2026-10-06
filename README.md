@@ -144,21 +144,25 @@ graph network, on the scale of LeMat-Bulk, so that an energy above its convex hu
 computed without DFT:
 
 ```python
-from huggingface_hub import hf_hub_download
 from pycrystalgen.data import HDF5Dataset
-from pycrystalgen.data.hull import energy_above_reference, load_hull
 from pycrystalgen.estimator import EnergyEstimator
 
-estimator = EnergyEstimator.from_hub(device="cuda")  # needs the "hub" extra
-dataset = HDF5Dataset("structures.hdf5")
-energy = estimator.predict(dataset)  # eV, one value per structure
+# model, correction and convex hull of LeMat-Bulk, needs the "hub" extra
+estimator = EnergyEstimator.from_hub(device="cuda")
 
-hull = load_hull(hf_hub_download("materials-toolkits/lematerial", "hull.hdf5", repo_type="dataset"))
-above = energy_above_reference(hull, z, num_atoms, energy)  # z, num_atoms: arrays of the dataset
+# dataset: total energy in eV and energy above the hull in eV/atom
+energy, above = estimator.predict_energy_above_hull(HDF5Dataset("structures.hdf5"))
+
+# batch of Structures on the device of the model
+above = estimator.energy_above_hull(structures)
 ```
 
+The energy above the hull is negative for a structure estimated more stable than the hull,
+and NaN for a structure with an element absent from the hull. `estimator(structures)` and
+`estimator.predict(dataset)` give the total energy alone.
+
 The model is orb-v3 conservative (`orb-v3-conservative-inf-mpa`) of Orbital Materials,
-rewritten in `estimator/orb.py` for the prediction of the energy only, without any new
+rewritten in `estimator/orb/` for the prediction of the energy only, without any new
 dependency; the official weights (102 MB) are downloaded on the first call into
 `~/.cache/pycrystalgen`. A small energy per atom of each element, fitted on LeMat-Bulk, is
 added (`estimator/calibration.py`, `energy_correction_orb.hdf5` in the LeMaterial dataset).
