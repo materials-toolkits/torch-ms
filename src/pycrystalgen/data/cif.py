@@ -44,7 +44,8 @@ class CifParser:
             If provided, these override the default patterns. Invalid regex will
             raise re.error and should be handled by the caller.
             Available keys: space_group, cell_length, cell_angle, atom_row,
-            data_block, total_energy, energy_above_hull, band_gap.
+            data_block, total_energy, energy_above_hull, band_gap,
+            formation_energy_per_atom.
     """
 
     def __init__(self, regex_overrides: dict[str, str] | None = None):
@@ -76,11 +77,15 @@ class CifParser:
         )
         self._energy_above_hull = re.compile(
             regex_overrides.get("energy_above_hull")
-            or r"(?:_energy_above_hull|_e_above_hull|_formation_energy)\s+([\d.-]+)"
+            or r"(?:_energy_above_hull|_e_above_hull)\s+([\d.-]+)"
         )
         self._band_gap = re.compile(
             regex_overrides.get("band_gap")
             or r"(?:_dft_band_gap|_band_gap|_bandgap)\s+([\d.-]+)"
+        )
+        self._formation_energy_per_atom = re.compile(
+            regex_overrides.get("formation_energy_per_atom")
+            or r"_formation_energy_per_atom\s+([\d.-]+)"
         )
 
     def parse(self, cif_string: str) -> Structures:
@@ -131,7 +136,7 @@ class CifParser:
                 structures = self._parse_single_block(block)
                 parsed = ParseResult(structures=structures, block_name=block_name)
                 result.append(parsed)
-            except (ValueError, RuntimeError) as e:
+            except (ValueError, RuntimeError, NotImplementedError) as e:
                 parsed = ParseResult(error=str(e), block_name=block_name)
                 result.append(parsed)
                 logger.warning("Failed to parse block %s: %s", block_name, e)
@@ -175,7 +180,9 @@ class CifParser:
         cell_params = self._parse_cell_parameters(block_string)
         lattice = self._build_lattice_vectors(cell_params)
         coords, atomic_numbers = self._parse_atoms(block_string)
-        total_energy, energy_above_hull, band_gap = self._parse_properties(block_string)
+        total_energy, energy_above_hull, band_gap, formation_energy_per_atom = (
+            self._parse_properties(block_string)
+        )
 
         x = torch.tensor(coords, dtype=torch.float64)
         z = torch.tensor(atomic_numbers, dtype=torch.int64)
@@ -193,6 +200,9 @@ class CifParser:
             total_energy=torch.tensor([total_energy], dtype=torch.float32),
             energy_above_hull=torch.tensor([energy_above_hull], dtype=torch.float32),
             band_gap=torch.tensor([band_gap], dtype=torch.float32),
+            formation_energy_per_atom=torch.tensor(
+                [formation_energy_per_atom], dtype=torch.float32
+            ),
             _validate=True,
         )
 
@@ -204,17 +214,20 @@ class CifParser:
 
         space_group = int(space_group_match.group(1))
 
-        if space_group!=1:
-            raise NotImplemented("Spacegroups other that P1 are not supported")
+        if space_group != 1:
+            raise NotImplementedError("Spacegroups other that P1 are not supported")
 
         return space_group
 
-    def _parse_properties(self, cif_string: str) -> tuple[float, float, float]:
+    def _parse_properties(self, cif_string: str) -> tuple[float, float, float, float]:
         """Parse energy and band gap properties from CIF."""
         total_energy = self._parse_property(self._total_energy, cif_string)
         energy_above_hull = self._parse_property(self._energy_above_hull, cif_string)
         band_gap = self._parse_property(self._band_gap, cif_string)
-        return total_energy, energy_above_hull, band_gap
+        formation_energy_per_atom = self._parse_property(
+            self._formation_energy_per_atom, cif_string
+        )
+        return total_energy, energy_above_hull, band_gap, formation_energy_per_atom
 
     def _parse_property(self, pattern: re.Pattern, cif_string: str) -> float:
         """Parse a single property, returning NaN if not found."""

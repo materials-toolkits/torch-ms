@@ -6,15 +6,25 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "h5py>=3.16.0",
+    "jaxtyping>=0.3.7",
     "numpy>=2.2.6",
+    "scipy>=1.15.3",
     "torch>=2.11.0",
     "tqdm>=4.67.3",
+]
+
+[project.optional-dependencies]
+hub = [
+    "huggingface-hub>=0.30.0",
 ]
 
 [dependency-groups]
 dev = [
     "ase>=3.28.0",
     "black>=26.3.1",
+    "huggingface-hub>=2.1.1",
+    "poethepoet>=0.34.0",
+    "pyarrow>=25.0.1",
     "pylint>=4.0.5",
     "pymatgen>=2025.10.7",
     "pyright>=1.1.408",
@@ -26,10 +36,19 @@ dev = [
 [project.scripts]
 preprocessing = "pycrystalgen.data.preprocessing:main"
 
+[tool.poe.tasks]
+sync.sequence = [
+    {cmd = "uv sync"},
+    {cmd = "uv run pyright --createstub torch"},
+]
+build = "uv build"
+
 [tool.pytest.ini_options]
 testpaths = [
     "tests",
+    "src",
 ]
+addopts = "--doctest-modules"
 timeout = 3
 
 [tool.pyright]
@@ -52,4 +71,5 @@ max-line-length = 88
 max-args = 10
 max-locals = 20
 max-attributes = 12
+
 

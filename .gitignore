@@ -12,4 +12,6 @@ AGENTS.md
 *.egg-info
 build/
 dist/
+typings
 
+datasets/

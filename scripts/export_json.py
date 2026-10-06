@@ -4,6 +4,7 @@ import os
 
 from ase.io import read
 
+
 def export_json(filename):
 
     structure = read(filename)
@@ -33,6 +34,7 @@ def export_json(filename):
     with open(os.path.splitext(filename)[0] + ".json", "w") as fp:
         json.dump(structure, fp, indent=4)
 
+
 for filename in glob.glob("tests/cif/*.cif"):
     export_json(filename)
 
@@ -41,5 +43,4 @@ for filename in glob.glob("tests/cif/pymatgen/*.cif"):
         export_json(filename)
     except Exception as e:
         print(e)
-        print("file:",filename)
-
+        print("file:", filename)

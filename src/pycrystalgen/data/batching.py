@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Sequence
 
+import numpy as np
 import torch
 import torch.nn.functional as F
+from jaxtyping import Float, Int
+
+TensorLike = torch.Tensor | np.ndarray | Sequence[Any]
 
 
 class InvalidStructure(Exception):
     """Exception raised when a structure has invalid data."""
 
 
-@dataclass
+@dataclass(init=False)
 class Structures:
     """Container for batched crystal structures and their properties.
 
@@ -27,6 +31,8 @@ class Structures:
         total_energy: Total energy per structure in eV with shape (n_struct,).
         energy_above_hull: Energy above hull per structure in eV with shape (n_struct,).
         band_gap: Band gap per structure in eV with shape (n_struct,).
+        formation_energy_per_atom: Formation energy per structure in eV/atom
+            with shape (n_struct,).
 
     Example:
         Creating a Diamond crystal structure (C, a=3.567 A, 8 atoms):
@@ -36,7 +42,7 @@ class Structures:
         ...     [[[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]]],
         ...     dtype=torch.float32,
         ... )
-        >>> positions = [
+        >>> x = [
         ...     [0.0, 0.0, 0.0],
         ...     [0.5, 0.5, 0.0],
         ...     [0.5, 0.0, 0.5],
@@ -46,25 +52,80 @@ class Structures:
         ...     [0.75, 0.25, 0.75],
         ...     [0.25, 0.75, 0.75],
         ... ]
-        >>> x = torch.tensor(positions, dtype=torch.float32) * a
         >>> z = torch.tensor([6] * 8, dtype=torch.int64)
         >>> struct = Structures(lattice=lattice, x=x, z=z)
         >>> struct.num_atoms
         tensor([8])
     """
 
-    lattice: torch.FloatTensor
-    x: torch.FloatTensor
-    z: torch.LongTensor
-    num_atoms: torch.LongTensor | None = None
-    batch: torch.LongTensor | None = None
-    ptr: torch.LongTensor | None = None
-    total_energy: torch.FloatTensor | None = None
-    energy_above_hull: torch.FloatTensor | None = None
-    band_gap: torch.FloatTensor | None = None
-    _validate: bool = False
+    lattice: Float[torch.Tensor, "n_struct 3 3"]
+    x: Float[torch.Tensor, "n_atoms 3"]
+    z: Int[torch.Tensor, "n_atoms"]
+    num_atoms: Int[torch.Tensor, "n_struct"]
+    batch: Int[torch.Tensor, "n_atoms"]
+    ptr: Int[torch.Tensor, "n_struct+1"]
+    total_energy: Float[torch.Tensor, "n_struct"]
+    energy_above_hull: Float[torch.Tensor, "n_struct"]
+    band_gap: Float[torch.Tensor, "n_struct"]
+    formation_energy_per_atom: Float[torch.Tensor, "n_struct"]
+    _validate: bool
 
-    def __post_init__(self):
+    def __init__(
+        self,
+        lattice: TensorLike,
+        x: TensorLike,
+        z: TensorLike,
+        num_atoms: TensorLike | None = None,
+        batch: TensorLike | None = None,
+        ptr: TensorLike | None = None,
+        total_energy: TensorLike | None = None,
+        energy_above_hull: TensorLike | None = None,
+        band_gap: TensorLike | None = None,
+        formation_energy_per_atom: TensorLike | None = None,
+        _validate: bool = False,
+    ):
+        self.lattice = self.as_tensor("lattice", lattice, torch.float32)
+        self.x = self.as_tensor("x", x, torch.float32)
+        self.z = self.as_tensor("z", z, torch.int64)
+
+        device = self.lattice.device
+        n_struct = len(self.lattice)
+
+        # Missing fields are derived from the others, they are checked with
+        # the given ones in check_tensors.
+        if num_atoms is None:
+            self.num_atoms = torch.tensor(
+                [len(self.z)], dtype=torch.int64, device=device
+            )
+        else:
+            self.num_atoms = self.as_tensor("num_atoms", num_atoms, torch.int64)
+
+        counts = self.num_atoms.flatten().long().clamp(min=0)
+
+        if batch is None:
+            self.batch = torch.arange(
+                len(counts), dtype=torch.int64, device=counts.device
+            ).repeat_interleave(counts)
+        else:
+            self.batch = self.as_tensor("batch", batch, torch.int64)
+
+        if ptr is None:
+            self.ptr = F.pad(torch.cumsum(counts, dim=0), (1, 0), value=0)
+        else:
+            self.ptr = self.as_tensor("ptr", ptr, torch.int64)
+
+        self.total_energy = self.as_property(
+            "total_energy", total_energy, n_struct, device
+        )
+        self.energy_above_hull = self.as_property(
+            "energy_above_hull", energy_above_hull, n_struct, device
+        )
+        self.band_gap = self.as_property("band_gap", band_gap, n_struct, device)
+        self.formation_energy_per_atom = self.as_property(
+            "formation_energy_per_atom", formation_energy_per_atom, n_struct, device
+        )
+
+        self._validate = _validate
         if self._validate:
             return
 
@@ -72,15 +133,42 @@ class Structures:
 
         self._validate = True
 
+    @classmethod
+    def as_tensor(
+        cls, field: str, values: TensorLike, dtype: torch.dtype
+    ) -> torch.Tensor:
+        """Convert the values of a field to a tensor, tensors are left unchanged.
+
+        Raises:
+            InvalidStructure: If values cannot be converted to a tensor.
+        """
+        if isinstance(values, torch.Tensor):
+            return values
+
+        try:
+            return torch.tensor(values, dtype=dtype)
+        except (TypeError, ValueError) as e:
+            raise InvalidStructure(f"invalid field {field}: {e}") from e
+
+    @classmethod
+    def as_property(
+        cls, field: str, values: TensorLike | None, n_struct: int, device: torch.device
+    ) -> torch.Tensor:
+        """Convert a property per structure to a tensor, NaN if unknown."""
+        if values is None:
+            return torch.full(
+                (n_struct,), torch.nan, dtype=torch.float32, device=device
+            )
+
+        return cls.as_tensor(field, values, torch.float32)
+
     def check_tensors(self):
-        """Validate structure data and convert fields to proper tensors.
+        """Validate structure data and cast fields to their dtype.
 
         Raises:
             InvalidStructure: If lattice or atom data is invalid.
         """
-        device = torch.device("cpu")
-        if isinstance(self.lattice, torch.Tensor):
-            device = self.lattice.device
+        device = self.lattice.device
 
         n_struct = len(self.lattice)
         n_atoms = len(self.z)
@@ -91,66 +179,24 @@ class Structures:
         if n_atoms < 1:
             raise InvalidStructure("must contain at least one atom per crystal")
 
-        if n_struct > 1 and not hasattr(self, "num_atoms"):
-            raise InvalidStructure(
-                'must specify "num_atoms" when multiple structures are given'
-            )
-
         self.to_tensor(
-            "lattice",
-            dtype=torch.float32,
-            shape=(n_struct, 3, 3),
-            device=device,
+            "lattice", dtype=torch.float32, shape=(n_struct, 3, 3), device=device
         )
-        self.to_tensor(
-            "x",
-            dtype=torch.float32,
-            shape=(n_atoms, 3),
-            device=device,
-        )
-        self.to_tensor(
-            "z",
-            dtype=torch.int64,
-            shape=(n_atoms,),
-            device=device,
-        )
-        self.to_tensor(
-            "num_atoms",
-            dtype=torch.int64,
-            shape=(n_struct,),
-            device=device,
-            default=lambda struct: torch.tensor(
-                [n_atoms], dtype=torch.int64, device=device
-            ),
-        )
+        self.to_tensor("x", dtype=torch.float32, shape=(n_atoms, 3), device=device)
+        self.to_tensor("z", dtype=torch.int64, shape=(n_atoms,), device=device)
+        self.to_tensor("num_atoms", dtype=torch.int64, shape=(n_struct,), device=device)
 
         if (self.num_atoms <= 0).any():
             raise InvalidStructure("must contain at least one atom per crystal")
 
-        self.to_tensor(
-            "batch",
-            dtype=torch.int64,
-            shape=(n_atoms,),
-            device=device,
-            default=lambda struct: torch.arange(
-                0, n_struct, dtype=torch.int32, device=device
-            ).repeat_interleave(self.num_atoms, dim=0),
-        )
+        self.to_tensor("batch", dtype=torch.int64, shape=(n_atoms,), device=device)
         if (self.batch[:-1] > self.batch[1:]).any():
             raise InvalidStructure(
                 "atoms of structures must be continuous and index in "
                 'ascending order in the field "batch"'
             )
 
-        self.to_tensor(
-            "ptr",
-            dtype=torch.int64,
-            shape=(n_struct + 1,),
-            device=device,
-            default=lambda struct: F.pad(
-                torch.cumsum(struct.num_atoms, dim=0), (1, 0), value=0
-            ),
-        )
+        self.to_tensor("ptr", dtype=torch.int64, shape=(n_struct + 1,), device=device)
         if (self.ptr[:-1] > self.ptr[1:]).any():
             raise InvalidStructure(
                 "atoms of structures must be continuous and index in "
@@ -158,31 +204,19 @@ class Structures:
             )
 
         self.to_tensor(
-            "total_energy",
-            dtype=torch.float32,
-            shape=(n_struct,),
-            device=device,
-            default=lambda struct: torch.full_like(
-                struct.num_atoms, fill_value=torch.nan, dtype=torch.float32
-            ),
+            "total_energy", dtype=torch.float32, shape=(n_struct,), device=device
         )
         self.to_tensor(
-            "energy_above_hull",
-            dtype=torch.float32,
-            shape=(n_struct,),
-            device=device,
-            default=lambda struct: torch.full_like(
-                struct.num_atoms, fill_value=torch.nan, dtype=torch.float32
-            ),
+            "energy_above_hull", dtype=torch.float32, shape=(n_struct,), device=device
         )
         self.to_tensor(
-            "band_gap",
+            "band_gap", dtype=torch.float32, shape=(n_struct,), device=device
+        )
+        self.to_tensor(
+            "formation_energy_per_atom",
             dtype=torch.float32,
             shape=(n_struct,),
             device=device,
-            default=lambda struct: torch.full_like(
-                struct.num_atoms, fill_value=torch.nan, dtype=torch.float32
-            ),
         )
 
     def device(self) -> torch.device:
@@ -197,42 +231,25 @@ class Structures:
         self,
         field: str,
         *,
-        dtype: torch.Tensor.type,
+        dtype: torch.dtype,
         shape: tuple[int, ...],
         device: torch.device,
-        default: Callable[["Structures"], torch.Tensor] | None = None,
-    ) -> torch.Tensor:
-        """Convert a field to a tensor with specified properties.
+    ) -> None:
+        """Check a field and cast it to the specified dtype.
 
         Args:
-            field: Name of the attribute to convert.
+            field: Name of the attribute to check.
             dtype: Target tensor dtype.
             shape: Expected tensor shape.
-            device: Target tensor device.
-            default: Optional factory function to create default values.
-
-        Returns:
-            The converted tensor.
+            device: Expected tensor device.
 
         Raises:
             InvalidStructure: If field value is invalid or incompatible.
         """
-        values = getattr(self, field)
-
-        if values is None:
-            if default is None:
-                raise InvalidStructure(f'no default value for "{field}"')
-            tensor = default(self)
-        elif not isinstance(values, torch.Tensor):
-            try:
-                tensor = torch.tensor(values, dtype=dtype)
-            except TypeError as e:
-                raise InvalidStructure(f"invalid field {field}: {e}") from e
-        else:
-            tensor = values
+        tensor: torch.Tensor = getattr(self, field)
 
         if tensor.dtype != dtype:
-            tensor = tensor.type(dtype)
+            tensor = tensor.to(dtype)
 
         if tensor.shape != shape:
             raise InvalidStructure(
@@ -241,7 +258,7 @@ class Structures:
 
         if tensor.device != device:
             raise InvalidStructure(
-                f'inconsistend device for field "{field}", {device}!={tensor.device}'
+                f'inconsistent device for field "{field}", {device}!={tensor.device}'
             )
 
         setattr(self, field, tensor)
@@ -275,7 +292,7 @@ class Structures:
             [0.75, 0.25, 0.75],
             [0.25, 0.75, 0.75],
         ]
-        coords = torch.tensor(positions, dtype=torch.float32) * a
+        coords = torch.tensor(positions, dtype=torch.float32)
         z = torch.tensor([element] * 8, dtype=torch.int64)
 
         return cls(
@@ -316,7 +333,7 @@ class Structures:
             [0.75, 0.25, 0.75],
             [0.25, 0.75, 0.75],
         ]
-        coords = torch.tensor(positions, dtype=torch.float32) * a
+        coords = torch.tensor(positions, dtype=torch.float32)
         z = torch.tensor([anion] * 4 + [cation] * 4, dtype=torch.int64)
 
         return cls(
@@ -363,6 +380,9 @@ class Structures:
         total_energy = torch.cat([s.total_energy for s in structures])
         energy_above_hull = torch.cat([s.energy_above_hull for s in structures])
         band_gap = torch.cat([s.band_gap for s in structures])
+        formation_energy_per_atom = torch.cat(
+            [s.formation_energy_per_atom for s in structures]
+        )
 
         return cls(
             lattice=lattice,
@@ -374,6 +394,7 @@ class Structures:
             total_energy=total_energy,
             energy_above_hull=energy_above_hull,
             band_gap=band_gap,
+            formation_energy_per_atom=formation_energy_per_atom,
             _validate=True,
         )
 
@@ -414,6 +435,9 @@ class Structures:
                 total_energy=structures.total_energy[i : i + 1],
                 energy_above_hull=structures.energy_above_hull[i : i + 1],
                 band_gap=structures.band_gap[i : i + 1],
+                formation_energy_per_atom=structures.formation_energy_per_atom[
+                    i : i + 1
+                ],
                 _validate=True,
             )
             result.append(struct)
