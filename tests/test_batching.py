@@ -519,3 +519,32 @@ class TestStructuresRoundTrip:
             assert torch.equal(orig.total_energy, sep.total_energy)
             assert torch.equal(orig.energy_above_hull, sep.energy_above_hull)
             assert torch.equal(orig.band_gap, sep.band_gap)
+
+
+class TestFormationEnergy:
+    def test_default_is_nan(self, multiple_structures_fields):
+        struct = Structures(**multiple_structures_fields)
+
+        assert struct.formation_energy_per_atom.shape == (2,)
+        assert struct.formation_energy_per_atom.dtype == torch.float32
+        assert torch.isnan(struct.formation_energy_per_atom).all()
+
+    def test_invalid_shape(self, multiple_structures_fields):
+        fields = multiple_structures_fields.copy()
+        fields["formation_energy_per_atom"] = torch.tensor([-1.0])
+
+        with pytest.raises(InvalidStructure, match="invalid shape"):
+            Structures(**fields)
+
+    def test_collate_and_separate(self, two_structures):
+        two_structures[0].formation_energy_per_atom = torch.tensor([-1.5])
+        two_structures[1].formation_energy_per_atom = torch.tensor([0.25])
+
+        batched = Structures.collate(two_structures)
+        assert torch.equal(
+            batched.formation_energy_per_atom, torch.tensor([-1.5, 0.25])
+        )
+
+        separated = Structures.separate(batched)
+        assert torch.equal(separated[0].formation_energy_per_atom, torch.tensor([-1.5]))
+        assert torch.equal(separated[1].formation_energy_per_atom, torch.tensor([0.25]))

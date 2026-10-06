@@ -250,6 +250,23 @@ class TestFromHub:
         assert len(dataset) == 4
 
 
+class TestFormationEnergy:
+    def test_roundtrip(self, tmp_path, mixed_batch):
+        hdf5_path = tmp_path / "test.h5"
+        mixed_batch.formation_energy_per_atom = torch.tensor(
+            [-1.5, 0.25, float("nan"), -0.5]
+        )
+        HDF5Dataset.from_structures(hdf5_path, [mixed_batch, mixed_batch])
+
+        dataset = HDF5Dataset(hdf5_path)
+        assert torch.equal(dataset[1].formation_energy_per_atom, torch.tensor([0.25]))
+        assert torch.equal(
+            dataset[[3, 4, 5]].formation_energy_per_atom,
+            torch.tensor([-0.5, -1.5, 0.25]),
+        )
+        assert torch.isnan(dataset[2].formation_energy_per_atom).all()
+
+
 class TestSingleAtom:
     """Anti-regression: structures with a single atom must be readable."""
 

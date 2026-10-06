@@ -63,6 +63,9 @@ class HDF5Dataset(Dataset):
         total_energy = torch.from_numpy(self.dataset("total_energy")[indices])
         energy_above_hull = torch.from_numpy(self.dataset("energy_above_hull")[indices])
         band_gap = torch.from_numpy(self.dataset("band_gap")[indices])
+        formation_energy_per_atom = torch.from_numpy(
+            self.dataset("formation_energy_per_atom")[indices]
+        )
 
         # Computing indices of atoms in the dataset
         batch = torch.arange(num_atoms.shape[0], dtype=torch.int64).repeat_interleave(
@@ -87,6 +90,7 @@ class HDF5Dataset(Dataset):
             total_energy=total_energy,
             energy_above_hull=energy_above_hull,
             band_gap=band_gap,
+            formation_energy_per_atom=formation_energy_per_atom,
             _validate=True,
         )
 

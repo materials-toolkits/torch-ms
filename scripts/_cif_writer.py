@@ -12,12 +12,14 @@ import numpy as np
 TOTAL_ENERGY_TAG = "_energy_total"
 ENERGY_ABOVE_HULL_TAG = "_energy_above_hull"
 BAND_GAP_TAG = "_band_gap"
+FORMATION_ENERGY_PER_ATOM_TAG = "_formation_energy_per_atom"
 
 
 def property_tags(
     total_energy: float | None = None,
     energy_above_hull: float | None = None,
     band_gap: float | None = None,
+    formation_energy_per_atom: float | None = None,
 ) -> str:
     """Format the property tags, missing (None or NaN) properties are omitted."""
     lines = ""
@@ -25,6 +27,7 @@ def property_tags(
         (TOTAL_ENERGY_TAG, total_energy),
         (ENERGY_ABOVE_HULL_TAG, energy_above_hull),
         (BAND_GAP_TAG, band_gap),
+        (FORMATION_ENERGY_PER_ATOM_TAG, formation_energy_per_atom),
     ):
         if value is None or not math.isfinite(value):
             continue
@@ -50,6 +53,7 @@ def write_block(
     total_energy: float | None = None,
     energy_above_hull: float | None = None,
     band_gap: float | None = None,
+    formation_energy_per_atom: float | None = None,
 ) -> None:
     """Write a single structure as a P1 CIF data block.
 
@@ -62,6 +66,7 @@ def write_block(
         total_energy: Total energy in eV.
         energy_above_hull: Energy above the hull in eV/atom.
         band_gap: Band gap in eV.
+        formation_energy_per_atom: Formation energy in eV/atom.
     """
     (a, b, c), (alpha, beta, gamma) = cell_parameters(lattice)
 
@@ -79,7 +84,7 @@ def write_block(
         f"_cell_angle_alpha {alpha:.8f}\n"
         f"_cell_angle_beta {beta:.8f}\n"
         f"_cell_angle_gamma {gamma:.8f}\n"
-        f"{property_tags(total_energy, energy_above_hull, band_gap)}"
+        f"{property_tags(total_energy, energy_above_hull, band_gap, formation_energy_per_atom)}"
         "loop_\n"
         "_atom_site_type_symbol\n"
         "_atom_site_fract_x\n"

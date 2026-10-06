@@ -31,6 +31,8 @@ class Structures:
         total_energy: Total energy per structure in eV with shape (n_struct,).
         energy_above_hull: Energy above hull per structure in eV with shape (n_struct,).
         band_gap: Band gap per structure in eV with shape (n_struct,).
+        formation_energy_per_atom: Formation energy per structure in eV/atom
+            with shape (n_struct,).
 
     Example:
         Creating a Diamond crystal structure (C, a=3.567 A, 8 atoms):
@@ -65,6 +67,7 @@ class Structures:
     total_energy: Float[torch.Tensor, "n_struct"]
     energy_above_hull: Float[torch.Tensor, "n_struct"]
     band_gap: Float[torch.Tensor, "n_struct"]
+    formation_energy_per_atom: Float[torch.Tensor, "n_struct"]
     _validate: bool
 
     def __init__(
@@ -78,6 +81,7 @@ class Structures:
         total_energy: TensorLike | None = None,
         energy_above_hull: TensorLike | None = None,
         band_gap: TensorLike | None = None,
+        formation_energy_per_atom: TensorLike | None = None,
         _validate: bool = False,
     ):
         self.lattice = self.as_tensor("lattice", lattice, torch.float32)
@@ -117,6 +121,9 @@ class Structures:
             "energy_above_hull", energy_above_hull, n_struct, device
         )
         self.band_gap = self.as_property("band_gap", band_gap, n_struct, device)
+        self.formation_energy_per_atom = self.as_property(
+            "formation_energy_per_atom", formation_energy_per_atom, n_struct, device
+        )
 
         self._validate = _validate
         if self._validate:
@@ -204,6 +211,12 @@ class Structures:
         )
         self.to_tensor(
             "band_gap", dtype=torch.float32, shape=(n_struct,), device=device
+        )
+        self.to_tensor(
+            "formation_energy_per_atom",
+            dtype=torch.float32,
+            shape=(n_struct,),
+            device=device,
         )
 
     def device(self) -> torch.device:
@@ -367,6 +380,9 @@ class Structures:
         total_energy = torch.cat([s.total_energy for s in structures])
         energy_above_hull = torch.cat([s.energy_above_hull for s in structures])
         band_gap = torch.cat([s.band_gap for s in structures])
+        formation_energy_per_atom = torch.cat(
+            [s.formation_energy_per_atom for s in structures]
+        )
 
         return cls(
             lattice=lattice,
@@ -378,6 +394,7 @@ class Structures:
             total_energy=total_energy,
             energy_above_hull=energy_above_hull,
             band_gap=band_gap,
+            formation_energy_per_atom=formation_energy_per_atom,
             _validate=True,
         )
 
@@ -418,6 +435,9 @@ class Structures:
                 total_energy=structures.total_energy[i : i + 1],
                 energy_above_hull=structures.energy_above_hull[i : i + 1],
                 band_gap=structures.band_gap[i : i + 1],
+                formation_energy_per_atom=structures.formation_energy_per_atom[
+                    i : i + 1
+                ],
                 _validate=True,
             )
             result.append(struct)

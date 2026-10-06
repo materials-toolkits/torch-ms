@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -559,3 +560,41 @@ class TestPymatgen:
         expected = Structures(structures.lattice, expected_x, expected_z)
         errors = compare_structures(structures, expected)
         assert not errors, "\n".join(errors)
+
+
+class TestFormationEnergy:
+    """Tests for the formation energy tag, on a P1 structure."""
+
+    @pytest.fixture(scope="class")
+    def triclinic_cif(self) -> str:
+        return (Path(__file__).parent / "cif" / "triclinic1.cif").read_text()
+
+    @staticmethod
+    def with_tags(cif: str, tags: str) -> str:
+        cif, count = re.subn(r"^(data_\S+)$", rf"\1\n{tags}", cif, flags=re.MULTILINE)
+        assert count == 1
+        return cif
+
+    def test_parse_formation_energy(self, triclinic_cif):
+        cif = self.with_tags(
+            triclinic_cif,
+            "_formation_energy_per_atom -1.25\n_energy_above_hull 0.03",
+        )
+        structures = parse_cif(cif)
+
+        assert torch.isclose(
+            structures.formation_energy_per_atom[0], torch.tensor(-1.25)
+        )
+        assert torch.isclose(structures.energy_above_hull[0], torch.tensor(0.03))
+        assert torch.isnan(structures.total_energy).all()
+
+    def test_formation_energy_is_not_energy_above_hull(self, triclinic_cif):
+        cif = self.with_tags(triclinic_cif, "_formation_energy -1.25")
+        structures = parse_cif(cif)
+
+        assert torch.isnan(structures.energy_above_hull).all()
+
+    def test_nan_when_missing(self, triclinic_cif):
+        structures = parse_cif(triclinic_cif)
+
+        assert torch.isnan(structures.formation_energy_per_atom).all()
