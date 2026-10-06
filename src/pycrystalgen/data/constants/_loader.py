@@ -10,6 +10,8 @@ from importlib import resources
 import numpy as np
 import torch
 
+_PACKAGE = "pycrystalgen.data.constants"
+
 
 @dataclass(frozen=True)
 class ElementData:
@@ -40,7 +42,7 @@ def _load_elements() -> tuple[dict[int, ElementData], dict[str, int]]:
     Returns:
         Tuple of (atomic_number -> ElementData, symbol -> atomic_number).
     """
-    with resources.files(__package__).joinpath("periodic_table.json").open() as f:
+    with resources.files(_PACKAGE).joinpath("periodic_table.json").open() as f:
         data = json.load(f)
 
     elements: dict[int, ElementData] = {}
@@ -140,7 +142,7 @@ def _load_spacegroups() -> dict[int, SpaceGroupData]:
     Returns:
         Dictionary mapping space group number to SpaceGroupData.
     """
-    with resources.files(__package__).joinpath("spacegroups.json").open() as f:
+    with resources.files(_PACKAGE).joinpath("spacegroups.json").open() as f:
         data = json.load(f)
 
     spacegroups: dict[int, SpaceGroupData] = {}
@@ -160,7 +162,7 @@ _SPACEGROUPS = _load_spacegroups()
 
 
 def _open_spacegroup_h5() -> h5py.File:
-    return h5py.File(resources.files(__package__).joinpath("spacegroups.h5"), "r")
+    return h5py.File(resources.files(_PACKAGE).joinpath("spacegroups.h5"), "r")
 
 
 _SYMMETRY_OPS: dict[int, np.ndarray] | None = None

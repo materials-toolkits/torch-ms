@@ -24,9 +24,22 @@ class HDF5Dataset(Dataset):
         self.data_file = h5py.File(hdf5_file, "r")
         self.transform = transform
 
+    def dataset(self, name: str) -> h5py.Dataset:
+        """Get a dataset of the file by name.
+
+        Raises:
+            KeyError: If the file has no dataset with this name.
+        """
+        dataset = self.data_file[name]
+
+        if not isinstance(dataset, h5py.Dataset):
+            raise KeyError(f'"{name}" is not a dataset of {self.data_file.filename}')
+
+        return dataset
+
     def __len__(self) -> int:
         """Return the number of structures in the dataset."""
-        return self.data_file["num_atoms"].shape[0]  # pylint: disable=no-member
+        return self.dataset("num_atoms").shape[0]
 
     def __getitem__(self, idx):
         """Get structures by index.
@@ -44,14 +57,12 @@ class HDF5Dataset(Dataset):
             indices = np.array(idx, dtype=np.int64)
 
         # Load structure data from indices
-        lattice = torch.from_numpy(self.data_file["lattice"][indices])
-        num_atoms = torch.from_numpy(self.data_file["num_atoms"][indices])
-        ptr = torch.from_numpy(self.data_file["ptr"][indices])
-        total_energy = torch.from_numpy(self.data_file["total_energy"][indices])
-        energy_above_hull = torch.from_numpy(
-            self.data_file["energy_above_hull"][indices]
-        )
-        band_gap = torch.from_numpy(self.data_file["band_gap"][indices])
+        lattice = torch.from_numpy(self.dataset("lattice")[indices])
+        num_atoms = torch.from_numpy(self.dataset("num_atoms")[indices])
+        ptr = torch.from_numpy(self.dataset("ptr")[indices])
+        total_energy = torch.from_numpy(self.dataset("total_energy")[indices])
+        energy_above_hull = torch.from_numpy(self.dataset("energy_above_hull")[indices])
+        band_gap = torch.from_numpy(self.dataset("band_gap")[indices])
 
         # Computing indices of atoms in the dataset
         batch = torch.arange(num_atoms.shape[0], dtype=torch.int64).repeat_interleave(
@@ -62,8 +73,8 @@ class HDF5Dataset(Dataset):
         atoms_idx += ptr[batch] - atoms_ptr[batch]
 
         # Load atoms from atom's indices
-        x = torch.from_numpy(self.data_file["x"][atoms_idx])
-        z = torch.from_numpy(self.data_file["z"][atoms_idx])
+        x = torch.from_numpy(self.dataset("x")[atoms_idx])
+        z = torch.from_numpy(self.dataset("z")[atoms_idx])
 
         # Build validated structures
         samples = Structures(
@@ -160,7 +171,7 @@ class HDF5Dataset(Dataset):
             if field.name.startswith("_"):
                 continue
 
-            dtype = cls.get_tensor_type(field.type)
+            dtype = cls.get_tensor_type(str(field.type))
 
             if dtype is None:
                 continue

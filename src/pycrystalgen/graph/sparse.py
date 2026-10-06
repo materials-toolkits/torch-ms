@@ -4,6 +4,8 @@ import torch
 import torch.nn.functional as F
 from jaxtyping import Bool, Float, Int, UInt32, Num
 
+Reduce = Literal["sum", "mean", "prod", "amax", "amin", "hash"]
+
 
 def mix32(x: UInt32[torch.Tensor, "..."]) -> UInt32[torch.Tensor, "..."]:
     """
@@ -27,7 +29,7 @@ def scatter(
     src: Num[torch.Tensor, "n ..."],
     index: Int[torch.Tensor, "n"],
     n_out: int,
-    reduce: Literal["sum", "mean", "prod", "amax", "amin", "hash"] = "sum",
+    reduce: Reduce = "sum",
 ) -> Float[torch.Tensor, "n_out ..."]:
     """Aggregate src values into n_out slots according to index.
 

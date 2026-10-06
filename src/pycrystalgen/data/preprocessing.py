@@ -7,6 +7,7 @@ import re
 import resource
 import time
 from dataclasses import dataclass, field
+from multiprocessing.synchronize import Event
 from typing import Callable, Optional, TextIO
 
 import torch
@@ -43,7 +44,7 @@ class Preprocessing:
     filter: Optional[Callable[[Structures], torch.Tensor]] = None
     queue_raw_batch: Optional[mp.Queue] = field(default=None, init=False, repr=False)
     queue_structures: Optional[mp.Queue] = field(default=None, init=False, repr=False)
-    finished: Optional[mp.Event] = field(default=None, init=False, repr=False)
+    finished: Optional[Event] = field(default=None, init=False, repr=False)
 
     def setup_multiprocessing(self) -> None:
         """Initialize multiprocessing queues and event."""
@@ -55,9 +56,26 @@ class Preprocessing:
         if self.num_workers > 0:
             self.setup_multiprocessing()
 
+    def multiprocessing(self) -> tuple[mp.Queue, mp.Queue, Event]:
+        """Get the queues of raw batches and structures, and the finished event.
+
+        Raises:
+            RuntimeError: If multiprocessing is not set up (num_workers is 0).
+        """
+        if (
+            self.queue_raw_batch is None
+            or self.queue_structures is None
+            or self.finished is None
+        ):
+            raise RuntimeError("multiprocessing is not set up, num_workers must be > 0")
+
+        return self.queue_raw_batch, self.queue_structures, self.finished
+
 
 def _load_cif(args: Preprocessing):
     """Load CIF file and put batches into queue."""
+    queue_raw_batch, _, finished = args.multiprocessing()
+
     try:
         with ChunkedCifLoader(
             args.source, args.batch_size, args.chunk_size
@@ -73,19 +91,19 @@ def _load_cif(args: Preprocessing):
                 progress.n = batch_loader.fetched_size
                 progress.refresh()
 
-                args.queue_raw_batch.put(batch)
-                while args.queue_raw_batch.qsize() >= args.prefetch:
+                queue_raw_batch.put(batch)
+                while queue_raw_batch.qsize() >= args.prefetch:
                     time.sleep(0.001)
 
-                    if args.finished.is_set():
-                        args.queue_raw_batch.put(None)
+                    if finished.is_set():
+                        queue_raw_batch.put(None)
                         return
 
-            args.queue_raw_batch.put(None)
-            args.finished.wait()
+            queue_raw_batch.put(None)
+            finished.wait()
 
     except Exception as e:
-        args.queue_raw_batch.put(None)
+        queue_raw_batch.put(None)
         raise e
 
 
@@ -113,30 +131,31 @@ def _parse(parser: CifParser, batch: str, args: Preprocessing) -> Structures | N
 
 def _parse_batch(args: Preprocessing):
     """Parse CIF batches from queue and put structures in another queue."""
+    queue_raw_batch, queue_structures, finished = args.multiprocessing()
     parser = CifParser()
 
-    next_batch = args.queue_raw_batch.get()
+    next_batch = queue_raw_batch.get()
     while next_batch is not None:
         structures = _parse(parser, next_batch, args)
 
         while True:
             time.sleep(0.001)
 
-            if args.finished.is_set():
-                args.queue_structures.put(None)
+            if finished.is_set():
+                queue_structures.put(None)
                 return
 
-            if args.queue_structures.qsize() < args.prefetch:
+            if queue_structures.qsize() < args.prefetch:
                 break
 
         if structures is not None:
-            args.queue_structures.put(structures)
+            queue_structures.put(structures)
 
-        next_batch = args.queue_raw_batch.get()
+        next_batch = queue_raw_batch.get()
 
-    args.queue_raw_batch.put(None)
-    args.queue_structures.put(None)
-    args.finished.wait()
+    queue_raw_batch.put(None)
+    queue_structures.put(None)
+    finished.wait()
 
 
 def _queue_iterator(queue: mp.Queue, num_workers: int):
@@ -153,8 +172,10 @@ def _queue_iterator(queue: mp.Queue, num_workers: int):
 
 def _save_dataset(args: Preprocessing):
     """Save structures from queue to HDF5 file."""
+    _, queue_structures, _ = args.multiprocessing()
+
     HDF5Dataset.from_structures(
-        args.destination, _queue_iterator(args.queue_structures, args.num_workers)
+        args.destination, _queue_iterator(queue_structures, args.num_workers)
     )
 
 
@@ -200,6 +221,8 @@ def preprocessing(args: Preprocessing) -> None:
 
 def _preprocessing_multiprocess(args: Preprocessing):
     """Preprocess CIF file using multiple processes."""
+    _, _, finished = args.multiprocessing()
+
     loader_process = mp.Process(
         target=_load_cif,
         args=(args,),
@@ -219,7 +242,7 @@ def _preprocessing_multiprocess(args: Preprocessing):
     saver_process.start()
 
     saver_process.join()
-    args.finished.set()
+    finished.set()
     loader_process.join()
     for parser in parser_process:
         parser.join()
@@ -292,6 +315,9 @@ class ChunkedCifLoader:
                 return consumed
 
             return None
+
+        if self._file is None:
+            raise RuntimeError("file is not opened, use the loader in a with block")
 
         next_chunk = self._file.read(self.chunk_size)
         self.fetched_size += len(next_chunk)

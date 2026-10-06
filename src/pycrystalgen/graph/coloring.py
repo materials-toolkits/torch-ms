@@ -103,8 +103,6 @@ def color_refinement(
         ).to(torch.uint32)
 
         equivalent = equivalent_partition(_xor4(colors), _xor4(next_color), structures.batch)
-        
-        print(equivalent)
 
         if equivalent.all():
             break

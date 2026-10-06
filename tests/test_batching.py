@@ -288,10 +288,12 @@ class TestStructuresDevice:
         fields["lattice"] = torch.randn(2, 3, 3).cuda()
         fields["x"] = torch.randn(4, 3).cuda()
         fields["z"] = torch.randint(1, 100, (4,)).cuda()
+        fields["num_atoms"] = fields["num_atoms"].cuda()
 
         struct = Structures(**fields)
 
         assert struct.device() == torch.device("cuda:0")
+        assert struct.num_atoms.device == torch.device("cuda:0")
         assert struct.lattice.device == torch.device("cuda:0")
         assert struct.x.device == torch.device("cuda:0")
         assert struct.z.device == torch.device("cuda:0")

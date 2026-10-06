@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
-
 import torch
-from torch._prims_common import Tensor
 import torch.nn.functional as F
 from jaxtyping import Float, Int
 
-from pycrystalgen.data.batching import Structures
+from pycrystalgen.data.batching import Structures, TensorLike
 from pycrystalgen.graph.geometry import edges_distances
-from pycrystalgen.graph.sparse import scatter
+from pycrystalgen.graph.sparse import Reduce, scatter
 
 
 class InvalidGraph(Exception):
@@ -23,7 +20,7 @@ class InvalidStructures(Exception):
     """Exception raised when references on structures is not a Structures object"""
 
 
-@dataclass
+@dataclass(init=False)
 class Graph:
     """Container for batched crystal structure graphs.
 
@@ -43,19 +40,70 @@ class Graph:
     edge_shift: Int[torch.Tensor, "n_edges 3"]
     num_atoms: Int[torch.Tensor, "n_struct"]
     num_edges: Int[torch.Tensor, "n_struct"]
-    edge_batch: Int[torch.Tensor, "n_edges"] | None = None
-    edge_ptr: Int[torch.Tensor, "n_struct+1"] | None = None
-    structures: Structures | None = None
-    _validate: bool = False
+    edge_batch: Int[torch.Tensor, "n_edges"]
+    edge_ptr: Int[torch.Tensor, "n_struct+1"]
+    structures: Structures | None
+    _validate: bool
 
-    def __post_init__(self):
+    def __init__(
+        self,
+        edge_index: TensorLike,
+        edge_shift: TensorLike,
+        num_atoms: TensorLike,
+        num_edges: TensorLike,
+        edge_batch: TensorLike | None = None,
+        edge_ptr: TensorLike | None = None,
+        structures: Structures | None = None,
+        _validate: bool = False,
+    ):
+        self.edge_index = self.as_tensor("edge_index", edge_index)
+        self.edge_shift = self.as_tensor("edge_shift", edge_shift)
+        self.num_atoms = self.as_tensor("num_atoms", num_atoms)
+        self.num_edges = self.as_tensor("num_edges", num_edges)
+
+        # Missing fields are derived from num_edges, they are checked with
+        # the given ones in check_tensors.
+        counts = self.num_edges.flatten().long().clamp(min=0)
+
+        if edge_batch is None:
+            self.edge_batch = torch.arange(
+                len(counts), dtype=torch.int64, device=counts.device
+            ).repeat_interleave(counts)
+        else:
+            self.edge_batch = self.as_tensor("edge_batch", edge_batch)
+
+        if edge_ptr is None:
+            self.edge_ptr = F.pad(torch.cumsum(counts, dim=0), (1, 0), value=0)
+        else:
+            self.edge_ptr = self.as_tensor("edge_ptr", edge_ptr)
+
+        self.structures = structures
+
+        self._validate = _validate
         if self._validate:
             return
+
         self.check_tensors()
+
         self._validate = True
 
+    @classmethod
+    def as_tensor(cls, field: str, values: TensorLike) -> torch.Tensor:
+        """Convert the values of a field to a tensor, tensors are left unchanged.
+
+        Raises:
+            InvalidGraph: If values cannot be converted to a tensor.
+        """
+        if isinstance(values, torch.Tensor):
+            return values
+
+        try:
+            return torch.tensor(values, dtype=torch.int64)
+        except (TypeError, ValueError) as e:
+            raise InvalidGraph(f"invalid field {field}: {e}") from e
+
     def check_tensors(self):
-        """Validate graph data and fill derived fields.
+        """Validate graph data and cast fields to their dtype.
 
         Raises:
             InvalidGraph: If edge or structure data is invalid.
@@ -68,23 +116,12 @@ class Graph:
                 "reference to structures must be a Structures object"
             )
 
-        device = torch.device("cpu")
-        if isinstance(self.edge_index, torch.Tensor):
-            device = self.edge_index.device
+        device = self.edge_index.device
 
         n_struct = len(self.num_atoms)
 
         if n_struct < 1:
             raise InvalidGraph("must contain at least one structure")
-
-        # convert num_edges early to compute n_edges
-        if not isinstance(self.num_edges, torch.Tensor):
-            try:
-                self.num_edges = torch.tensor(
-                    self.num_edges, dtype=torch.int64, device=device
-                )
-            except TypeError as e:
-                raise InvalidGraph(f"invalid field num_edges: {e}") from e
 
         n_edges = int(self.num_edges.sum())
 
@@ -100,24 +137,12 @@ class Graph:
         if (self.num_atoms <= 0).any():
             raise InvalidGraph("num_atoms must be positive for every structure")
 
-        self.to_tensor(
-            "edge_batch",
-            dtype=torch.int64,
-            shape=(n_edges,),
-            device=device,
-            default=lambda g: torch.arange(
-                n_struct, dtype=torch.int64, device=device
-            ).repeat_interleave(g.num_edges),
-        )
+        self.to_tensor("edge_batch", dtype=torch.int64, shape=(n_edges,), device=device)
         if n_edges > 0 and (self.edge_batch[:-1] > self.edge_batch[1:]).any():
             raise InvalidGraph("edges must be ordered by structure in edge_batch")
 
         self.to_tensor(
-            "edge_ptr",
-            dtype=torch.int64,
-            shape=(n_struct + 1,),
-            device=device,
-            default=lambda g: F.pad(torch.cumsum(g.num_edges, dim=0), (1, 0), value=0),
+            "edge_ptr", dtype=torch.int64, shape=(n_struct + 1,), device=device
         )
 
     def device(self) -> torch.device:
@@ -138,7 +163,7 @@ class Graph:
     def aggregate_edges_to_nodes(
         self,
         src: Float[torch.Tensor, "n_edges ..."],
-        reduce: str = "sum",
+        reduce: Reduce = "sum",
     ) -> Float[torch.Tensor, "n_atoms ..."]:
         """Aggregate per-edge features to receiver nodes (message passing).
 
@@ -154,7 +179,7 @@ class Graph:
     def aggregate_nodes_to_structures(
         self,
         src: Float[torch.Tensor, "n_atoms ..."],
-        reduce: str = "sum",
+        reduce: Reduce = "sum",
     ) -> Float[torch.Tensor, "n_struct ..."]:
         """Aggregate per-node features to structures (global pooling).
 
@@ -173,7 +198,7 @@ class Graph:
     def aggregate_edges_to_structures(
         self,
         src: Float[torch.Tensor, "n_edges ..."],
-        reduce: str = "sum",
+        reduce: Reduce = "sum",
     ) -> Float[torch.Tensor, "n_struct ..."]:
         """Aggregate per-edge features to structures (global pooling).
 
@@ -193,24 +218,16 @@ class Graph:
         dtype: torch.dtype,
         shape: tuple[int, ...],
         device: torch.device,
-        default: Callable[[Graph], torch.Tensor] | None = None,
     ) -> None:
-        values = getattr(self, field)
+        """Check a field and cast it to the specified dtype.
 
-        if values is None:
-            if default is None:
-                raise InvalidGraph(f'no default value for "{field}"')
-            tensor = default(self)
-        elif not isinstance(values, torch.Tensor):
-            try:
-                tensor = torch.tensor(values, dtype=dtype)
-            except TypeError as e:
-                raise InvalidGraph(f"invalid field {field}: {e}") from e
-        else:
-            tensor = values
+        Raises:
+            InvalidGraph: If field value is invalid or incompatible.
+        """
+        tensor: torch.Tensor = getattr(self, field)
 
         if tensor.dtype != dtype:
-            tensor = tensor.type(dtype)
+            tensor = tensor.to(dtype)
 
         if tensor.shape != shape:
             raise InvalidGraph(
