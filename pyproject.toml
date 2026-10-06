@@ -23,6 +23,7 @@ dev = [
     "black>=26.3.1",
     "huggingface-hub>=2.1.1",
     "poethepoet>=0.34.0",
+    "pyarrow>=25.0.1",
     "pylint>=4.0.5",
     "pymatgen>=2025.10.7",
     "pyright>=1.1.408",
