@@ -248,3 +248,35 @@ class TestFromHub:
 
         assert calls == [("user/repo", "test.h5", "dataset", {"revision": "main"})]
         assert len(dataset) == 4
+
+
+class TestSingleAtom:
+    """Anti-regression: structures with a single atom must be readable."""
+
+    @pytest.fixture
+    def single_atom(self):
+        return Structures(
+            lattice=torch.eye(3).unsqueeze(0) * 2.5,
+            x=torch.tensor([[0.0, 0.0, 0.0]]),
+            z=torch.tensor([26]),
+        )
+
+    def test_single_atom_alone(self, tmp_path, single_atom):
+        hdf5_path = tmp_path / "test.h5"
+        HDF5Dataset.from_structures(hdf5_path, [single_atom])
+
+        loaded = HDF5Dataset(hdf5_path)[0]
+        assert torch.equal(loaded.z, torch.tensor([26]))
+        assert loaded.x.shape == (1, 3)
+        assert torch.equal(loaded.num_atoms, torch.tensor([1]))
+
+    def test_single_atom_in_batch(self, tmp_path, single_atom, diamond_struct):
+        hdf5_path = tmp_path / "test.h5"
+        HDF5Dataset.from_structures(
+            hdf5_path, [diamond_struct, single_atom, diamond_struct]
+        )
+
+        dataset = HDF5Dataset(hdf5_path)
+        assert torch.equal(dataset[1].z, torch.tensor([26]))
+        assert dataset[1].x.shape == (1, 3)
+        assert torch.equal(dataset[:].num_atoms, torch.tensor([8, 1, 8]))

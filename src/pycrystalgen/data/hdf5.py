@@ -73,8 +73,8 @@ class HDF5Dataset(Dataset):
         atoms_idx += ptr[batch] - atoms_ptr[batch]
 
         # Load atoms from atom's indices
-        x = torch.from_numpy(self.dataset("x")[atoms_idx])
-        z = torch.from_numpy(self.dataset("z")[atoms_idx])
+        x = torch.from_numpy(self.dataset("x")[atoms_idx.numpy()])
+        z = torch.from_numpy(self.dataset("z")[atoms_idx.numpy()])
 
         # Build validated structures
         samples = Structures(
