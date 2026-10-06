@@ -15,10 +15,22 @@ from pycrystalgen.data.hull import Hull, energy_above_reference, load_hull
 from pycrystalgen.estimator.calibration import load_correction
 from pycrystalgen.estimator.orb import OrbEnergyModel
 
-HUB_REPOSITORY = "materials-toolkits/lematerial"
-HUB_CORRECTION = "energy_correction_orb.hdf5"
-HUB_HULL = "hull.hdf5"
 DEFAULT_MODEL = "orb-v3-conservative-inf-mpa"
+
+# Estimator of the energies of LeMat-Bulk, see EnergyEstimator.from_lematerial.
+# Files of the Hugging Face dataset repository materials-toolkits/lematerial,
+# https://huggingface.co/datasets/materials-toolkits/lematerial
+LEMATERIAL_REPOSITORY = "materials-toolkits/lematerial"
+# correction fitted on the structures of LeMat-Bulk (compatible_pbe) from the
+# Materials Project and Alexandria, for orb-v3-conservative-inf-mpa
+LEMATERIAL_CORRECTION = "energy_correction_orb.hdf5"
+# convex hull of the structures of LeMat-Bulk (compatible_pbe) from the
+# Materials Project and Alexandria; the structures from OQMD are left out
+LEMATERIAL_HULL = "hull.hdf5"
+LEMATERIAL_HULL_SOURCE = (
+    "convex hull of LeMat-Bulk compatible_pbe, structures of the Materials Project "
+    "and Alexandria only (OQMD left out)"
+)
 
 
 def to_device(structures: Structures, device: torch.device | str) -> Structures:
@@ -76,22 +88,30 @@ class EnergyEstimator:
     the energies of this dataset. With a convex hull of the same dataset (see
     pycrystalgen.data.hull), it gives the energy above this hull.
 
-    The correction and the hull of from_hub are the ones of the structures of
-    LeMat-Bulk from the Materials Project and Alexandria. They do not use the
-    structures from OQMD, whose energies are shifted for some elements: for
-    them the estimated energy is on the scale of the two other sources, not
-    the energy stored in LeMat-Bulk.
+    from_lematerial loads the estimator of the energies of LeMat-Bulk: its
+    correction and its hull are the ones of the structures of LeMat-Bulk from
+    the Materials Project and Alexandria. They do not use the structures from
+    OQMD, whose energies are shifted for some elements: for them the estimated
+    energy is on the scale of the two other sources, not the energy stored in
+    LeMat-Bulk.
 
     Args:
         model: Pretrained model.
         correction: Correction in eV/atom indexed by atomic number, shape
             (128,), or None for the energy of the model.
         hull: Convex hull the estimated energies are compared to, or None.
+        hull_source: Description of where the hull comes from, shown by
+            repr(estimator).
+
+    Attributes:
+        hull_source: Where the hull comes from: the file it was loaded from
+            and, for from_lematerial, the structures it was built with.
 
     Example:
         Energy above the convex hull of LeMat-Bulk::
 
-            estimator = EnergyEstimator.from_hub(device="cuda")
+            estimator = EnergyEstimator.from_lematerial(device="cuda")
+            print(estimator.hull_source)
 
             # batch of structures on the device of the model
             above = estimator.energy_above_hull(structures)
@@ -107,11 +127,13 @@ class EnergyEstimator:
         model: OrbEnergyModel,
         correction: Float[np.ndarray, "128"] | None = None,
         hull: Hull | None = None,
+        hull_source: str | None = None,
     ):
         self.model = model
         self.device = next(model.parameters()).device
         self.correction: torch.Tensor | None = None
         self.hull = hull
+        self.hull_source = hull_source if hull is not None else None
 
         if correction is not None:
             self.correction = torch.tensor(
@@ -153,42 +175,77 @@ class EnergyEstimator:
                 )
 
         hull = None if hull_file is None else load_hull(hull_file)
+        hull_source = None if hull_file is None else f"file {os.fspath(hull_file)}"
         model = OrbEnergyModel.from_pretrained(name or DEFAULT_MODEL, device=device)
 
-        return cls(model, correction, hull)
+        return cls(model, correction, hull, hull_source)
 
     @classmethod
-    def from_hub(
+    def from_lematerial(
         cls,
-        repo_id: str = HUB_REPOSITORY,
-        filename: str = HUB_CORRECTION,
-        hull_filename: str | None = HUB_HULL,
         device: torch.device | str | None = None,
+        hull: bool = True,
+        revision: str | None = None,
     ) -> EnergyEstimator:
         """Load the estimator of the energies of LeMat-Bulk (PBE).
 
-        The correction and the hull are downloaded from a Hugging Face dataset
-        repository, and the model the correction was fitted for is loaded.
+        The model is orb-v3-conservative-inf-mpa. The correction and the hull
+        are downloaded from the Hugging Face dataset repository
+        materials-toolkits/lematerial:
+
+        * "energy_correction_orb.hdf5": correction of the energies of the
+          model, fitted on structures of LeMat-Bulk (compatible_pbe) from the
+          Materials Project and Alexandria.
+        * "hull.hdf5": convex hull of the structures of LeMat-Bulk
+          (compatible_pbe) from the Materials Project and Alexandria, built
+          from their DFT total energies by scripts/build_lematerial.py --hull.
+          The structures of LeMat-Bulk from OQMD are left out: their energies
+          are shifted for nine elements (Gd, Cu, Ni, Pu, Bi, Pa, Fe, Np, Re).
+          It is not the hull of LeMat-Bulk-DFT-Hull-All, which mixes the three
+          sources and gives the energy_above_hull stored in the dataset.
+
         Requires huggingface_hub (pip install pycrystalgen[hub]).
 
         Args:
-            repo_id: Dataset repository.
-            filename: Correction in the repository.
-            hull_filename: Hull in the repository, None for no hull.
             device: Device of the model.
+            hull: If False the hull is not loaded: the estimator only gives
+                total energies.
+            revision: Revision of the repository, the last one by default.
         """
         from huggingface_hub import (  # pylint: disable=import-outside-toplevel
             hf_hub_download,
         )
 
-        correction_file = hf_hub_download(repo_id, filename, repo_type="dataset")
+        def fetch(filename: str) -> str:
+            if revision is None:
+                return hf_hub_download(
+                    LEMATERIAL_REPOSITORY, filename, repo_type="dataset"
+                )
+            return hf_hub_download(
+                LEMATERIAL_REPOSITORY, filename, repo_type="dataset", revision=revision
+            )
 
-        hull_file = None
-        if hull_filename is not None:
-            hull_file = hf_hub_download(repo_id, hull_filename, repo_type="dataset")
+        estimator = cls.from_pretrained(
+            correction_file=fetch(LEMATERIAL_CORRECTION),
+            hull_file=fetch(LEMATERIAL_HULL) if hull else None,
+            device=device,
+        )
 
-        return cls.from_pretrained(
-            correction_file=correction_file, hull_file=hull_file, device=device
+        if hull:
+            estimator.hull_source = (
+                f"{LEMATERIAL_HULL_SOURCE}: {LEMATERIAL_HULL} of the Hugging Face "
+                f"dataset {LEMATERIAL_REPOSITORY}"
+                + ("" if revision is None else f", revision {revision}")
+            )
+
+        return estimator
+
+    def __repr__(self) -> str:
+        correction = "none" if self.correction is None else "per element"
+        hull = "none" if self.hull is None else self.hull_source or "unknown source"
+        return (
+            f"EnergyEstimator(model={type(self.model).__name__}, "
+            f"correction={correction}, hull={hull})"
         )
 
     @torch.no_grad()
@@ -248,7 +305,7 @@ class EnergyEstimator:
     def _reference_hull(self) -> Hull:
         if self.hull is None:
             raise ValueError(
-                "the estimator has no hull: load one with from_hub or from_pretrained"
+                "the estimator has no hull: load one with from_lematerial or from_pretrained"
             )
         return self.hull
 

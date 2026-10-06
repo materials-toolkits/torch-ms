@@ -32,20 +32,24 @@ Preprocessed datasets are published on Hugging Face, in the same HDF5 format, an
 directly as batched `Structures`:
 
 ```python
-from pycrystalgen.data import HDF5Dataset  # needs the "hub" extra
+from pycrystalgen.data import load_dataset  # needs the "hub" extra
 
-dataset = HDF5Dataset.from_hub("materials-toolkits/mp-20", "train.hdf5")
+dataset = load_dataset("mp-20", "train")  # or load_dataset("mp-20/train")
 structures = dataset[:32]
 ```
 
-| Dataset | Repository | Files | Structures | Labels |
-|---|---|---|---|---|
-| Perov-5 | [materials-toolkits/perov-5](https://huggingface.co/datasets/materials-toolkits/perov-5) | `train`, `val`, `test` | 18,928 | formation energy, band gap |
-| Carbon-24 | [materials-toolkits/carbon-24](https://huggingface.co/datasets/materials-toolkits/carbon-24) | `train`, `val`, `test` | 10,153 | total energy |
-| MP-20 | [materials-toolkits/mp-20](https://huggingface.co/datasets/materials-toolkits/mp-20) | `train`, `val`, `test` | 45,229 | formation energy, energy above hull, band gap |
-| Materials Project (2026.09.28) | [materials-toolkits/materials-project](https://huggingface.co/datasets/materials-toolkits/materials-project) | `all` | 271,325 | total energy, formation energy, energy above hull, band gap |
-| OQMD (v1.8) | [materials-toolkits/oqmd](https://huggingface.co/datasets/materials-toolkits/oqmd) | `all`, `unique` | 1,407,269 / 1,259,553 | total energy, formation energy, stability, band gap |
-| LeMat-Bulk (PBE) | [materials-toolkits/lematerial](https://huggingface.co/datasets/materials-toolkits/lematerial) | `all`, `unique` | 5,335,299 / 4,927,038 | total energy, energy above hull |
+`load_dataset` takes the name of the first column and a split; the default split is the first
+one listed. `available_datasets()` lists them, `dataset_url("oqmd", "unique")` gives the URL of
+a file, and `HDF5Dataset.from_hub(repo_id, filename)` loads a file of any repository.
+
+| Name | Dataset | Repository | Splits | Structures | Labels |
+|---|---|---|---|---|---|
+| `perov-5` | Perov-5 | [materials-toolkits/perov-5](https://huggingface.co/datasets/materials-toolkits/perov-5) | `train`, `val`, `test` | 18,928 | formation energy, band gap |
+| `carbon-24` | Carbon-24 | [materials-toolkits/carbon-24](https://huggingface.co/datasets/materials-toolkits/carbon-24) | `train`, `val`, `test` | 10,153 | total energy |
+| `mp-20` | MP-20 | [materials-toolkits/mp-20](https://huggingface.co/datasets/materials-toolkits/mp-20) | `train`, `val`, `test` | 45,229 | formation energy, energy above hull, band gap |
+| `materials-project` | Materials Project (2026.09.28) | [materials-toolkits/materials-project](https://huggingface.co/datasets/materials-toolkits/materials-project) | `all` | 271,325 | total energy, formation energy, energy above hull, band gap |
+| `oqmd` | OQMD (v1.8) | [materials-toolkits/oqmd](https://huggingface.co/datasets/materials-toolkits/oqmd) | `all`, `unique` | 1,407,269 / 1,259,553 | total energy, formation energy, stability, band gap |
+| `lematerial` | LeMat-Bulk (PBE) | [materials-toolkits/lematerial](https://huggingface.co/datasets/materials-toolkits/lematerial) | `all`, `unique` | 5,335,299 / 4,927,038 | total energy, energy above hull |
 
 Datasets are complete and unfiltered: unphysical labels of the sources are kept, filter
 them when loading or preprocessing. Missing labels are NaN. `unique` files drop the
@@ -148,7 +152,8 @@ from pycrystalgen.data import HDF5Dataset
 from pycrystalgen.estimator import EnergyEstimator
 
 # model, correction and convex hull of LeMat-Bulk, needs the "hub" extra
-estimator = EnergyEstimator.from_hub(device="cuda")
+estimator = EnergyEstimator.from_lematerial(device="cuda")
+print(estimator.hull_source)
 
 # dataset: total energy in eV and energy above the hull in eV/atom
 energy, above = estimator.predict_energy_above_hull(HDF5Dataset("structures.hdf5"))
@@ -156,6 +161,12 @@ energy, above = estimator.predict_energy_above_hull(HDF5Dataset("structures.hdf5
 # batch of Structures on the device of the model
 above = estimator.energy_above_hull(structures)
 ```
+
+`from_lematerial` downloads `energy_correction_orb.hdf5` and `hull.hdf5` from the
+[LeMaterial dataset](https://huggingface.co/datasets/materials-toolkits/lematerial). The hull
+is the convex hull of the structures of LeMat-Bulk (`compatible_pbe`) from the Materials
+Project and Alexandria, without its structures from OQMD (see above); `estimator.hull_source`
+says so. `EnergyEstimator.from_pretrained(hull_file=...)` takes another hull.
 
 The energy above the hull is negative for a structure estimated more stable than the hull,
 and NaN for a structure with an element absent from the hull. `estimator(structures)` and

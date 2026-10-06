@@ -854,7 +854,9 @@ def test_from_pretrained_loads_correction_and_hull(tmp_path, float_model, monkey
     assert torch.isclose(above[0], torch.tensor(0.25, dtype=torch.float64), atol=1e-5)
 
 
-def test_from_hub_downloads_correction_and_hull(tmp_path, float_model, monkeypatch):
+def test_from_lematerial_downloads_correction_and_hull(
+    tmp_path, float_model, monkeypatch
+):
     import sys
     import types
 
@@ -882,7 +884,7 @@ def test_from_hub_downloads_correction_and_hull(tmp_path, float_model, monkeypat
         OrbEnergyModel, "from_pretrained", lambda name, device=None: float_model
     )
 
-    estimator = EnergyEstimator.from_hub()
+    estimator = EnergyEstimator.from_lematerial()
 
     assert calls == [
         ("materials-toolkits/lematerial", "energy_correction_orb.hdf5", "dataset"),
@@ -890,3 +892,44 @@ def test_from_hub_downloads_correction_and_hull(tmp_path, float_model, monkeypat
     ]
     assert estimator.hull is not None and estimator.correction is not None
     assert estimator.energy_above_hull(Structures.zincblende()).shape == (1,)
+
+    # where the hull comes from
+    for expected in (
+        "LeMat-Bulk compatible_pbe",
+        "Materials Project",
+        "Alexandria",
+        "OQMD left out",
+        "hull.hdf5",
+        "materials-toolkits/lematerial",
+    ):
+        assert expected in estimator.hull_source
+        assert expected in repr(estimator)
+
+    calls.clear()
+    without = EnergyEstimator.from_lematerial(hull=False)
+    assert calls == [
+        ("materials-toolkits/lematerial", "energy_correction_orb.hdf5", "dataset")
+    ]
+    assert without.hull is None and without.hull_source is None
+    assert "hull=none" in repr(without)
+    with pytest.raises(ValueError, match="from_lematerial"):
+        without.energy_above_hull(Structures.zincblende())
+
+
+def test_hull_source_of_a_file(tmp_path, float_model, monkeypatch):
+    path, _ = hull_file(tmp_path, float_model)
+    monkeypatch.setattr(
+        OrbEnergyModel, "from_pretrained", lambda name, device=None: float_model
+    )
+
+    estimator = EnergyEstimator.from_pretrained(hull_file=path)
+    assert estimator.hull_source == f"file {path}"
+
+    from pycrystalgen.data.hull import load_hull
+
+    assert EnergyEstimator(float_model, hull=load_hull(path)).hull_source is None
+    assert "unknown source" in repr(EnergyEstimator(float_model, hull=load_hull(path)))
+    assert (
+        EnergyEstimator(float_model, hull_source="ignored without hull").hull_source
+        is None
+    )
