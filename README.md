@@ -28,16 +28,64 @@ uv run python main.py
 
 ## Datasets
 
-Every dataset is converted to a single concatenated CIF file (P1, with
-`_energy_total`, `_energy_above_hull` and `_band_gap` tags) by a script, then
-preprocessed to HDF5 with the same command.
+Preprocessed datasets are published on Hugging Face, in the same HDF5 format, and load
+directly as batched `Structures`:
+
+```python
+from pycrystalgen.data import HDF5Dataset  # needs the "hub" extra
+
+dataset = HDF5Dataset.from_hub("materials-toolkits/mp-20", "train.hdf5")
+structures = dataset[:32]
+```
+
+| Dataset | Repository | Files | Structures | Labels |
+|---|---|---|---|---|
+| Perov-5 | [materials-toolkits/perov-5](https://huggingface.co/datasets/materials-toolkits/perov-5) | `train`, `val`, `test` | 18,928 | formation energy, band gap |
+| Carbon-24 | [materials-toolkits/carbon-24](https://huggingface.co/datasets/materials-toolkits/carbon-24) | `train`, `val`, `test` | 10,153 | total energy |
+| MP-20 | [materials-toolkits/mp-20](https://huggingface.co/datasets/materials-toolkits/mp-20) | `train`, `val`, `test` | 45,229 | formation energy, energy above hull, band gap |
+| Materials Project (2026.09.28) | [materials-toolkits/materials-project](https://huggingface.co/datasets/materials-toolkits/materials-project) | `all` | 271,325 | total energy, formation energy, energy above hull, band gap |
+| OQMD (v1.8) | [materials-toolkits/oqmd](https://huggingface.co/datasets/materials-toolkits/oqmd) | `all`, `unique` | 1,407,269 / 1,259,553 | total energy, formation energy, stability, band gap |
+| LeMat-Bulk (PBE) | [materials-toolkits/lematerial](https://huggingface.co/datasets/materials-toolkits/lematerial) | `all`, `unique` | 5,335,299 / 4,927,038 | total energy, energy above hull |
+
+Datasets are complete and unfiltered: unphysical labels of the sources are kept, filter
+them when loading or preprocessing. Missing labels are NaN. `unique` files drop the
+duplicates marked by the source (OQMD) or sharing a fingerprint (LeMat-Bulk), keeping the
+structure with the lowest energy. The dataset cards describe the selection, the labels and
+the checks of each dataset. OQMD and LeMat-Bulk come with an `*_index.parquet` giving the
+identifier of each structure in its source.
+
+### Format
+
+Flat concatenated arrays: `lattice` (n_struct, 3, 3) in angstrom, `num_atoms` (n_struct,),
+`ptr` (n_struct,) index of the first atom of each structure, `x` (n_atoms, 3) fractional
+coordinates, `z` (n_atoms,) atomic numbers, and the labels `total_energy` (eV),
+`formation_energy_per_atom` (eV/atom), `energy_above_hull` (eV/atom) and `band_gap` (eV),
+all of shape (n_struct,).
+
+### Building the datasets
+
+Every dataset is converted to a single concatenated CIF file (P1, with `_energy_total`,
+`_formation_energy_per_atom`, `_energy_above_hull` and `_band_gap` tags) by a script, then
+preprocessed to HDF5 and checked against its source. Files are written to `datasets/`.
 
 ```bash
-# LeMat-Bulk (downloaded from Hugging Face), --limit for a quick trial
+uv run python scripts/build_cdvae.py datasets              # Perov-5, Carbon-24, MP-20
+uv run python scripts/build_materials_project.py datasets  # open data bucket, no API key
+uv run python scripts/build_oqmd.py datasets               # 21 GB SQL dump, no MySQL server
+uv run python scripts/build_oqmd.py datasets --unique
+uv run python scripts/build_lematerial.py datasets         # read from Hugging Face
+uv run python scripts/build_lematerial.py datasets --unique
+```
+
+The converters can be used alone, for another source or a quick trial:
+
+```bash
+# LeMat-Bulk, --limit for a quick trial
 uv run scripts/lematerial_to_cif.py lemat.cif --limit 10000
 
 # CDVAE style CSV (MP-20, Carbon-24, Perov-5, Alex-MP-20)
 uv run scripts/csv_to_cif.py mp_20/train.csv mp_20.cif \
+    --formation-energy-col formation_energy_per_atom \
     --hull-col e_above_hull --band-gap-col band_gap
 
 # CIF to HDF5, with optional filters
@@ -45,18 +93,40 @@ uv run preprocessing lemat.cif lemat.hdf5 --num-workers 4 \
     --max-atoms 64 --exclude-elements He Ne Ar Kr Xe --max-energy-above-hull 0.1
 ```
 
-`--max-energy-above-hull 0` keeps stable materials, `0.1` stable and meta-stable.
-From Python, `Preprocessing(filter=...)` accepts any callable returning a mask of
-the structures to keep (see `pycrystalgen.data.filters.Filter`).
-
-```python
-from pycrystalgen.data import HDF5Dataset
-
-dataset = HDF5Dataset("lemat.hdf5")
-dataset = HDF5Dataset.from_hub("user/repo", "lemat.hdf5")  # needs the "hub" extra
-```
+`--max-energy-above-hull 0` keeps stable materials, `0.1` stable and meta-stable. With
+`--num-workers`, structures are not written in the order of the CIF file. From Python,
+`Preprocessing(filter=...)` accepts any callable returning a mask of the structures to
+keep (see `pycrystalgen.data.filters.Filter`).
 
 Upload a preprocessed file with `hf upload user/repo lemat.hdf5 --repo-type dataset`.
+
+### Energy above the convex hull
+
+`pycrystalgen.data.hull` computes the energy above the convex hull from total energies,
+one chemical system at a time. Energies must be comparable (same level of theory).
+
+```python
+from pycrystalgen.data.hull import energy_above_hull, energy_above_reference, load_hull
+
+# hull of a dataset, from its own structures: 0 on the hull
+above = energy_above_hull(z, num_atoms, total_energy, num_workers=8)
+
+# other structures against a saved hull: negative below the hull
+hull = load_hull("hull.hdf5")
+above = energy_above_reference(hull, z, num_atoms, total_energy)
+```
+
+`z`, `num_atoms` and `total_energy` are numpy arrays, as stored in the datasets. A saved
+hull holds the composition and the energy per atom of the structures on the hull
+(`elements`, `counts`, `ptr`, `energy_per_atom`). The same functions from the command line:
+
+```bash
+uv run python scripts/convex_hull.py dataset.hdf5 above.npy
+uv run python scripts/convex_hull.py dataset.hdf5 above.npy --fill  # only missing values
+uv run python scripts/convex_hull.py dataset.hdf5 above.npy --save-hull hull.hdf5
+uv run python scripts/convex_hull.py generated.hdf5 above.npy --reference hull.hdf5
+uv run python scripts/build_lematerial.py datasets --hull  # hull of LeMat-Bulk (PBE)
+```
 
 ## Testing
 

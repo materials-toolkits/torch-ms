@@ -1966,6 +1966,8 @@ dependencies = [
     { name = "jaxtyping", version = "0.3.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "torch" },
     { name = "tqdm" },
 ]
@@ -1997,6 +1999,7 @@ requires-dist = [
     { name = "huggingface-hub", marker = "extra == 'hub'", specifier = ">=0.30.0" },
     { name = "jaxtyping", specifier = ">=0.3.7" },
     { name = "numpy", specifier = ">=2.2.6" },
+    { name = "scipy", specifier = ">=1.15.3" },
     { name = "torch", specifier = ">=2.11.0" },
     { name = "tqdm", specifier = ">=4.67.3" },
 ]
