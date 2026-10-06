@@ -141,7 +141,13 @@ def atomic_radius(
 
     mask = (pair_idx[0] != real_target) & (dists <= threshold)
 
-    edge_shift = supercell.x[pair_idx[1][mask]].floor().long()
+    # image of the target: its coordinates in the supercell minus the ones in
+    # the cell, also exact for coordinates outside [0, 1)
+    edge_shift = (
+        (supercell.x[pair_idx[1][mask]] - structures.x[real_target[mask]])
+        .round()
+        .long()
+    )
     pair_idx[1] = real_target
     pair_idx = pair_idx[:, mask]
 

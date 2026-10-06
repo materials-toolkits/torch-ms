@@ -102,4 +102,5 @@ def edges_distances(
     edges_index: Int[torch.Tensor, "2 n_edges"],
 ) -> Float[torch.Tensor, "n_edges"]:
     edges_frac = target_x[edges_index[1]] - source_x[edges_index[0]]
-    return torch.bmm(lattice[edges_batch], edges_frac.unsqueeze(-1)).norm(dim=(-2, -1))
+    # rows of the lattice are the lattice vectors: cartesian = fractional @ lattice
+    return torch.bmm(edges_frac.unsqueeze(1), lattice[edges_batch]).norm(dim=(-2, -1))

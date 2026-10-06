@@ -156,8 +156,9 @@ class Graph:
             + self.edge_shift
             - self.structures.x[self.edge_index[0]]
         )
+        # rows of the lattice are the lattice vectors: cartesian = fractional @ lattice
         return torch.bmm(
-            self.structures.lattice[self.edge_batch], edges_frac.unsqueeze(-1)
+            edges_frac.unsqueeze(1), self.structures.lattice[self.edge_batch]
         ).norm(dim=(-2, -1))
 
     def aggregate_edges_to_nodes(
