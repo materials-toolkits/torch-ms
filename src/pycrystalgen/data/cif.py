@@ -131,7 +131,7 @@ class CifParser:
                 structures = self._parse_single_block(block)
                 parsed = ParseResult(structures=structures, block_name=block_name)
                 result.append(parsed)
-            except (ValueError, RuntimeError) as e:
+            except (ValueError, RuntimeError, NotImplementedError) as e:
                 parsed = ParseResult(error=str(e), block_name=block_name)
                 result.append(parsed)
                 logger.warning("Failed to parse block %s: %s", block_name, e)
@@ -205,7 +205,7 @@ class CifParser:
         space_group = int(space_group_match.group(1))
 
         if space_group != 1:
-            raise NotImplemented("Spacegroups other that P1 are not supported")
+            raise NotImplementedError("Spacegroups other that P1 are not supported")
 
         return space_group
 

@@ -138,7 +138,10 @@ def validate_structure(struct: "Structures", expected: dict) -> None:
 class TestPreprocessing:
     """Integration tests for preprocessing."""
 
-    def test_preprocessing_single_process(self, tmp_path, concatenated_triclinic_cif):
+    @pytest.mark.parametrize("batch_size", [32, 2, 1])
+    def test_preprocessing_single_process(
+        self, tmp_path, concatenated_triclinic_cif, batch_size
+    ):
         """Test preprocessing with single process."""
         cif_file, json_file, expected_structures = concatenated_triclinic_cif
         hdf5_file = tmp_path / "output.hdf5"
@@ -147,6 +150,7 @@ class TestPreprocessing:
             Preprocessing(
                 source=cif_file,
                 destination=hdf5_file,
+                batch_size=batch_size,
                 num_workers=0,
             )
         )
@@ -184,3 +188,44 @@ class TestPreprocessing:
         for i, expected in enumerate(expected_structures):
             struct = dataset[i]
             validate_structure(struct, expected)
+
+
+class TestPreprocessingFilter:
+    """Integration tests for filtering during preprocessing."""
+
+    @pytest.mark.parametrize("batch_size", [32, 2])
+    def test_max_atoms(self, tmp_path, concatenated_triclinic_cif, batch_size):
+        from pycrystalgen.data.filters import Filter
+
+        cif_file, _, expected_structures = concatenated_triclinic_cif
+        hdf5_file = tmp_path / "output.hdf5"
+
+        max_atoms = min(e["num_atoms"] for e in expected_structures)
+        expected = [e for e in expected_structures if e["num_atoms"] <= max_atoms]
+
+        preprocessing(
+            Preprocessing(
+                source=cif_file,
+                destination=hdf5_file,
+                batch_size=batch_size,
+                filter=Filter(max_atoms=max_atoms),
+            )
+        )
+
+        dataset = HDF5Dataset(hdf5_file)
+        assert len(dataset) == len(expected)
+
+        for i, struct in enumerate(expected):
+            validate_structure(dataset[i], struct)
+
+    def test_invalid_block_is_skipped(self, tmp_path, concatenated_triclinic_cif):
+        cif_file, _, expected_structures = concatenated_triclinic_cif
+        hdf5_file = tmp_path / "output.hdf5"
+
+        with open(cif_file, "a", encoding="utf-8") as fp:
+            fp.write("data_broken\n_symmetry_Int_Tables_number 1\n")
+
+        preprocessing(Preprocessing(source=cif_file, destination=hdf5_file))
+
+        dataset = HDF5Dataset(hdf5_file)
+        assert len(dataset) == len(expected_structures)

@@ -12,6 +12,11 @@ dependencies = [
     "tqdm>=4.67.3",
 ]
 
+[project.optional-dependencies]
+hub = [
+    "huggingface-hub>=0.30.0",
+]
+
 [dependency-groups]
 dev = [
     "ase>=3.28.0",

@@ -7,12 +7,15 @@ import re
 import resource
 import time
 from dataclasses import dataclass, field
-from typing import Optional, TextIO
+from typing import Callable, Optional, TextIO
 
+import torch
 import tqdm
 
 from pycrystalgen.data.batching import Structures
 from pycrystalgen.data.cif import CifParser
+from pycrystalgen.data.constants import symbol_to_number
+from pycrystalgen.data.filters import Filter
 from pycrystalgen.data.hdf5 import HDF5Dataset
 
 
@@ -27,6 +30,8 @@ class Preprocessing:
         num_workers: Number of worker processes (0 for single-process).
         prefetch: Number of batches to prefetch in multiprocessing mode.
         chunk_size: Size of chunks when reading input file.
+        filter: Optional callable returning a mask of the structures to keep
+            for each parsed batch (see pycrystalgen.data.filters.Filter).
     """
 
     source: str | os.PathLike
@@ -35,6 +40,7 @@ class Preprocessing:
     num_workers: int = 0
     prefetch: int = 16
     chunk_size: int = 1 << 16
+    filter: Optional[Callable[[Structures], torch.Tensor]] = None
     queue_raw_batch: Optional[mp.Queue] = field(default=None, init=False, repr=False)
     queue_structures: Optional[mp.Queue] = field(default=None, init=False, repr=False)
     finished: Optional[mp.Event] = field(default=None, init=False, repr=False)
@@ -83,13 +89,35 @@ def _load_cif(args: Preprocessing):
         raise e
 
 
+def _parse(parser: CifParser, batch: str, args: Preprocessing) -> Structures | None:
+    """Parse a batch of CIF blocks, skip invalid blocks and apply the filter.
+
+    Returns:
+        Batched structures, or None if no structure is left.
+    """
+    parsed = [
+        result.structures
+        for result in parser.parse_with_errors(batch)
+        if result.structures is not None
+    ]
+
+    if len(parsed) > 0 and args.filter is not None:
+        mask = args.filter(Structures.collate(parsed))
+        parsed = [struct for struct, keep in zip(parsed, mask.tolist()) if keep]
+
+    if len(parsed) == 0:
+        return None
+
+    return Structures.collate(parsed)
+
+
 def _parse_batch(args: Preprocessing):
     """Parse CIF batches from queue and put structures in another queue."""
     parser = CifParser()
 
     next_batch = args.queue_raw_batch.get()
     while next_batch is not None:
-        structures = parser.parse(next_batch)
+        structures = _parse(parser, next_batch, args)
 
         while True:
             time.sleep(0.001)
@@ -101,7 +129,8 @@ def _parse_batch(args: Preprocessing):
             if args.queue_structures.qsize() < args.prefetch:
                 break
 
-        args.queue_structures.put(structures)
+        if structures is not None:
+            args.queue_structures.put(structures)
 
         next_batch = args.queue_raw_batch.get()
 
@@ -143,14 +172,14 @@ def _preprocessing_single_process(args: Preprocessing):
             unit_scale=True,
         )
 
-        def update_progress(batch: str) -> Structures:
+        def update_progress(batch: str) -> Structures | None:
             progress.n = batch_loader.fetched_size
             progress.refresh()
-            return parser.parse(batch)
+            return _parse(parser, batch, args)
 
         HDF5Dataset.from_structures(
             args.destination,
-            map(update_progress, batch_loader),
+            (s for s in map(update_progress, batch_loader) if s is not None),
         )
 
 
@@ -184,6 +213,7 @@ def _preprocessing_multiprocess(args: Preprocessing):
             args=(args,),
         )
         parser.start()
+        parser_process.append(parser)
 
     saver_process = mp.Process(target=_save_dataset, args=(args,))
     saver_process.start()
@@ -339,6 +369,26 @@ def main():
         type=int,
     )
 
+    parser.add_argument(
+        "--max-atoms",
+        help="drop structures with more atoms",
+        default=None,
+        type=int,
+    )
+    parser.add_argument(
+        "--exclude-elements",
+        help="drop structures containing one of these elements (e.g. He Ne Ar)",
+        default=[],
+        nargs="*",
+    )
+    parser.add_argument(
+        "--max-energy-above-hull",
+        help="drop structures above this energy above the hull in eV/atom "
+        "(0 for stable, 0.1 for meta-stable)",
+        default=None,
+        type=float,
+    )
+
     args = parser.parse_args()
 
     if args.destination is None:
@@ -352,6 +402,11 @@ def main():
             num_workers=args.num_workers,
             prefetch=args.prefetch,
             chunk_size=args.chunk_size,
+            filter=Filter(
+                max_atoms=args.max_atoms,
+                exclude_elements=tuple(map(symbol_to_number, args.exclude_elements)),
+                max_energy_above_hull=args.max_energy_above_hull,
+            ),
         )
     )
 

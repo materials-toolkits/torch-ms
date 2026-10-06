@@ -85,6 +85,27 @@ class HDF5Dataset(Dataset):
         return samples
 
     @classmethod
+    def from_hub(cls, repo_id: str, filename: str, transform=None, **kwargs):
+        """Load a preprocessed dataset from a Hugging Face dataset repository.
+
+        Requires huggingface_hub (pip install pycrystalgen[hub]).
+
+        Args:
+            repo_id: Repository name, e.g. "user/dataset".
+            filename: Path of the HDF5 file inside the repository.
+            transform: Optional transform to apply to structures.
+            **kwargs: Forwarded to huggingface_hub.hf_hub_download
+                (revision, token, cache_dir, ...).
+        """
+        from huggingface_hub import (  # pylint: disable=import-outside-toplevel
+            hf_hub_download,
+        )
+
+        hdf5_file = hf_hub_download(repo_id, filename, repo_type="dataset", **kwargs)
+
+        return cls(hdf5_file, transform=transform)
+
+    @classmethod
     def get_tensor_type(cls, annotated_type: str) -> Union[torch.dtype, None]:
         """Get torch dtype from annotated type string."""
         types = {
@@ -99,6 +120,22 @@ class HDF5Dataset(Dataset):
                 return dtype
 
         return None
+
+    @classmethod
+    def _field_tensor(
+        cls, structures: Structures, name: str, atoms_offset: int
+    ) -> torch.Tensor:
+        """Get a field as stored on disk.
+
+        "ptr" is stored as the global index of the first atom of each structure,
+        so batches can be appended one after the other.
+        """
+        tensor = getattr(structures, name).cpu()
+
+        if name == "ptr":
+            tensor = tensor[:-1] + atoms_offset
+
+        return tensor
 
     @classmethod
     def from_structures(
@@ -128,7 +165,7 @@ class HDF5Dataset(Dataset):
             if dtype is None:
                 continue
 
-            tensor = getattr(first, field.name).cpu()
+            tensor = cls._field_tensor(first, field.name, 0)
 
             dataset = data_file.create_dataset(
                 field.name,
@@ -136,19 +173,23 @@ class HDF5Dataset(Dataset):
                 maxshape=(None, *tensor.shape[1:]),
                 dtype=dtype,
             )
-            dataset[...] = getattr(first, field.name)
+            dataset[...] = tensor
 
             offset = tensor.shape[0]
             datasets[field.name] = (dataset, offset)
 
+        atoms_offset = int(first.num_atoms.sum())
+
         for struct in iterator:
             for name, (dataset, offset) in datasets.items():
-                tensor = getattr(struct, name).cpu()
+                tensor = cls._field_tensor(struct, name, atoms_offset)
 
                 new_size = offset + tensor.shape[0]
                 dataset.resize(new_size, axis=0)
                 dataset[offset:new_size, ...] = tensor
 
                 datasets[name] = (dataset, new_size)
+
+            atoms_offset += int(struct.num_atoms.sum())
 
         data_file.close()
