@@ -15,8 +15,12 @@ The energy above the hull comes from LeMat-Bulk-DFT-Hull-All. The few
 structures without one get the energy above the convex hull computed from the
 total energies of the dataset (see pycrystalgen.data.hull).
 
-With --hull, the composition and the energy of the structures on this convex
-hull are saved, to compute the energy above the hull of other structures.
+With --hull, the composition and the energy of the structures on the convex
+hull are saved, to compute the energy above the hull of other structures. This
+hull is built from the structures of the Materials Project and Alexandria:
+the energies of OQMD are not comparable with them for some elements, see
+build_hull. The energy above the hull stored in all.hdf5 and unique.hdf5 is
+the published one, which mixes the three sources.
 """
 
 import argparse
@@ -182,12 +186,33 @@ def verify(
     return ids, stats
 
 
+# Sources of LeMat-Bulk whose structures define the convex hull, from the prefix
+# of their immutable_id: the Materials Project and Alexandria. OQMD is left out,
+# see build_hull.
+HULL_SOURCES = ("mp-", "agm")
+
+
 def build_hull(files: list[str], hull_file: Path, num_workers: int) -> dict[str, Any]:
-    """Save the convex hull of the dataset, from the energies of LeMat-Bulk.
+    """Save the convex hull of LeMat-Bulk, without the structures from OQMD.
+
+    LeMat-Bulk gathers structures from the Materials Project, Alexandria and
+    OQMD. The total energies of OQMD are not on the scale of the two others
+    for some elements: compared with them, a structure from OQMD is shifted
+    by about +9.4 eV per atom of Gd, +0.38 Cu, +0.20 Ni, +0.19 Pu, +0.16 Pa,
+    +0.14 Fe, +0.07 Np, +0.05 Re and -0.19 Bi (measured with the energies
+    predicted by orb-v3, see build_energy_correction.py; the shifts of Gd, Cu
+    and Ni are also the differences between the elemental structures of the
+    sources). A hull mixing the three sources is wrong for these elements:
+    with a negative shift (Bi), structures from OQMD are on the hull only
+    because of the shift, and hide the stable structures of the other sources.
+
+    The hull is therefore built from the structures of the Materials Project
+    and Alexandria only. Structures from OQMD and the structure without
+    identifier are compared to it afterwards, but never define it.
 
     The hull is saved to hull_file and the immutable_id of its structures to
-    "hull_index.parquet". Every structure of the dataset is then compared to
-    the saved hull, which must give back its energy above the hull.
+    "hull_index.parquet". Every structure of the two sources is then compared
+    to the saved hull, which must give back its energy above the hull.
 
     Returns:
         Statistics of the hull.
@@ -206,29 +231,43 @@ def build_hull(files: list[str], hull_file: Path, num_workers: int) -> dict[str,
     num_atoms = np.diff(species.offsets.to_numpy())
     energy = table["energy"].to_numpy(zero_copy_only=False).astype(np.float64)
 
-    above = save_hull(hull_file, z, num_atoms, energy, num_workers, progress=True)
+    ids = table["immutable_id"].to_pandas().fillna("")
+    kept = ids.str.startswith(HULL_SOURCES).to_numpy()
+    kept_atoms = np.repeat(kept, num_atoms)
+    reference = (z[kept_atoms], num_atoms[kept], energy[kept])
+
+    above = save_hull(hull_file, *reference, num_workers, progress=True)
     on_hull = above == 0.0
 
     pq.write_table(
-        table.select(["immutable_id"]).filter(pa.array(on_hull)),
+        table.select(["immutable_id"]).filter(pa.array(kept)).filter(pa.array(on_hull)),
         hull_file.with_name("hull_index.parquet"),
         compression="zstd",
     )
 
     hull = load_hull(hull_file, num_workers)
-    again = energy_above_reference(
-        hull, z, num_atoms, energy, num_workers, progress=True
-    )
+    again = energy_above_reference(hull, *reference, num_workers, progress=True)
     difference = float(np.abs(again - above).max())
     check(difference < 1e-9, f"saved hull differs from the dataset by {difference:.2e}")
     check(bool(((again == 0.0) == on_hull).all()), "saved hull has other structures")
 
+    # structures which do not define the hull, compared to it
+    left_atoms = np.repeat(~kept, num_atoms)
+    left = energy_above_reference(
+        hull, z[left_atoms], num_atoms[~kept], energy[~kept], num_workers, progress=True
+    )
+
     return {
-        "source_structures": len(above),
+        "source_structures": len(num_atoms),
+        "structures_defining_the_hull": int(kept.sum()),
         "structures_on_hull": int(on_hull.sum()),
         "chemical_systems_with_stable_structures": len(hull.stable),
         "elements": int((~np.isnan(hull.reference)).sum()),
         "max_difference_from_saved_hull": difference,
+        "structures_left_out": int((~kept).sum()),
+        "left_out_below_the_hull": int((left < 0).sum()),
+        "left_out_more_than_0.1_below_the_hull": int((left < -0.1).sum()),
+        "left_out_without_energy_above_hull": int(np.isnan(left).sum()),
     }
 
 

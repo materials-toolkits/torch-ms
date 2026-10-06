@@ -128,6 +128,54 @@ uv run python scripts/convex_hull.py generated.hdf5 above.npy --reference hull.h
 uv run python scripts/build_lematerial.py datasets --hull  # hull of LeMat-Bulk (PBE)
 ```
 
+The hull of LeMat-Bulk (`hull.hdf5` of the LeMaterial dataset) is built from its structures of
+the Materials Project and Alexandria only. LeMat-Bulk also holds structures from OQMD, whose
+total energies are shifted compared with the two other sources for nine elements (about
++9.4 eV per atom of Gd, +0.38 Cu, +0.20 Ni, +0.19 Pu, +0.16 Pa, +0.14 Fe, +0.07 Np, +0.05 Re
+and -0.19 Bi): mixed in one hull, they make it wrong for these elements. The
+`energy_above_hull` stored in `all.hdf5` and `unique.hdf5` is the published one, which mixes
+the three sources; it differs from the one of `hull.hdf5` by more than 0.001 eV/atom for 5% of
+the structures of the Materials Project and Alexandria.
+
+### Estimated total energy
+
+`pycrystalgen.estimator` estimates the PBE total energy of a structure with a pretrained
+graph network, on the scale of LeMat-Bulk, so that an energy above its convex hull can be
+computed without DFT:
+
+```python
+from huggingface_hub import hf_hub_download
+from pycrystalgen.data import HDF5Dataset
+from pycrystalgen.data.hull import energy_above_reference, load_hull
+from pycrystalgen.estimator import EnergyEstimator
+
+estimator = EnergyEstimator.from_hub(device="cuda")  # needs the "hub" extra
+dataset = HDF5Dataset("structures.hdf5")
+energy = estimator.predict(dataset)  # eV, one value per structure
+
+hull = load_hull(hf_hub_download("materials-toolkits/lematerial", "hull.hdf5", repo_type="dataset"))
+above = energy_above_reference(hull, z, num_atoms, energy)  # z, num_atoms: arrays of the dataset
+```
+
+The model is orb-v3 conservative (`orb-v3-conservative-inf-mpa`) of Orbital Materials,
+rewritten in `estimator/orb.py` for the prediction of the energy only, without any new
+dependency; the official weights (102 MB) are downloaded on the first call into
+`~/.cache/pycrystalgen`. A small energy per atom of each element, fitted on LeMat-Bulk, is
+added (`estimator/calibration.py`, `energy_correction_orb.hdf5` in the LeMaterial dataset).
+
+- The energy is the one of the structure as given: it is not relaxed. Compare relaxed
+  structures with the hull.
+- On structures of LeMat-Bulk which were not used to fit, and on OQMD structures absent from
+  the sources of the training data of the model, the mean absolute error is about
+  0.01 eV/atom (median 0.005). This is enough to tell if a structure is within 0.1 eV/atom
+  of the hull (99% agreement with DFT), not to tell if it is exactly on the hull.
+- About 600 structures per second on a laptop GPU.
+
+```bash
+uv run python scripts/build_energy_correction.py datasets  # fit the correction, test sets
+uv run python scripts/validate_energy.py datasets          # end to end validation
+```
+
 ## Testing
 
 Run testing with `pytest`:
