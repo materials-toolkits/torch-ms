@@ -14,5 +14,5 @@ build/
 dist/
 typings
 
-datasets/
+/datasets/
 site/

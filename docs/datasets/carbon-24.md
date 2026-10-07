@@ -1,0 +1,36 @@
+# Carbon-24
+
+Carbon structures with 6 to 24 atoms per cell, as released with CDVAE. The original data comes
+from the AIRSS carbon data of C. J. Pickard (2020).
+
+| Split | Structures |
+|---|---|
+| `train` | 6,091 |
+| `val` | 2,032 |
+| `test` | 2,030 |
+| total | 10,153 |
+
+```python
+dataset = load_dataset("carbon-24", "train")
+```
+
+## Labels
+
+| Field | Source column | Note |
+|---|---|---|
+| `total_energy` | `energy_per_atom` × number of atoms | eV |
+| others | – | `NaN` |
+
+The total energy is stored in 32 bits: the energy per atom recovered from it is accurate to
+about 1e-5 eV/atom.
+
+!!! warning "Energy scale"
+    Energies are around -154 eV/atom. Carbon is at -9.2 eV/atom in LeMat-Bulk: the two
+    are computed differently and cannot be compared, and the energy estimator of
+    [Energy above the hull](../guide/energy.md) is not on the scale of this dataset.
+
+## Source and checks
+
+- `https://github.com/txie-93/cdvae/tree/main/data/carbon_24`
+- Built by `scripts/build_cdvae.py`, with the same checks as [Perov-5](perov-5.md).
+- Repository: [materials-toolkits/carbon-24](https://huggingface.co/datasets/materials-toolkits/carbon-24)
