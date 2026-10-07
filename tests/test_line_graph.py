@@ -257,49 +257,124 @@ def test_dihedral_angles_change_sign_in_a_mirror():
     assert torch.allclose(rotated[~flat], angles[~flat], atol=1e-3)
 
 
-def features(structures: Structures) -> list[tuple[torch.Tensor, torch.Tensor]]:
-    """Sorted cosines of the triplets and dihedrals of each structure."""
+Labelled = tuple[torch.Tensor, torch.Tensor]
+
+
+def labelled(species: torch.Tensor, values: torch.Tensor) -> Labelled:
+    """Species and values sorted by species, then by value.
+
+    Args:
+        species: Atomic numbers of the atoms of each tuple, shape (k, n).
+        values: Value of each tuple, shape (n,).
+    """
+    # one number per tuple of species, in base 1000
+    label = torch.zeros_like(species[0])
+    for z in species:
+        label = label * 1000 + z
+
+    values, order = values.sort()
+    label, by_label = label[order].sort(stable=True)
+
+    return label, values[by_label]
+
+
+def features(structures: Structures) -> list[tuple[Labelled, Labelled]]:
+    """Angles and dihedral angles of each structure, with their species.
+
+    An angle is labelled by the elements of its atom and of the two
+    neighbours, a dihedral angle by the elements of the four atoms of its
+    chain. The values are cosines, sorted for each label.
+    """
     graph = cutoff(structures, RADIUS, self_images=True)
     vectors = graph.edges_vectors()
+    sender, receiver = structures.z[graph.edge_index]
 
+    # i→j and i→k: the atom i, then its neighbours j and k
     triplet_index, triplet_batch, _ = triplets(graph)
+    first, second = triplet_index
+    triplet_species = torch.stack([sender[first], receiver[first], receiver[second]])
     cosines = triplet_cosines(vectors, triplet_index)
 
     # first neighbours of diamond (1.54 Å) and of zincblende (2.34 Å)
     short = graph.edges_distances() <= 2.4
     quadruplet_index, quadruplet_batch, _ = quadruplets(graph, short)
+    first, middle, last = quadruplet_index
+    # u→v, v→w, w→x: the atoms u, v, w and x
+    quadruplet_species = torch.stack(
+        [sender[first], sender[middle], receiver[middle], receiver[last]]
+    )
     dihedrals = dihedral_angles(vectors, quadruplet_index).cos()
 
-    return [
-        (
-            cosines[triplet_batch == i].sort().values,
-            dihedrals[quadruplet_batch == i].sort().values,
+    result = []
+    for i in range(len(structures.num_atoms)):
+        in_triplets, in_quadruplets = triplet_batch == i, quadruplet_batch == i
+        result.append(
+            (
+                labelled(triplet_species[:, in_triplets], cosines[in_triplets]),
+                labelled(
+                    quadruplet_species[:, in_quadruplets], dihedrals[in_quadruplets]
+                ),
+            )
         )
-        for i in range(len(structures.num_atoms))
-    ]
+
+    return result
+
+
+def assert_same_labelled(a: Labelled, b: Labelled, n: int = 1, atol: float = 2e-3):
+    """The tuples of b are the ones of a, each one n times: species and values."""
+    (label_a, value_a), (label_b, value_b) = a, b
+
+    assert len(label_a) > 0
+    assert len(label_b) == n * len(label_a)
+    assert (label_b.view(-1, n) == label_a.unsqueeze(1)).all()
+    assert torch.allclose(value_b.view(-1, n), value_a.unsqueeze(1), atol=atol)
 
 
 def assert_same_features(a: Structures, b: Structures, num_cells=None):
     if num_cells is None:
         num_cells = [1] * len(a.num_atoms)
 
-    for (cos_a, dih_a), (cos_b, dih_b), n in zip(features(a), features(b), num_cells):
-        assert len(cos_a) > 0 and len(dih_a) > 0
-        assert len(cos_b) == n * len(cos_a)
-        assert len(dih_b) == n * len(dih_a)
-        assert torch.allclose(cos_b.view(-1, n), cos_a.unsqueeze(1), atol=2e-3)
-        assert torch.allclose(dih_b.view(-1, n), dih_a.unsqueeze(1), atol=2e-3)
+    for (angles_a, dihedrals_a), (angles_b, dihedrals_b), n in zip(
+        features(a), features(b), num_cells
+    ):
+        assert_same_labelled(angles_a, angles_b, n)
+        assert_same_labelled(dihedrals_a, dihedrals_b, n)
+
+
+def test_features_are_labelled_by_species():
+    # same angles in ZnS and in CdS, between other elements
+    zinc, cadmium = Structures.zincblende(), Structures.zincblende(cation=48)
+    (angles_zn, dihedrals_zn), (angles_cd, dihedrals_cd) = (
+        features(zinc)[0],
+        features(cadmium)[0],
+    )
+
+    assert torch.allclose(angles_zn[1].sort().values, angles_cd[1].sort().values)
+    assert torch.allclose(dihedrals_zn[1].sort().values, dihedrals_cd[1].sort().values)
+    assert not torch.equal(angles_zn[0], angles_cd[0])
+    assert not torch.equal(dihedrals_zn[0], dihedrals_cd[0])
+
+    # an angle at a zinc atom between two sulfur atoms, and the reverse
+    assert sorted(angles_zn[0].unique().tolist()) == [16_030_030, 30_016_016]
+    # chains alternate zinc and sulfur
+    assert sorted(dihedrals_zn[0].unique().tolist()) == [
+        16_030_016_030,
+        30_016_030_016,
+    ]
+
+    with pytest.raises(AssertionError):
+        assert_same_labelled(angles_zn, angles_cd)
 
 
 def test_same_alone_and_in_a_batch():
-    structures = make_structures()
-    alone = [features(structure)[0] for structure in structures]
+    alone = [features(structure)[0] for structure in make_structures()]
 
-    for (cos_a, dih_a), (cos_b, dih_b) in zip(alone, features(make_batch())):
+    for (angles_a, dihedrals_a), (angles_b, dihedrals_b) in zip(
+        alone, features(make_batch())
+    ):
         # same triplets and chains, up to the rounding of batched products
-        assert cos_a.shape == cos_b.shape and dih_a.shape == dih_b.shape
-        assert torch.allclose(cos_a, cos_b, atol=1e-5)
-        assert torch.allclose(dih_a, dih_b, atol=1e-5)
+        assert_same_labelled(angles_a, angles_b, atol=1e-5)
+        assert_same_labelled(dihedrals_a, dihedrals_b, atol=1e-5)
 
 
 @pytest.mark.parametrize(
