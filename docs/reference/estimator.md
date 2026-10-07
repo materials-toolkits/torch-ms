@@ -22,6 +22,12 @@
 
 ::: pycrystalgen.estimator.chgnet.weights
 
+## M3GNet
+
+::: pycrystalgen.estimator.m3gnet.model
+
+::: pycrystalgen.estimator.m3gnet.weights
+
 ## Download of weights
 
 ::: pycrystalgen.estimator.weights

@@ -126,3 +126,23 @@ included.
 
 Behaviours kept from chgnet: the cosine of an angle is multiplied by 1 - 1e-6 before the
 arc cosine, and an atom without neighbour is not an error.
+
+### M3GNet
+
+`M3gnetEnergyModel` is the M3GNet potential `M3GNet-PES-MatPES-PBE-2025.2`
+([matgl](https://github.com/materialsvirtuallab/matgl), BSD 3-Clause,
+[arXiv:2202.02450](https://arxiv.org/abs/2202.02450)), in `estimator/m3gnet/`. Atoms closer
+than 5 Å are bonded; a bond is updated from the angles it forms with the other bonds of its
+atom of at most 4 Å (`triplets` with a mask), in a basis of spherical Bessel functions and
+spherical harmonics. matgl builds these functions with sympy; they are computed here with
+torch, and their roots with scipy. Forces and stress are not included.
+
+| Against matgl 4.1.0, 40 structures | |
+|---|---|
+| Edges and angles of each structure (128,348 angles) | identical |
+| Roots of the spherical Bessel functions | identical |
+| Largest difference of energy | 1.6e-6 eV/atom |
+| Mean difference of energy | 4.6e-7 eV/atom |
+
+The model knows 89 elements, H to Bi and Ac to Pu: a structure with another element raises an
+error.
