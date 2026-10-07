@@ -36,7 +36,7 @@ def composition_matrix(
     Returns:
         Sparse matrix of shape (n_struct, 128), columns are atomic numbers.
 
-    Example:
+    Examples:
         >>> matrix = composition_matrix(np.array([1, 8, 1, 26]), np.array([3, 1]))
         >>> matrix[:, [1, 8, 26]].toarray().tolist()
         [[2.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
@@ -81,7 +81,7 @@ def fit_element_correction(
         the elements of no fitted structure, and the number of fitted
         structures containing each element, shape (128,).
 
-    Example:
+    Examples:
         Predictions miss 1 eV per hydrogen and -0.5 eV per oxygen:
 
         >>> z = np.array([1, 1, 8, 1, 8, 8, 1, 1])
@@ -141,7 +141,7 @@ def apply_element_correction(
 ) -> Float[np.ndarray, "n_struct"]:
     """Add the correction of each atom to predicted total energies.
 
-    Example:
+    Examples:
         >>> correction = np.zeros(128)
         >>> correction[[1, 8]] = [1.0, -0.5]
         >>> z, num_atoms = np.array([1, 1, 8, 8]), np.array([3, 1])

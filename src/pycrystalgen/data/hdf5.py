@@ -2,8 +2,8 @@
 
 import dataclasses
 import os
-from collections.abc import Iterable
-from typing import Union
+from collections.abc import Callable, Iterable
+from typing import Any, Union
 import logging
 
 import h5py
@@ -20,7 +20,11 @@ logger = logging.getLogger(__name__)
 class HDF5Dataset(Dataset):
     """HDF5 dataset for loading crystal structures from HDF5 files."""
 
-    def __init__(self, hdf5_file: str | os.PathLike, transform=None):
+    def __init__(
+        self,
+        hdf5_file: str | os.PathLike,
+        transform: Callable[[Structures], Structures] | None = None,
+    ):
         self.data_file = h5py.File(hdf5_file, "r")
         self.transform = transform
 
@@ -100,7 +104,13 @@ class HDF5Dataset(Dataset):
         return samples
 
     @classmethod
-    def from_hub(cls, repo_id: str, filename: str, transform=None, **kwargs):
+    def from_hub(
+        cls,
+        repo_id: str,
+        filename: str,
+        transform: Callable[[Structures], Structures] | None = None,
+        **kwargs: Any,
+    ) -> "HDF5Dataset":
         """Load a preprocessed dataset from a Hugging Face dataset repository.
 
         Requires huggingface_hub (pip install pycrystalgen[hub]).

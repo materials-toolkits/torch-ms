@@ -37,10 +37,10 @@ def centered_supercell(
         radius: Minimum border distance in Ångströms.
 
     Returns:
-        supercell: Structures whose x are fractional coords of the tiled atoms
-            (may be outside [0, 1) for periodic images). num_atoms gives the
-            count of tiled atoms per structure.
-        atom_index: Index into structures.x for each supercell atom, shape (total,).
+        The supercell, a Structures whose x are fractional coords of the tiled
+        atoms (may be outside [0, 1) for periodic images) and whose num_atoms
+        gives the count of tiled atoms per structure, and the index into
+        structures.x of each supercell atom, shape (total,).
     """
     device = structures.device()
 

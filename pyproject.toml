@@ -32,6 +32,10 @@ dev = [
     "pytest-timeout>=2.4.0",
     "spglib>=2.7.0",
 ]
+docs = [
+    "mkdocs-material>=9.7.7",
+    "mkdocstrings[python]>=1.0.6",
+]
 
 [project.scripts]
 preprocessing = "pycrystalgen.data.preprocessing:main"
@@ -42,6 +46,8 @@ sync.sequence = [
     {cmd = "uv run pyright --createstub torch"},
 ]
 build = "uv build"
+docs = "uv run --group docs mkdocs serve"
+docs-build = "uv run --group docs mkdocs build --strict"
 
 [tool.pytest.ini_options]
 testpaths = [

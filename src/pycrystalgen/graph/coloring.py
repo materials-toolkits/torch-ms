@@ -27,7 +27,7 @@ def initial_coloring(
     Returns:
         Hash color per atom, shape (n_atoms, 4), dtype uint32.
 
-    Example:
+    Examples:
         >>> from pycrystalgen.data.batching import Structures
         >>> from pycrystalgen.graph.atomic_radius import atomic_radius
         >>> structures = Structures.zincblende()
@@ -74,7 +74,7 @@ def color_refinement(
     Returns:
         128-bit hash per structure, shape (n_structures, 4), dtype uint32.
 
-    Example:
+    Examples:
         >>> from pycrystalgen.data.batching import Structures
         >>> from pycrystalgen.graph.atomic_radius import atomic_radius
         >>> structures = Structures.zincblende()
@@ -102,7 +102,9 @@ def color_refinement(
             colors.to(torch.int64),
         ).to(torch.uint32)
 
-        equivalent = equivalent_partition(_xor4(colors), _xor4(next_color), structures.batch)
+        equivalent = equivalent_partition(
+            _xor4(colors), _xor4(next_color), structures.batch
+        )
 
         if equivalent.all():
             break
@@ -110,5 +112,6 @@ def color_refinement(
         colors = next_color
         mask = ~equivalent
 
-    return scatter(colors, structures.batch, structures.num_atoms.shape[0], reduce="hash")
-
+    return scatter(
+        colors, structures.batch, structures.num_atoms.shape[0], reduce="hash"
+    )

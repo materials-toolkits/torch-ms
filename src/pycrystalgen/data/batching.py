@@ -34,7 +34,7 @@ class Structures:
         formation_energy_per_atom: Formation energy per structure in eV/atom
             with shape (n_struct,).
 
-    Example:
+    Examples:
         Creating a Diamond crystal structure (C, a=3.567 A, 8 atoms):
 
         >>> a = 3.567
@@ -355,7 +355,7 @@ class Structures:
         Raises:
             ValueError: If structures list is empty.
 
-        Example:
+        Examples:
             >>> struct = Structures.diamond()
             >>> batched = Structures.collate([struct, struct])
             >>> batched.lattice.shape
@@ -408,7 +408,7 @@ class Structures:
         Returns:
             List of individual Structures objects.
 
-        Example:
+        Examples:
             >>> struct = Structures.diamond()
             >>> batched = Structures.collate([struct, struct])
             >>> individual = Structures.separate(batched)

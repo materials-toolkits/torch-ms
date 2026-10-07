@@ -59,7 +59,7 @@ def atom_batches(
         (start, stop) of each batch. A batch is closed by the structure with
         which it reaches max_atoms atoms.
 
-    Example:
+    Examples:
         >>> atom_batches(np.array([4, 4, 4, 10, 1, 1]), max_atoms=8)
         [(0, 2), (2, 4), (4, 6)]
     """
@@ -107,19 +107,18 @@ class EnergyEstimator:
         hull_source: Where the hull comes from: the file it was loaded from
             and, for from_lematerial, the structures it was built with.
 
-    Example:
-        Energy above the convex hull of LeMat-Bulk::
+    Energy above the convex hull of LeMat-Bulk:
 
-            estimator = EnergyEstimator.from_lematerial(device="cuda")
-            print(estimator.hull_source)
+    ```python
+    estimator = EnergyEstimator.from_lematerial(device="cuda")
+    print(estimator.hull_source)
 
-            # batch of structures on the device of the model
-            above = estimator.energy_above_hull(structures)
+    # batch of structures on the device of the model
+    above = estimator.energy_above_hull(structures)
 
-            # dataset
-            energy, above = estimator.predict_energy_above_hull(
-                HDF5Dataset("structures.hdf5")
-            )
+    # dataset
+    energy, above = estimator.predict_energy_above_hull(HDF5Dataset("structures.hdf5"))
+    ```
     """
 
     def __init__(
@@ -319,9 +318,9 @@ class EnergyEstimator:
             num_workers: Number of processes computing the hulls.
 
         Returns:
-            Energy above the hull in eV/atom: zero on the hull, negative for a
-            structure estimated more stable than the hull, NaN for a structure
-            with an element absent from the hull.
+            Energy above the hull in eV/atom. It is zero on the hull, negative
+            for a structure estimated more stable than the hull, and NaN for a
+            structure with an element absent from the hull.
 
         Raises:
             ValueError: If the estimator has no hull.

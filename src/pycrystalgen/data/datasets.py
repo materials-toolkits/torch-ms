@@ -2,26 +2,24 @@
 
 Each dataset has a name and one HDF5 file per split:
 
-==================  =====================================  ====================
-Name                Repository                             Splits
-==================  =====================================  ====================
-perov-5             materials-toolkits/perov-5             train, val, test
-carbon-24           materials-toolkits/carbon-24           train, val, test
-mp-20               materials-toolkits/mp-20               train, val, test
-materials-project   materials-toolkits/materials-project   all
-oqmd                materials-toolkits/oqmd                all, unique
-lematerial          materials-toolkits/lematerial          all, unique
-==================  =====================================  ====================
+| Name | Repository | Splits |
+|---|---|---|
+| perov-5 | materials-toolkits/perov-5 | train, val, test |
+| carbon-24 | materials-toolkits/carbon-24 | train, val, test |
+| mp-20 | materials-toolkits/mp-20 | train, val, test |
+| materials-project | materials-toolkits/materials-project | all |
+| oqmd | materials-toolkits/oqmd | all, unique |
+| lematerial | materials-toolkits/lematerial | all, unique |
 
 The default split of a dataset is its first one. A split can be given with the
 name, as "mp-20/test".
 
-Example::
+```python
+from pycrystalgen.data import load_dataset
 
-    from pycrystalgen.data import load_dataset
-
-    dataset = load_dataset("mp-20", "train")
-    dataset = load_dataset("lematerial/unique")
+dataset = load_dataset("mp-20", "train")
+dataset = load_dataset("lematerial/unique")
+```
 """
 
 from __future__ import annotations
@@ -94,7 +92,7 @@ DATASETS: dict[str, DatasetAlias] = {
 def available_datasets() -> dict[str, tuple[str, ...]]:
     """Names of the datasets and of their splits, the default split first.
 
-    Example:
+    Examples:
         >>> available_datasets()["oqmd"]
         ('all', 'unique')
     """
@@ -116,7 +114,7 @@ def resolve(name: str, split: str | None = None) -> tuple[str, str]:
         KeyError: If the dataset or the split is unknown.
         ValueError: If the split is given with the name and as an argument.
 
-    Example:
+    Examples:
         >>> resolve("mp-20", "test")
         ('materials-toolkits/mp-20', 'test.hdf5')
         >>> resolve("lematerial/unique")
@@ -145,7 +143,7 @@ def resolve(name: str, split: str | None = None) -> tuple[str, str]:
 def dataset_url(name: str, split: str | None = None, revision: str = "main") -> str:
     """URL of the file of a split of a dataset.
 
-    Example:
+    Examples:
         >>> dataset_url("oqmd", "unique")
         'https://huggingface.co/datasets/materials-toolkits/oqmd/resolve/main/unique.hdf5'
     """
