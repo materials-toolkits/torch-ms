@@ -12,6 +12,10 @@
 
 ::: pycrystalgen.graph.atomic_radius
 
+## Angles and dihedrals
+
+::: pycrystalgen.graph.line_graph
+
 ## Hash of a structure
 
 ::: pycrystalgen.graph.coloring

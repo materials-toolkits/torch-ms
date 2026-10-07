@@ -15,3 +15,33 @@
 ## Pretrained weights
 
 ::: pycrystalgen.estimator.orb.weights
+
+## CHGNet
+
+::: pycrystalgen.estimator.chgnet.model
+
+::: pycrystalgen.estimator.chgnet.weights
+
+## M3GNet
+
+::: pycrystalgen.estimator.m3gnet.model
+
+::: pycrystalgen.estimator.m3gnet.weights
+
+## ALIGNN
+
+::: pycrystalgen.estimator.alignn.model
+
+::: pycrystalgen.estimator.alignn.weights
+
+## MACE
+
+::: pycrystalgen.estimator.mace.model
+
+::: pycrystalgen.estimator.mace.weights
+
+::: pycrystalgen.estimator.mace.reader
+
+## Download of weights
+
+::: pycrystalgen.estimator.weights

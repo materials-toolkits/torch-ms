@@ -1,0 +1,319 @@
+"""Tests for the rewrite of the prediction of ALIGNN."""
+
+import io
+import json
+import zipfile
+from pathlib import Path
+
+import numpy as np
+import pytest
+import torch
+
+from pycrystalgen.data import Structures, parse_cif
+from pycrystalgen.data.augmentation import (
+    AtomPermutation,
+    AtomTranslation,
+    LatticeBasisChange,
+    LatticeRotation,
+    make_supercell,
+)
+from pycrystalgen.estimator.alignn import AlignnModel, InvalidWeights, weights
+from pycrystalgen.estimator.weights import Checkpoint, sha256
+from pycrystalgen.estimator.alignn.model import (
+    GRAPH_ARGS,
+    MAX_NEIGHBORS,
+    MODEL_ARGS,
+    RADIUS,
+    THREE_BODY_RADIUS,
+    RBFExpansion,
+    element_features,
+)
+from pycrystalgen.graph.graph import Graph
+from pycrystalgen.graph.line_graph import reverse_edges
+
+DATA = Path(__file__).parent / "data"
+NAME = "alignn-formation-energy-radius"
+
+# layers of 512 features: slower than the default timeout
+pytestmark = pytest.mark.timeout(30)
+
+
+def copper() -> Structures:
+    """Face centered cubic copper: 12 nearest neighbours, then 6 farther."""
+    return Structures(
+        lattice=torch.eye(3).unsqueeze(0) * 3.6,
+        x=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.0], [0.5, 0.0, 0.5], [0.0, 0.5, 0.5]],
+        z=[29, 29, 29, 29],
+    )
+
+
+def make_structures() -> list[Structures]:
+    with open("tests/cif/triclinic1.cif", "r", encoding="utf-8") as fp:
+        triclinic = parse_cif(fp.read())
+
+    return [copper(), triclinic]
+
+
+def make_batch() -> Structures:
+    return Structures.collate(make_structures())
+
+
+def generator(seed: int = 0) -> torch.Generator:
+    return torch.Generator().manual_seed(seed)
+
+
+@pytest.fixture(scope="module")
+def model() -> AlignnModel:
+    """Model with random weights."""
+    torch.manual_seed(0)
+    return AlignnModel().eval().requires_grad_(False)
+
+
+def test_pinned_checkpoints(tmp_path):
+    assert set(weights.CHECKPOINTS) == {NAME}
+    checkpoint = weights.CHECKPOINTS[NAME]
+    assert checkpoint.url.startswith("https://")
+    assert len(checkpoint.sha256) == 64
+    assert weights.checkpoint_path(NAME, tmp_path) == (
+        tmp_path / "alignn" / "formation_energy_peratom_radius.zip"
+    )
+
+    with pytest.raises(KeyError, match="unknown model"):
+        weights.checkpoint_path("alignn-9")
+
+
+def test_element_features():
+    features = element_features()
+
+    assert features.shape == (119, 92)
+    assert set(features.unique().tolist()) == {0.0, 1.0}
+    assert (features[0] == 0).all()
+    # every element has features, a few elements share the same ones
+    assert (features[1:].sum(dim=1) > 0).all()
+    assert features[1:101].unique(dim=0).shape[0] > 90
+    assert (features[6] != features[8]).any()
+
+
+def test_rbf_expansion():
+    expansion = RBFExpansion(0.0, 8.0, 80)
+    values = expansion(torch.tensor([0.0, 4.0, 8.0]))
+
+    assert values.shape == (3, 80)
+    assert values[0, 0] == 1.0 and values[2, -1] == 1.0
+    # gaussian exp(-(d - c)^2 / step) with a step of 8 / 79
+    step = 8.0 / 79.0
+    assert torch.isclose(values[0, 1], torch.exp(torch.tensor(-step)), atol=1e-6)
+
+
+# the model with random weights
+
+
+def test_model_output(model):
+    prediction = model(make_batch())
+
+    assert prediction.shape == (2,)
+    assert prediction.isfinite().all()
+
+
+def test_model_graphs(model):
+    batch = make_batch()
+    graph = model.neighbors(batch)
+    distance, pair_index, cosine = model.angles(graph)
+
+    assert (distance <= RADIUS).all()
+    degree = torch.bincount(graph.edge_index[0], minlength=len(batch.z))
+    assert (degree == MAX_NEIGHBORS).all()
+
+    # a bond is followed by the bonds starting from its end, itself reversed too
+    first, second = pair_index
+    assert pair_index.shape[1] > 0
+    assert (distance[pair_index] <= THREE_BODY_RADIUS).all()
+    assert (graph.edge_index[1, first] == graph.edge_index[0, second]).all()
+
+    backward = reverse_edges(graph)[first] == second
+    assert backward.any()
+    assert torch.allclose(cosine[backward], torch.ones(int(backward.sum())), atol=1e-5)
+
+    # in copper the angles between nearest neighbours are 60, 90, 120 and 180°
+    in_copper = graph.edge_batch[first] == 0
+    assert sorted(
+        cosine[in_copper & ~backward].round(decimals=3).unique().tolist()
+    ) == [
+        -1.0,
+        -0.5,
+        0.0,
+        0.5,
+    ]
+
+
+def test_model_batch_equals_single(model):
+    alone = torch.cat([model(structure) for structure in make_structures()])
+
+    assert torch.allclose(model(make_batch()), alone, atol=1e-5)
+
+
+@pytest.mark.parametrize(
+    "transform",
+    [AtomPermutation, LatticeRotation, AtomTranslation, LatticeBasisChange],
+)
+def test_model_invariances(model, transform):
+    # structures where the 12 nearest neighbours are not chosen among
+    # neighbours at the same distance
+    batch = make_batch()
+    augmented = transform(generator=generator())(batch)
+
+    assert torch.allclose(model(augmented), model(batch), atol=1e-4)
+
+
+def test_model_prediction_of_a_supercell(model):
+    # the prediction is a mean over the atoms
+    batch = make_batch()
+    supercell = make_supercell(batch, torch.tensor([[2, 1, 1], [1, 1, 1]]))
+
+    assert torch.allclose(model(supercell), model(batch), atol=1e-4)
+
+
+def test_model_with_a_given_graph(model):
+    batch = make_batch()
+    graph = model.neighbors(batch)
+
+    assert torch.equal(model(batch, graph), model(batch))
+
+
+def state_and_config(model: AlignnModel) -> tuple[dict, dict]:
+    state_dict = dict(model.state_dict())
+    state_dict["_species_table"] = torch.zeros(120, 92)
+    return state_dict, {**GRAPH_ARGS, "model": dict(MODEL_ARGS)}
+
+
+def test_load_pretrained_checks_the_parameters(model):
+    state_dict, config = state_and_config(model)
+
+    other = AlignnModel()
+    other.load_pretrained(state_dict, config)
+    other.eval()
+    with torch.no_grad():
+        assert torch.allclose(other(make_batch()), model(make_batch()))
+
+    with pytest.raises(InvalidWeights, match="another configuration"):
+        other.load_pretrained(state_dict, {**config, "cutoff": 8.0})
+
+    with pytest.raises(InvalidWeights, match="another configuration"):
+        other.load_pretrained(
+            state_dict, {**config, "model": {**MODEL_ARGS, "alignn_layers": 2}}
+        )
+
+    with pytest.raises(InvalidWeights, match="Unexpected"):
+        other.load_pretrained({**state_dict, "unknown.weight": torch.zeros(1)})
+
+    del state_dict["fc.bias"]
+    with pytest.raises(InvalidWeights, match="Missing"):
+        other.load_pretrained(state_dict)
+
+
+def test_from_pretrained_reads_the_archive(model, tmp_path, monkeypatch):
+    state_dict, config = state_and_config(model)
+    buffer = io.BytesIO()
+    torch.save(state_dict, buffer)
+
+    archive = tmp_path / "model.zip"
+    with zipfile.ZipFile(archive, "w") as fp:
+        fp.writestr("config.json", json.dumps(config))
+        fp.writestr("best_model.pt", buffer.getvalue())
+
+    checkpoint = Checkpoint(archive.as_uri(), sha256(archive), "model.zip")
+    monkeypatch.setitem(weights.CHECKPOINTS, "local", checkpoint)
+
+    loaded = AlignnModel.from_pretrained("local", cache=tmp_path / "cache")
+    assert torch.allclose(loaded(make_batch()), model(make_batch()))
+
+
+# the pretrained model against the real alignn
+
+
+def reference_structures() -> tuple[Structures, dict[str, np.ndarray], Graph]:
+    data = dict(np.load(DATA / "orb_reference.npz"))
+    structures = Structures(
+        lattice=torch.from_numpy(data["lattice"]),
+        x=torch.from_numpy(data["x"]),
+        z=torch.from_numpy(data["z"]),
+        num_atoms=torch.from_numpy(data["num_atoms"]),
+    )
+    reference = dict(np.load(DATA / "alignn_reference.npz"))
+
+    # graph of the atoms built by alignn
+    num_edges = torch.from_numpy(reference["num_edges"])
+    offset = structures.ptr[torch.arange(len(num_edges)).repeat_interleave(num_edges)]
+    graph = Graph(
+        structures=structures,
+        edge_index=torch.stack(
+            [
+                torch.from_numpy(reference["sender"]).long() + offset,
+                torch.from_numpy(reference["receiver"]).long() + offset,
+            ]
+        ),
+        edge_shift=torch.from_numpy(reference["shift"]).long(),
+        num_atoms=structures.num_atoms,
+        num_edges=num_edges,
+    )
+    return structures, reference, graph
+
+
+def edges_of(graph: Graph) -> list[set[tuple[int, ...]]]:
+    """Edges of each structure as sets of (sender, receiver, shift)."""
+    edges = torch.cat([graph.edge_index.t(), graph.edge_shift], dim=1).tolist()
+    result: list[set[tuple[int, ...]]] = [set() for _ in graph.num_edges]
+    for edge, batch in zip(edges, graph.edge_batch.tolist()):
+        result[batch].add(tuple(edge))
+    return result
+
+
+@pytest.fixture(scope="module")
+def pretrained() -> AlignnModel:
+    if not weights.checkpoint_path(NAME).exists():
+        pytest.skip(f"weights of {NAME} are not in the cache")
+
+    return AlignnModel.from_pretrained(NAME, device="cpu")
+
+
+@pytest.mark.timeout(120)
+def test_pretrained_line_graph_matches_alignn(pretrained):
+    """Line graphs of alignn 2026.8.11, computed once outside of the project."""
+    structures, reference, graph = reference_structures()
+    _, pair_index, cosine = pretrained.angles(graph)
+    n_struct = len(structures.num_atoms)
+
+    pair_batch = graph.edge_batch[pair_index[0]]
+    num_angles = torch.bincount(pair_batch, minlength=n_struct)
+    assert num_angles.tolist() == reference["num_angles"].tolist()
+
+    cosine_sum = torch.zeros(n_struct, dtype=torch.float64).index_add_(
+        0, pair_batch, cosine.double()
+    )
+    assert np.allclose(cosine_sum.numpy(), reference["cosine_sum"], atol=1e-2)
+
+
+@pytest.mark.timeout(120)
+def test_pretrained_matches_alignn_on_its_graph(pretrained):
+    """Predictions of alignn 2026.8.11, computed once outside of the project."""
+    structures, reference, graph = reference_structures()
+
+    prediction = pretrained(structures, graph).numpy()
+
+    assert np.abs(prediction - reference["prediction"]).max() < 1e-4
+
+
+@pytest.mark.timeout(120)
+def test_pretrained_matches_alignn_without_equidistant_neighbours(pretrained):
+    structures, reference, graph = reference_structures()
+    own = pretrained.neighbors(structures)
+
+    assert own.num_edges.tolist() == reference["num_edges"].tolist()
+
+    # among neighbours at the same distance, alignn does not keep the same ones
+    same = np.array([a == b for a, b in zip(edges_of(own), edges_of(graph))])
+    assert same.sum() >= 10 and (~same).sum() >= 10
+
+    error = np.abs(pretrained(structures).numpy() - reference["prediction"])
+    assert error[same].max() < 1e-4
+    assert error[~same].max() < 0.05

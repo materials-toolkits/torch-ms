@@ -1,9 +1,44 @@
+"""Hash of a structure from the colors of its atoms in a graph of its bonds.
+
+The colors come from the color refinement of Weisfeiler and Lehman: an atom
+starts with a color for its element and its number of bonds, then repeatedly
+takes a color for its own color and the colors of its neighbours, until the
+groups of atoms with the same color stop changing. The hash of a structure is
+a hash of the colors of its atoms.
+
+Two structures have the same hash when they have the same elements, the same
+number of atoms and graphs of bonds the refinement cannot tell apart. The
+hash does not see distances: it does not replace a comparison of structures.
+
+How often structures share a hash was measured on LeMat-Bulk (compatible_pbe)
+on 2026-10-07, with the graphs of atomic_radius and its default arguments, by
+scripts/test_hash_collision.py:
+
+| Split of the dataset              | all       | unique    |
+|-----------------------------------|-----------|-----------|
+| Structures                        | 5,335,299 | 4,927,038 |
+| Different hashes                  | 4,694,471 | 4,564,507 |
+| Structures minus different hashes |   640,828 |   362,531 |
+| Rate                              |   12.01 % |    7.36 % |
+
+"unique" keeps one structure per fingerprint of LeMat-Bulk. The 408,261
+structures it drops are duplicates for LeMat-Bulk: about 278,300 of them
+share a hash with a structure which is kept, about 130,000 do not. In
+"unique", 362,531 structures which LeMat-Bulk holds for different share a
+hash with another one. Which of them are the same crystal, crystals with the
+same bonds and other distances, or different crystals the refinement confuses,
+was not measured.
+"""
+
 import torch
 from jaxtyping import UInt32
 
 from pycrystalgen.data.batching import Structures
 from pycrystalgen.graph.graph import Graph
 from pycrystalgen.graph.sparse import equivalent_partition, mix32, scatter
+
+# odd constant which mixes the colors of the neighbours with the one of the atom
+OWN_COLOR_MULTIPLIER = 0x9E3779B1
 
 
 def initial_coloring(
@@ -63,9 +98,11 @@ def refined_coloring(
 ) -> UInt32[torch.Tensor, "n_atoms 4"]:
     """Run Weisfeiler-Lehman color refinement and return the color of each atom.
 
-    Iteratively replaces each node's color with a hash of its neighbors' colors,
-    restricted to structures whose partition is still changing. Stops when no
-    structure's partition changes.
+    Iteratively replaces each node's color with a hash of its own color and of
+    its neighbors' colors, restricted to structures whose partition is still
+    changing. A round only splits the classes of nodes with the same color:
+    the refinement stops when no structure's partition changes, after at most
+    as many rounds as atoms in a structure.
 
     Two atoms with the same environment in the graph receive the same color. The
     colors do not depend on the size of the cell: an atom of a supercell has the
@@ -97,12 +134,23 @@ def refined_coloring(
         mask_edge = mask[graph.edge_batch]
         mask_nodes = mask[structures.batch]
 
-        next_color = scatter(
-            colors[graph.edge_index[1, mask_edge]],
+        # indexing is done on 64 bits: it is not implemented for uint32 on CUDA
+        neighbors = scatter(
+            colors.to(torch.int64)[graph.edge_index[1, mask_edge]],
             graph.edge_index[0, mask_edge],
             colors.shape[0],
             reduce="hash",
-        ).to(torch.uint32)
+        ).to(torch.int64)
+
+        # hash of the pair (color of the atom, colors of its neighbours): two
+        # atoms with different colors never get the same one, a round only
+        # splits the classes and the refinement stops
+        next_color = mix32(
+            (
+                (neighbors * OWN_COLOR_MULTIPLIER + mix32(colors).to(torch.int64))
+                & 0xFFFFFFFF
+            ).to(torch.uint32)
+        )
         next_color = torch.where(
             mask_nodes.unsqueeze(-1),
             next_color.to(torch.int64),

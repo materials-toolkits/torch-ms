@@ -99,3 +99,115 @@ end.
 - A structure with two atoms at the same position has no energy (NaN).
 - That OQMD is outside of the training data comes from the documentation of `orb-models`,
   which gives the Materials Project trajectories and Alexandria for this checkpoint.
+
+## Other pretrained models
+
+Other published models are rewritten the same way, to check the graph functions of
+`pycrystalgen.graph` against models which use terms on three atoms and more. They predict the
+energy only, load the official weights, and are not used by `EnergyEstimator`. No package of
+these models is a dependency: their energies were computed once, outside of the project, by
+the scripts `scripts/reference_*.py`, for the 40 structures of the test of orb.
+
+### CHGNet
+
+`ChgnetEnergyModel` is CHGNet 0.3.0
+([chgnet](https://github.com/CederGroupHub/chgnet), modified BSD,
+[arXiv:2302.14231](https://arxiv.org/abs/2302.14231)), in `estimator/chgnet/`. Atoms closer
+than 6 Å are bonded, an edge and its reverse sharing the features of one bond
+(`reverse_edges`); the angles are the pairs of bonds shorter than 3 Å around an atom
+(`triplets` with a mask), in a Fourier basis. Magnetic moments, forces and stress are not
+included.
+
+| Against chgnet 0.4.2, 40 structures | |
+|---|---|
+| Edges, bonds and angles of each structure (29,222 angles) | identical |
+| Largest difference of energy | 4.1e-6 eV/atom |
+| Mean difference of energy | 4.3e-7 eV/atom |
+
+Behaviours kept from chgnet: the cosine of an angle is multiplied by 1 - 1e-6 before the
+arc cosine, and an atom without neighbour is not an error.
+
+### M3GNet
+
+`M3gnetEnergyModel` is the M3GNet potential `M3GNet-PES-MatPES-PBE-2025.2`
+([matgl](https://github.com/materialsvirtuallab/matgl), BSD 3-Clause,
+[arXiv:2202.02450](https://arxiv.org/abs/2202.02450)), in `estimator/m3gnet/`. Atoms closer
+than 5 Å are bonded; a bond is updated from the angles it forms with the other bonds of its
+atom of at most 4 Å (`triplets` with a mask), in a basis of spherical Bessel functions and
+spherical harmonics. matgl builds these functions with sympy; they are computed here with
+torch, and their roots with scipy. Forces and stress are not included.
+
+| Against matgl 4.1.0, 40 structures | |
+|---|---|
+| Edges and angles of each structure (128,348 angles) | identical |
+| Roots of the spherical Bessel functions | identical |
+| Largest difference of energy | 1.6e-6 eV/atom |
+| Mean difference of energy | 4.6e-7 eV/atom |
+
+The model knows 89 elements, H to Bi and Ac to Pu: a structure with another element raises an
+error.
+
+### ALIGNN
+
+`AlignnModel` is the ALIGNN 2.0 model `formation_energy_peratom_radius`
+([alignn](https://github.com/usnistgov/alignn), NIST,
+[arXiv:2106.01829](https://arxiv.org/abs/2106.01829)), in `estimator/alignn/`. It predicts
+the formation energy in eV/atom, not a total energy. An atom is connected to its 12 nearest
+neighbours closer than 5 Å (`nearest_neighbors`); the line graph connects a bond u→v to the
+bonds v→w of at most 3.5 Å, its own reverse included (`line_graph`). The features of the
+elements are not stored with the weights: they are in `cgcnn_features.npz`, written by the
+reference script from jarvis-tools.
+
+| Against alignn 2026.8.11, 40 structures | |
+|---|---|
+| Line graph built on the graph of atoms of alignn (19,944 angles) | identical |
+| Prediction on the graph of atoms of alignn, largest difference | 1.8e-6 eV/atom |
+| Structures where both libraries keep the same 12 neighbours | 16 of 40 |
+| Prediction on these 16 structures, largest difference | 4.8e-7 eV/atom |
+| Prediction on the 24 other structures, largest difference | 0.012 eV/atom |
+| Prediction on the 24 other structures, mean difference | 0.0025 eV/atom |
+
+**The limit of 12 neighbours is not well defined.** In a crystal many neighbours are at the
+same distance. When the 12th and the 13th are, the ones which are kept depend on the order of
+a sort: alignn and this rewrite do not keep the same ones (124 edges of 2,658 differ), and the
+prediction changes by up to 0.012 eV/atom. For the same reason the prediction of such a
+structure can change with a rotation, a translation or a change of basis of the cell; this
+was not measured. `AlignnModel.forward` accepts a graph, to predict on the exact graph of
+alignn.
+
+The graphs follow the configuration of the training of the model. The function of alignn
+which predicts a property builds another line graph, with all the bonds up to 5 Å; it was not
+reproduced.
+
+### MACE
+
+`MaceEnergyModel` is MACE-MP-0 small
+([mace](https://github.com/ACEsuit/mace), MIT,
+[arXiv:2206.07697](https://arxiv.org/abs/2206.07697)), in `estimator/mace/`. Its graph has
+pairs only, the atoms closer than 6 Å: terms on three and four atoms come from products. An
+atom sums over its neighbours a radial function times spherical harmonics (l ≤ 3) times the
+features of the neighbour; products of two and three of these sums are contracted to
+invariant features with coupling tensors. The layers of e3nn used by mace (linear layers,
+tensor products, normalized activations) are written with torch alone.
+
+| Against mace 0.3.16, 40 structures, double precision | |
+|---|---|
+| Edges of each structure | identical |
+| Largest difference of energy | 5e-15 eV/atom |
+
+The energy is exactly invariant to the rotations and reflections of `LatticeRotation`, unlike
+orb: it is checked in the tests, with the invariance of the coupling tensors.
+
+**The weights are read without mace.** mace publishes a pickled model, the whole Python
+object and not its tensors: unpickling it normally needs mace and e3nn. `estimator/mace/reader.py`
+unpickles the official file with every class of mace and e3nn replaced by a placeholder, and
+collects the tensors from the placeholders: the 69 tensors are the ones of the state dict of
+mace, value for value. The unpickler only resolves a fixed list of names (tensors of torch,
+containers of the standard library), so the file cannot run code; this is tested with a file
+which runs a function when unpickled as usual. The coupling tensors are among these tensors:
+mace stores them with the weights, and the weights are only valid for this choice of tensors.
+
+Only the small model, whose features are invariant, is rewritten. The medium and large models
+have vector and tensor features, which need Clebsch-Gordan coefficients in the tensor products
+between layers.
+

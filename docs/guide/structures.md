@@ -72,8 +72,15 @@ The atoms of structure `i` are `batch.x[batch.ptr[i] : batch.ptr[i + 1]]`.
 ## Devices
 
 All the tensors of a `Structures` must be on the same device; a mismatch raises
-`InvalidStructure`. `structures.device()` gives the device. To move a batch, use
-`pycrystalgen.estimator.energy.to_device(structures, "cuda")`.
+`InvalidStructure`. `structures.device()` gives the device, `structures.to(device)` a copy on
+another one:
+
+```python
+structures = structures.to("cuda")
+structures.device()   # device(type='cuda', index=0)
+```
+
+Datasets load on the CPU: move each batch after loading it.
 
 ## Reading CIF
 

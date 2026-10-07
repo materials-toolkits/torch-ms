@@ -298,6 +298,65 @@ class TestStructuresDevice:
         assert struct.x.device == torch.device("cuda:0")
         assert struct.z.device == torch.device("cuda:0")
 
+    @staticmethod
+    def tensors(struct: Structures) -> dict[str, torch.Tensor]:
+        return {
+            name: value
+            for name, value in vars(struct).items()
+            if isinstance(value, torch.Tensor)
+        }
+
+    @staticmethod
+    def same(a: torch.Tensor, b: torch.Tensor) -> bool:
+        """Same values, unknown labels (NaN) included."""
+        return a.dtype == b.dtype and torch.allclose(
+            a.double(), b.double(), rtol=0, atol=0, equal_nan=True
+        )
+
+    def test_to_moves_every_tensor(self, two_structures_with_energy):
+        struct = Structures.collate(two_structures_with_energy)
+
+        # the "meta" device has no data: it tells where a tensor is, without a GPU
+        moved = struct.to("meta")
+
+        assert moved is not struct
+        assert moved.device() == torch.device("meta")
+        assert len(self.tensors(moved)) == 10
+        for name, tensor in self.tensors(moved).items():
+            original = getattr(struct, name)
+            assert tensor.device == torch.device("meta"), name
+            assert tensor.shape == original.shape and tensor.dtype == original.dtype
+
+        # the original is not moved
+        assert struct.device() == torch.device("cpu")
+        assert all(
+            t.device == torch.device("cpu") for t in self.tensors(struct).values()
+        )
+
+    def test_to_same_device(self, two_structures_with_energy):
+        struct = Structures.collate(two_structures_with_energy)
+        moved = struct.to("cpu")
+
+        assert moved is not struct
+        for name, tensor in self.tensors(moved).items():
+            assert self.same(tensor, getattr(struct, name)), name
+        moved.check_tensors()
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_to_cuda_and_back(self, two_structures_with_energy):
+        struct = Structures.collate(two_structures_with_energy)
+        moved = struct.to("cuda")
+
+        assert moved.device() == torch.device("cuda:0")
+        assert all(
+            t.device == torch.device("cuda:0") for t in self.tensors(moved).values()
+        )
+        moved.check_tensors()
+
+        back = moved.to("cpu")
+        for name, tensor in self.tensors(back).items():
+            assert self.same(tensor, getattr(struct, name)), name
+
 
 class TestStructuresBatching:
     def test_contiguous_batching(self, multiple_structures_fields):

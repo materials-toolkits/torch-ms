@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, replace
 from typing import Any, Sequence
 
 import numpy as np
@@ -226,6 +226,29 @@ class Structures:
             torch.device: Device on which the structure tensors are placed.
         """
         return self.lattice.device
+
+    def to(self, device: torch.device | str) -> Structures:
+        """Copy of the structures with all their tensors on a device.
+
+        Args:
+            device: Device of the copy, "cuda" for instance.
+
+        Returns:
+            Structures on the device. Tensors already on it are shared with the
+            original ones.
+
+        Examples:
+            >>> structures = Structures.diamond().to("cpu")
+            >>> structures.device()
+            device(type='cpu')
+        """
+        tensors = {
+            field.name: getattr(self, field.name).to(device)
+            for field in fields(self)
+            if isinstance(getattr(self, field.name), torch.Tensor)
+        }
+
+        return replace(self, **tensors)
 
     def to_tensor(
         self,

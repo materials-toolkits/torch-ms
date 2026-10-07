@@ -148,7 +148,8 @@ class Graph:
     def device(self) -> torch.device:
         return self.edge_index.device
 
-    def edges_distances(self) -> Float[torch.Tensor, "n_edges"]:
+    def edges_vectors(self) -> Float[torch.Tensor, "n_edges 3"]:
+        """Cartesian vector of each edge in Å, from its sender to its receiver."""
         assert self.structures is not None
 
         edges_frac = (
@@ -159,7 +160,11 @@ class Graph:
         # rows of the lattice are the lattice vectors: cartesian = fractional @ lattice
         return torch.bmm(
             edges_frac.unsqueeze(1), self.structures.lattice[self.edge_batch]
-        ).norm(dim=(-2, -1))
+        ).squeeze(1)
+
+    def edges_distances(self) -> Float[torch.Tensor, "n_edges"]:
+        """Length of each edge in Å."""
+        return self.edges_vectors().norm(dim=-1)
 
     def aggregate_edges_to_nodes(
         self,

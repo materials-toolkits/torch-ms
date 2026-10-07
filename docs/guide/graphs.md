@@ -78,6 +78,37 @@ per_structure = graph.aggregate_nodes_to_structures(atom_values)
 
 `pycrystalgen.graph.sparse.scatter` is the underlying function (`sum`, `mean`, `amax`, ...).
 
+## Angles and dihedrals
+
+Models with terms on three or four atoms need the pairs and the chains of edges of a graph.
+`triplets` gives the pairs of edges starting from the same atom, `quadruplets` the chains of
+three edges:
+
+```python
+from pycrystalgen.graph.geometry import dihedral_angles, triplet_cosines
+from pycrystalgen.graph.line_graph import quadruplets, triplets
+
+graph = cutoff(structures, 5.0)
+vectors = graph.edges_vectors()                      # (n_edges, 3), in Å
+
+triplet_index, triplet_batch, triplet_ptr = triplets(graph)
+cosines = triplet_cosines(vectors, triplet_index)    # angle at the shared atom
+
+short = graph.edges_distances() <= 3.0               # a shorter cutoff for the chains
+quadruplet_index, quadruplet_batch, quadruplet_ptr = quadruplets(graph, short)
+angles = dihedral_angles(vectors, quadruplet_index)  # around the middle edge
+```
+
+`triplet_index` (2, n_triplets) and `quadruplet_index` (3, n_quadruplets) hold indices of
+edges. An atom with d edges has d (d - 1) triplets, and the number of chains grows with the
+cube of the number of neighbours: both functions take a mask of the edges to keep, for a
+shorter cutoff than the one of the graph.
+
+`line_graph` is the function behind them, the pairs of edges head to tail (u→v, v→w): its
+result is the edge index of the graph whose nodes are the edges, and it applies to its own
+result. `reverse_edges` gives the reverse of each edge, `batched_join` the pairs of elements
+with the same key.
+
 ## Hash of a structure
 
 `color_refinement` gives a hash of each structure which does not depend on the order of its
@@ -98,6 +129,21 @@ from pycrystalgen.graph.coloring import refined_coloring
 
 colors = refined_coloring(structures, atomic_radius(structures))   # (n_atoms, 4) uint32
 ```
+
+Two structures have the same hash when they have the same elements, the same number of
+atoms and graphs of bonds the refinement cannot tell apart. The hash does not see distances:
+it groups candidates, it does not replace a comparison of structures. On LeMat-Bulk
+(measured on 2026-10-07 with the default `atomic_radius`):
+
+| Split | Structures | Different hashes | Structures minus hashes | Rate |
+|---|---|---|---|---|
+| `all` | 5,335,299 | 4,694,471 | 640,828 | 12.01 % |
+| `unique` | 4,927,038 | 4,564,507 | 362,531 | 7.36 % |
+
+`unique` keeps one structure per fingerprint of LeMat-Bulk: 7.36 % of the structures it holds
+for different share a hash with another one. Of the 408,261 duplicates it drops, about 130,000
+have a hash which no kept structure has. Which shared hashes are the same crystal, the same
+bonds with other distances, or crystals the refinement confuses, was not measured.
 
 !!! warning
     Graphs built before the fix of distances in non orthogonal cells (see
