@@ -1,31 +1,43 @@
-"""Location of the converted weights of MACE.
-
-The weights published for MACE are a pickled model which only mace can read.
-scripts/reference_mace.py, run once outside of the project, converts them to a
-file of tensors in the cache of pycrystalgen.
-"""
+"""Download of the pretrained weights of MACE."""
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
-from pycrystalgen.estimator.weights import cache_directory
+from pycrystalgen.estimator.weights import Checkpoint, fetch, local_path
 
-# name of the model → file of its converted weights in the cache
-CONVERTED = {
-    "mace-mp-0-small": "mace-mp-0-small.pt",
+# pickled models of the releases of mace, read by reader.py without mace
+CHECKPOINTS = {
+    "mace-mp-0-small": Checkpoint(
+        "https://github.com/ACEsuit/mace-mp/releases/download/mace_mp_0/"
+        "2023-12-10-mace-128-L0_energy_epoch-249.model",
+        "2ddb079cee0e131eaaf6912ba581b394551ead283e95c99cfe78c605d10b5736",
+    ),
 }
 
 
+def _checkpoint(name: str) -> Checkpoint:
+    if name not in CHECKPOINTS:
+        raise KeyError(f'unknown model "{name}", must be one of {sorted(CHECKPOINTS)}')
+
+    return CHECKPOINTS[name]
+
+
 def checkpoint_path(name: str, cache: str | os.PathLike | None = None) -> Path:
-    """Path of the converted weights of a model in the cache, converted or not.
+    """Path of the weights of a model in the cache, downloaded or not.
 
     Raises:
         KeyError: If the model is unknown.
     """
-    if name not in CONVERTED:
-        raise KeyError(f'unknown model "{name}", must be one of {sorted(CONVERTED)}')
+    return local_path(_checkpoint(name), "mace", cache)
 
-    directory = cache_directory() if cache is None else Path(cache)
-    return directory / "mace" / CONVERTED[name]
+
+def download(name: str, cache: str | os.PathLike | None = None) -> Path:
+    """Get the weights of a model, downloaded on the first call.
+
+    Raises:
+        KeyError: If the model is unknown.
+        InvalidCheckpoint: If the weights do not have the expected SHA-256.
+    """
+    return fetch(_checkpoint(name), "mace", cache)

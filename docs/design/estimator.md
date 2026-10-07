@@ -198,11 +198,14 @@ tensor products, normalized activations) are written with torch alone.
 The energy is exactly invariant to the rotations and reflections of `LatticeRotation`, unlike
 orb: it is checked in the tests, with the invariance of the coupling tensors.
 
-**The weights must be converted once.** mace publishes a pickled model which only mace can
-read. `scripts/reference_mace.py`, run outside of the project, writes a file of tensors in
-the cache of pycrystalgen, which `MaceEnergyModel.from_pretrained` loads; without it the
-tests of the pretrained model are skipped. The coupling tensors are taken from this file: mace
-stores them with the weights, and the weights are only valid for this choice of tensors.
+**The weights are read without mace.** mace publishes a pickled model, the whole Python
+object and not its tensors: unpickling it normally needs mace and e3nn. `estimator/mace/reader.py`
+unpickles the official file with every class of mace and e3nn replaced by a placeholder, and
+collects the tensors from the placeholders: the 69 tensors are the ones of the state dict of
+mace, value for value. The unpickler only resolves a fixed list of names (tensors of torch,
+containers of the standard library), so the file cannot run code; this is tested with a file
+which runs a function when unpickled as usual. The coupling tensors are among these tensors:
+mace stores them with the weights, and the weights are only valid for this choice of tensors.
 
 Only the small model, whose features are invariant, is rewritten. The medium and large models
 have vector and tensor features, which need Clebsch-Gordan coefficients in the tensor products

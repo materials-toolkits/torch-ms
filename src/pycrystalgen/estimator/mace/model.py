@@ -20,7 +20,8 @@ invariant features, with coupling tensors stored with the weights: they depend
 on three and four atoms. The energy is a sum over the atoms of a read-out of
 each layer, and of a reference energy per element.
 
-The weights are converted from the ones of mace, see weights.py.
+Weights are the ones published with mace, see weights.py. They are a pickled
+model, read without mace by reader.py.
 """
 
 from __future__ import annotations
@@ -34,7 +35,8 @@ from jaxtyping import Float, Int
 from torch import nn
 
 from pycrystalgen.data.batching import Structures
-from pycrystalgen.estimator.mace.weights import checkpoint_path
+from pycrystalgen.estimator.mace.reader import read_model
+from pycrystalgen.estimator.mace.weights import download
 from pycrystalgen.estimator.orb.model import polynomial_cutoff, spherical_harmonics
 from pycrystalgen.graph.cutoff import cutoff
 from pycrystalgen.graph.graph import Graph
@@ -245,6 +247,10 @@ PARAMETERS: dict[str, tuple[str, tuple[int, ...]]] = {
     **_parameters(1),
 }
 
+# classes of the model of mace the rewrite is written for
+MODEL_CLASS = "mace.modules.models.ScaleShiftMACE"
+INTERACTION_CLASS = "mace.modules.blocks.RealAgnosticResidualInteractionBlock"
+
 # values the rewrite relies on, checked in the weights of mace
 EXPECTED = {
     "r_max": RADIUS,
@@ -310,30 +316,40 @@ class MaceEnergyModel(nn.Module):
         device: torch.device | str | None = None,
         cache: str | os.PathLike | None = None,
     ) -> MaceEnergyModel:
-        """Load a model with pretrained weights, converted from the ones of mace.
+        """Load a model with pretrained weights, downloaded on the first call.
 
         Args:
             name: Name of the weights, see pycrystalgen.estimator.mace.weights.
             device: Device of the model.
-            cache: Directory of the converted weights.
+            cache: Directory of the downloaded weights.
 
         Raises:
-            FileNotFoundError: If the weights were not converted.
+            InvalidWeights: If the file is not a MACE-MP-0 small model.
         """
-        path = checkpoint_path(name, cache)
-        if not path.exists():
-            raise FileNotFoundError(
-                f"{path} does not exist: the weights of mace must be converted "
-                "once with scripts/reference_mace.py"
-            )
+        state_dict, modules = read_model(download(name, cache))
 
-        converted = torch.load(path, map_location="cpu", weights_only=True)
+        interactions = [
+            module
+            for name, module in modules.items()
+            if name.startswith("interactions.") and name.count(".") == 1
+        ]
+        if modules[""].path != MODEL_CLASS or not interactions:
+            raise InvalidWeights(f"{modules[''].path} is not a {MODEL_CLASS}")
+        if any(module.path != INTERACTION_CLASS for module in interactions):
+            raise InvalidWeights(f"the interactions are not {INTERACTION_CLASS}")
+
+        # constants of the normalized activations of e3nn
+        constants = {
+            name: float(module.attributes()["cst"])
+            for name, module in modules.items()
+            if "cst" in module.attributes()
+        }
 
         model = cls()
         model.load_pretrained(
-            converted["state_dict"],
-            converted["avg_num_neighbors"],
-            converted["activation_constants"],
+            state_dict,
+            float(interactions[0].attributes()["avg_num_neighbors"]),
+            constants,
         )
 
         return model.to(device).eval().requires_grad_(False)

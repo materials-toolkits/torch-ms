@@ -40,6 +40,8 @@
 
 ::: pycrystalgen.estimator.mace.weights
 
+::: pycrystalgen.estimator.mace.reader
+
 ## Download of weights
 
 ::: pycrystalgen.estimator.weights

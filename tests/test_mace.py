@@ -1,5 +1,6 @@
 """Tests for the rewrite of the energy prediction of MACE."""
 
+import pickle
 from pathlib import Path
 
 import numpy as np
@@ -23,6 +24,7 @@ from pycrystalgen.estimator.mace.model import (
     PARAMETERS,
     RADIUS,
 )
+from pycrystalgen.estimator.mace.reader import Placeholder, read_model
 from pycrystalgen.estimator.orb.model import spherical_harmonics
 
 DATA = Path(__file__).parent / "data"
@@ -57,16 +59,87 @@ def mace_state_dict(model: MaceEnergyModel) -> dict[str, torch.Tensor]:
     return state_dict
 
 
-def test_checkpoint_path(tmp_path):
+def test_pinned_checkpoints(tmp_path):
+    assert set(weights.CHECKPOINTS) == {NAME}
+    checkpoint = weights.CHECKPOINTS[NAME]
+    assert checkpoint.url.startswith("https://")
+    assert len(checkpoint.sha256) == 64
     assert weights.checkpoint_path(NAME, tmp_path) == (
-        tmp_path / "mace" / "mace-mp-0-small.pt"
+        tmp_path / "mace" / "2023-12-10-mace-128-L0_energy_epoch-249.model"
     )
 
     with pytest.raises(KeyError, match="unknown model"):
         weights.checkpoint_path("mace-9")
 
-    with pytest.raises(FileNotFoundError, match="reference_mace.py"):
-        MaceEnergyModel.from_pretrained(NAME, cache=tmp_path)
+
+# reading of a pickled model without its classes
+
+
+class Block(torch.nn.Module):
+    """Module of a pickled model, as the ones of mace."""
+
+    def __init__(self):
+        super().__init__()
+        self.linear = torch.nn.Linear(3, 2)
+        self.weights = torch.nn.ParameterList([torch.nn.Parameter(torch.ones(4))])
+        self.register_buffer("scale", torch.tensor(2.5, dtype=torch.float64))
+        self.register_buffer("temporary", torch.zeros(2), persistent=False)
+        self.avg_num_neighbors = np.float64(12.5)
+        self.activation = torch.nn.functional.silu
+
+
+class Pickled(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.blocks = torch.nn.ModuleList([Block(), Block()])
+        self.register_buffer("atomic_numbers", torch.tensor([1, 6, 8]))
+
+
+def test_read_model_gives_the_state_dict(tmp_path):
+    model = Pickled()
+    torch.save(model, tmp_path / "model.pt")
+
+    tensors, modules = read_model(tmp_path / "model.pt")
+
+    expected = model.state_dict()
+    assert set(tensors) == set(expected)
+    assert "blocks.0.temporary" not in tensors
+    for name, tensor in expected.items():
+        assert torch.equal(tensors[name], tensor)
+        assert tensors[name].dtype == tensor.dtype
+
+    # the classes of the model are not imported, their attributes are kept
+    assert all(isinstance(module, Placeholder) for module in modules.values())
+    assert not any(isinstance(module, torch.nn.Module) for module in modules.values())
+    assert modules[""].path.endswith(".Pickled")
+    assert modules["blocks.1"].path.endswith(".Block")
+    assert modules["blocks.1"].attributes()["avg_num_neighbors"] == 12.5
+
+
+class Malicious:
+    """Object whose unpickling runs a function, as a file from the internet could."""
+
+    def __reduce__(self):
+        return (exec, ("raise SystemExit('executed')",))
+
+
+def test_read_model_does_not_execute_the_file(tmp_path):
+    torch.save(Malicious(), tmp_path / "malicious.pt")
+
+    # unpickled as usual, the file runs its function
+    with pytest.raises(SystemExit, match="executed"):
+        torch.load(tmp_path / "malicious.pt", weights_only=False)
+
+    # here the function is a placeholder which is never called
+    with pytest.raises(pickle.UnpicklingError, match="not a pickled torch module"):
+        read_model(tmp_path / "malicious.pt")
+
+
+def test_read_model_rejects_a_state_dict(tmp_path):
+    torch.save(Pickled().state_dict(), tmp_path / "state.pt")
+
+    with pytest.raises(pickle.UnpicklingError, match="not a pickled torch module"):
+        read_model(tmp_path / "state.pt")
 
 
 def test_degrees():
@@ -125,13 +198,13 @@ def test_load_pretrained_checks_the_parameters():
         other.load_pretrained(state_dict, 30.0)
 
 
-# the pretrained model, converted from the weights of mace
+# the pretrained model against the real mace
 
 
 @pytest.fixture(scope="module")
 def pretrained() -> MaceEnergyModel:
     if not weights.checkpoint_path(NAME).exists():
-        pytest.skip(f"converted weights of {NAME} are not in the cache")
+        pytest.skip(f"weights of {NAME} are not in the cache")
 
     return MaceEnergyModel.from_pretrained(NAME, device="cpu")
 
