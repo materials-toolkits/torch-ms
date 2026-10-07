@@ -78,7 +78,7 @@ def polynomial_cutoff(
 
     Its first and second derivatives are zero at the radius. It is zero after.
 
-    Example:
+    Examples:
         >>> distance = torch.tensor([0.0, 3.0, 6.0, 7.0])
         >>> polynomial_cutoff(distance, 6.0, p=4)
         tensor([1.0000, 0.6562, 0.0000, 0.0000])
@@ -102,7 +102,7 @@ def spherical_harmonics(
     of a degree l have a squared norm of 2l+1 for any direction. A vector of
     length zero gives the harmonics of the zero vector.
 
-    Example:
+    Examples:
         >>> harmonics = spherical_harmonics(torch.tensor([[0.0, 2.0, 0.0]]))
         >>> harmonics[0, :4]
         tensor([1.0000, 0.0000, 1.7321, 0.0000])
@@ -421,7 +421,7 @@ class ZBLBasis(nn.Module):
 class OrbEnergyModel(nn.Module):
     """Total energy of crystal structures predicted by orb-v3 conservative.
 
-    Example:
+    Examples:
         >>> model = OrbEnergyModel()
         >>> structures = Structures.collate([Structures.diamond(), Structures.zincblende()])
         >>> with torch.no_grad():

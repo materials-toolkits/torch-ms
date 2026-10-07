@@ -34,7 +34,7 @@ class Structures:
         formation_energy_per_atom: Formation energy per structure in eV/atom
             with shape (n_struct,).
 
-    Example:
+    Examples:
         Creating a Diamond crystal structure (C, a=3.567 A, 8 atoms):
 
         >>> a = 3.567
@@ -347,7 +347,8 @@ class Structures:
         """Combine multiple structures into a single batched structure.
 
         Args:
-            structures: List of Structures to batch together.
+            structures: List of Structures to batch together, each one with one
+                or several structures.
 
         Returns:
             A single Structures object with concatenated tensors.
@@ -355,7 +356,7 @@ class Structures:
         Raises:
             ValueError: If structures list is empty.
 
-        Example:
+        Examples:
             >>> struct = Structures.diamond()
             >>> batched = Structures.collate([struct, struct])
             >>> batched.lattice.shape
@@ -371,8 +372,9 @@ class Structures:
         z = torch.cat([s.z for s in structures], dim=0)
         num_atoms = torch.cat([s.num_atoms for s in structures], dim=0)
 
+        # a structure of the list may be a batch of several structures
         batch = torch.arange(
-            len(structures), dtype=torch.int64, device=device
+            len(num_atoms), dtype=torch.int64, device=device
         ).repeat_interleave(num_atoms)
 
         ptr = F.pad(torch.cumsum(num_atoms, dim=0), (1, 0), value=0)
@@ -408,7 +410,7 @@ class Structures:
         Returns:
             List of individual Structures objects.
 
-        Example:
+        Examples:
             >>> struct = Structures.diamond()
             >>> batched = Structures.collate([struct, struct])
             >>> individual = Structures.separate(batched)
@@ -427,7 +429,7 @@ class Structures:
                 x=structures.x[start:end],
                 z=structures.z[start:end],
                 num_atoms=structures.num_atoms[i : i + 1],
-                batch=structures.batch[start:end],
+                batch=structures.batch[start:end] - i,
                 ptr=torch.tensor(
                     [0, structures.ptr[i + 1] - structures.ptr[i]],
                     device=structures.device(),

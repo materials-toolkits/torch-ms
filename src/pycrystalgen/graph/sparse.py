@@ -10,7 +10,7 @@ Reduce = Literal["sum", "mean", "prod", "amax", "amin", "hash"]
 def mix32(x: UInt32[torch.Tensor, "..."]) -> UInt32[torch.Tensor, "..."]:
     """
     shith register not supported for torch.uint32
-    Example:
+    Examples:
         >>> mix32(torch.tensor(42, dtype=torch.uint32))
         tensor(142593372, dtype=torch.uint32)
 
@@ -44,7 +44,7 @@ def scatter(
     Returns:
         Tensor of shape (n_out, *). Empty slots are zero.
 
-    Example:
+    Examples:
         >>> src = torch.tensor([1.0, 2.0, 3.0, 4.0])
         >>> index = torch.tensor([0, 0, 1, 2])
         >>> scatter(src, index, n_out=3)
@@ -91,11 +91,11 @@ def batched_cartesian_product_2(
         ptr_b: CSR pointers for the second range, shape (n_struct+1,).
 
     Returns:
-        indices: Global pair indices, shape (total, 2).
-        batch: Structure index per pair, shape (total,).
-        ptr: CSR pointers into the flat output, shape (n_struct+1,).
+        Global pair indices, shape (total, 2), structure index per pair,
+        shape (total,), and CSR pointers into the flat output, shape
+        (n_struct+1,).
 
-    Example:
+    Examples:
         Two structures: struct 0 with 2+3 atoms, struct 1 with 2+3 atoms.
 
         >>> ptr_a = torch.tensor([0, 2, 4])  # struct 0: [0,2), struct 1: [2,4)
@@ -156,11 +156,11 @@ def batched_cartesian_product_3(
         ptr_c: CSR pointers for the third range, shape (n_struct+1,).
 
     Returns:
-        indices: Global triplet indices, shape (total, 3).
-        batch: Structure index per triplet, shape (total,).
-        ptr: CSR pointers into the flat output, shape (n_struct+1,).
+        Global triplet indices, shape (total, 3), structure index per
+        triplet, shape (total,), and CSR pointers into the flat output, shape
+        (n_struct+1,).
 
-    Example:
+    Examples:
         Two structures with different range sizes.
         Struct 0: a in [0,2), b in [0,3), c in [0,2) → 2×3×2 = 12 triplets.
         Struct 1: a in [2,4), b in [3,5), c in [2,4) → 2×2×2 = 8 triplets.
@@ -237,7 +237,7 @@ def equivalent_partition(
     Returns:
         Boolean tensor of shape (n_graphs,), True where the partitions are equivalent.
 
-    Example:
+    Examples:
         >>> a = torch.tensor([0, 0, 1, 0, 0, 1])
         >>> b = torch.tensor([5, 5, 9, 5, 9, 9])
         >>> batch = torch.tensor([0, 0, 0, 1, 1, 1])

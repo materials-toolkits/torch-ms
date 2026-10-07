@@ -21,7 +21,7 @@ class Filter:
             (0 for stable, 0.1 is commonly used for meta-stable). Structures
             without energy above the hull are dropped.
 
-    Example:
+    Examples:
         >>> structures = Structures.collate(
         ...     [Structures.diamond(), Structures.zincblende()]
         ... )

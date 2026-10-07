@@ -77,7 +77,7 @@ def compositions(
         their number of atoms in the structure, shape (n_pairs,), and the
         index of the first element of each structure, shape (n_struct+1,).
 
-    Example:
+    Examples:
         NaCl3 (unsorted atoms) and Fe2:
 
         >>> z = np.array([17, 11, 17, 17, 26, 26])
@@ -101,7 +101,7 @@ def fractions(
 ) -> Float[np.ndarray, "n_pairs"]:
     """Fraction of the atoms of its structure of each element.
 
-    Example:
+    Examples:
         >>> fractions(np.array([1, 3, 2]), np.array([0, 2, 3])).tolist()
         [0.25, 0.75, 1.0]
     """
@@ -159,7 +159,7 @@ def hull_energy(
     Returns:
         Hull energy of the queries, shape (n_queries,), negative or zero.
 
-    Example:
+    Examples:
         Elements A and B and a compound AB with a formation energy of -1:
 
         >>> points = np.array([[1.0], [0.0], [0.5]])
@@ -372,7 +372,7 @@ def energy_above_hull(
         structures without energy or with an element that has no structure
         made of this element only.
 
-    Example:
+    Examples:
         Elements A (-1 eV/atom) and B (-2 eV/atom), a stable compound AB
         (-2.5 eV/atom) and A3B (-1.5 eV/atom), above the line from A to AB:
 
@@ -482,9 +482,9 @@ def energy_above_reference(
         progress: Show a progress bar.
 
     Returns:
-        Energy above the hull in eV/atom, shape (n_struct,): zero on the hull,
-        negative for a structure more stable than the hull. NaN for the
-        structures without energy or with an element absent from the hull.
+        Energy above the hull in eV/atom, shape (n_struct,). It is zero on the
+        hull and negative for a structure more stable than the hull. NaN for
+        the structures without energy or with an element absent from the hull.
     """
     energy = np.asarray(total_energy, dtype=np.float64) / np.asarray(num_atoms)
     elements, counts, ptr = compositions(z, num_atoms)

@@ -91,10 +91,10 @@ def atomic_radius(
             are dropped. Set to 0 to disable. Default: 0.5.
 
     Returns:
-        Undirected Graph: for every edge (i, j, s) the reverse (j, i, -s) is
-        also present, giving a symmetric sparse matrix.
+        Undirected Graph, where for every edge (i, j, s) the reverse (j, i, -s)
+        is also present, giving a symmetric sparse matrix.
 
-    Example:
+    Examples:
         Nearest-neighbour graph for zincblende ZnS with scaling=1.1.
         Zn (r=1.42 Å) + S (r=0.88 Å) → threshold 2.53 Å captures the
         2.34 Å bond while excluding the 3.83 Å same-species distance.

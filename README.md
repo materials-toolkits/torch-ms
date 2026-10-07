@@ -191,6 +191,15 @@ uv run python scripts/build_energy_correction.py datasets  # fit the correction,
 uv run python scripts/validate_energy.py datasets          # end to end validation
 ```
 
+## Documentation
+
+The documentation (user guide, datasets, design notes and API reference) is in `docs/`:
+
+```bash
+uv run poe docs        # preview on http://127.0.0.1:8000
+uv run poe docs-build  # static site in site/
+```
+
 ## Testing
 
 Run testing with `pytest`:
