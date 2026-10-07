@@ -74,9 +74,16 @@ for structures in loader:   # a Structures batch of 64 crystals
     ...
 ```
 
-!!! note
-    The dataset keeps its HDF5 file open. With `num_workers > 0`, create the dataset inside
-    each worker instead of sharing one opened in the main process.
+The dataset opens its HDF5 file once in each process, so it works with several workers:
+
+```python
+loader = DataLoader(
+    dataset, sampler=SortedBatches(dataset, 64), batch_size=None, num_workers=4
+)
+```
+
+Reading is fast (tens of thousands of structures per second from a local file): workers help
+when the `transform` of the dataset is the slow part, since it runs in the workers.
 
 ## Transforms and other files
 

@@ -18,15 +18,45 @@ logger = logging.getLogger(__name__)
 
 
 class HDF5Dataset(Dataset):
-    """HDF5 dataset for loading crystal structures from HDF5 files."""
+    """HDF5 dataset for loading crystal structures from HDF5 files.
+
+    The file is opened once in each process which reads the dataset: the
+    dataset can be given to a DataLoader with several workers, and pickled.
+    """
 
     def __init__(
         self,
         hdf5_file: str | os.PathLike,
         transform: Callable[[Structures], Structures] | None = None,
     ):
-        self.data_file = h5py.File(hdf5_file, "r")
+        self.hdf5_file = os.fspath(hdf5_file)
         self.transform = transform
+
+        self._data_file: h5py.File | None = None
+        self._pid: int | None = None
+
+        # opened now, to fail here if the file cannot be read
+        _ = self.data_file
+
+    @property
+    def data_file(self) -> h5py.File:
+        """The HDF5 file, opened in the current process.
+
+        A file opened in another process, before a fork, is not used: an open
+        HDF5 file must not be shared between processes.
+        """
+        if self._data_file is None or self._pid != os.getpid():
+            self._data_file = h5py.File(self.hdf5_file, "r")
+            self._pid = os.getpid()
+
+        return self._data_file
+
+    def __getstate__(self) -> dict[str, Any]:
+        """State to pickle: an open file cannot be, it is opened again."""
+        state = self.__dict__.copy()
+        state["_data_file"] = None
+        state["_pid"] = None
+        return state
 
     def dataset(self, name: str) -> h5py.Dataset:
         """Get a dataset of the file by name.
@@ -37,7 +67,7 @@ class HDF5Dataset(Dataset):
         dataset = self.data_file[name]
 
         if not isinstance(dataset, h5py.Dataset):
-            raise KeyError(f'"{name}" is not a dataset of {self.data_file.filename}')
+            raise KeyError(f'"{name}" is not a dataset of {self.hdf5_file}')
 
         return dataset
 
