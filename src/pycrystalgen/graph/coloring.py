@@ -1,3 +1,35 @@
+"""Hash of a structure from the colors of its atoms in a graph of its bonds.
+
+The colors come from the color refinement of Weisfeiler and Lehman: an atom
+starts with a color for its element and its number of bonds, then repeatedly
+takes a color for its own color and the colors of its neighbours, until the
+groups of atoms with the same color stop changing. The hash of a structure is
+a hash of the colors of its atoms.
+
+Two structures have the same hash when they have the same elements, the same
+number of atoms and graphs of bonds the refinement cannot tell apart. The
+hash does not see distances: it does not replace a comparison of structures.
+
+How often structures share a hash was measured on LeMat-Bulk (compatible_pbe)
+on 2026-10-07, with the graphs of atomic_radius and its default arguments, by
+scripts/test_hash_collision.py:
+
+| Split of the dataset              | all       | unique    |
+|-----------------------------------|-----------|-----------|
+| Structures                        | 5,335,299 | 4,927,038 |
+| Different hashes                  | 4,694,471 | 4,564,507 |
+| Structures minus different hashes |   640,828 |   362,531 |
+| Rate                              |   12.01 % |    7.36 % |
+
+"unique" keeps one structure per fingerprint of LeMat-Bulk. The 408,261
+structures it drops are duplicates for LeMat-Bulk: about 278,300 of them
+share a hash with a structure which is kept, about 130,000 do not. In
+"unique", 362,531 structures which LeMat-Bulk holds for different share a
+hash with another one. Which of them are the same crystal, crystals with the
+same bonds and other distances, or different crystals the refinement confuses,
+was not measured.
+"""
+
 import torch
 from jaxtyping import UInt32
 

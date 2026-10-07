@@ -130,6 +130,21 @@ from pycrystalgen.graph.coloring import refined_coloring
 colors = refined_coloring(structures, atomic_radius(structures))   # (n_atoms, 4) uint32
 ```
 
+Two structures have the same hash when they have the same elements, the same number of
+atoms and graphs of bonds the refinement cannot tell apart. The hash does not see distances:
+it groups candidates, it does not replace a comparison of structures. On LeMat-Bulk
+(measured on 2026-10-07 with the default `atomic_radius`):
+
+| Split | Structures | Different hashes | Structures minus hashes | Rate |
+|---|---|---|---|---|
+| `all` | 5,335,299 | 4,694,471 | 640,828 | 12.01 % |
+| `unique` | 4,927,038 | 4,564,507 | 362,531 | 7.36 % |
+
+`unique` keeps one structure per fingerprint of LeMat-Bulk: 7.36 % of the structures it holds
+for different share a hash with another one. Of the 408,261 duplicates it drops, about 130,000
+have a hash which no kept structure has. Which shared hashes are the same crystal, the same
+bonds with other distances, or crystals the refinement confuses, was not measured.
+
 !!! warning
     Graphs built before the fix of distances in non orthogonal cells (see
     [Graph conventions](../design/graphs.md)) were wrong for these cells. Hashes computed
