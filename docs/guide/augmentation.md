@@ -2,7 +2,7 @@
 
 A crystal has many descriptions. The order of the atoms, the orientation and the origin of the
 cell, the basis of the lattice and the size of the cell are arbitrary choices.
-`pycrystalgen.data.augmentation` moves from one description to another one of the same crystal.
+`torchms.data.augmentation` moves from one description to another one of the same crystal.
 
 | Transform | Group | Changes | Function |
 |---|---|---|---|
@@ -18,8 +18,8 @@ A transform draws one element per structure of the batch and applies it. Transfo
 with `Compose` and given to a dataset:
 
 ```python
-from pycrystalgen.data import load_dataset
-from pycrystalgen.data.augmentation import (
+from torchms.data import load_dataset
+from torchms.data.augmentation import (
     AtomPermutation,
     AtomTranslation,
     Compose,
@@ -50,8 +50,8 @@ The functions take the elements to apply, one per structure:
 
 ```python
 import torch
-from pycrystalgen.data import Structures
-from pycrystalgen.data.augmentation import change_lattice_basis, make_supercell
+from torchms.data import Structures
+from torchms.data.augmentation import change_lattice_basis, make_supercell
 
 structures = Structures.diamond()
 

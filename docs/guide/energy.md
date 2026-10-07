@@ -16,8 +16,8 @@ elements, and the one of OQMD is negative for the most stable phases.
 it to the convex hull of LeMat-Bulk.
 
 ```python
-from pycrystalgen.data import load_dataset
-from pycrystalgen.estimator import EnergyEstimator
+from torchms.data import load_dataset
+from torchms.estimator import EnergyEstimator
 
 estimator = EnergyEstimator.from_lematerial(device="cuda")
 print(estimator.hull_source)
@@ -56,11 +56,11 @@ difference between a stable phase and its close competitors.
 
 ## 3. Compute it from DFT energies
 
-`pycrystalgen.data.hull` computes the hull itself. Energies must be comparable: same
+`torchms.data.hull` computes the hull itself. Energies must be comparable: same
 functional and same calculation settings.
 
 ```python
-from pycrystalgen.data.hull import energy_above_hull, energy_above_reference, load_hull
+from torchms.data.hull import energy_above_hull, energy_above_reference, load_hull
 
 # hull of a set of structures, from its own energies
 above = energy_above_hull(z, num_atoms, total_energy, num_workers=8)

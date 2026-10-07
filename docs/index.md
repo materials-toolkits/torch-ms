@@ -1,6 +1,6 @@
-# PyCrystalGen
+# Torch Material Science (TorchMS)
 
-PyCrystalGen is a Python library for machine learning on crystal structures. It provides:
+TorchMS (Torch Material Science) is a Python library for machine learning on crystal structures. It provides:
 
 - **Datasets** in one common format, published on Hugging Face and loaded by name.
 - **`Structures`**, a batched container of crystals for PyTorch.
@@ -12,8 +12,8 @@ PyCrystalGen is a Python library for machine learning on crystal structures. It 
 - **Energy above the convex hull**, from DFT energies or estimated with a pretrained model.
 
 ```python
-from pycrystalgen.data import load_dataset
-from pycrystalgen.estimator import EnergyEstimator
+from torchms.data import load_dataset
+from torchms.estimator import EnergyEstimator
 
 dataset = load_dataset("mp-20", "test")
 structures = dataset[:32]  # a batch of 32 crystals

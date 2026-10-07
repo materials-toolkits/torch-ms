@@ -1,8 +1,8 @@
 import pytest
 import torch
 
-from pycrystalgen.data import Structures, parse_cif
-from pycrystalgen.data.augmentation import (
+from torchms.data import Structures, parse_cif
+from torchms.data.augmentation import (
     AtomPermutation,
     AtomTranslation,
     Compose,
@@ -19,9 +19,9 @@ from pycrystalgen.data.augmentation import (
     rotate_lattice,
     translate_atoms,
 )
-from pycrystalgen.graph.atomic_radius import atomic_radius
-from pycrystalgen.graph.coloring import color_refinement, refined_coloring
-from pycrystalgen.graph.cutoff import cutoff
+from torchms.graph.atomic_radius import atomic_radius
+from torchms.graph.coloring import color_refinement, refined_coloring
+from torchms.graph.cutoff import cutoff
 
 RADIUS = 3.0
 

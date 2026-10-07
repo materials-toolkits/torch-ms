@@ -1,6 +1,6 @@
 # Energy estimator
 
-`pycrystalgen.estimator` estimates the PBE total energy of a structure on the scale of the
+`torchms.estimator` estimates the PBE total energy of a structure on the scale of the
 [hull of LeMat-Bulk](hull.md).
 
 ## Model
@@ -17,7 +17,7 @@ attention layers, an energy head with a reference energy per element, and a repu
 close atoms. Forces, stress and training are not included. The official weights (102 MB) are
 downloaded on the first use and checked against a pinned SHA-256.
 
-The graph is built by `pycrystalgen.graph`: atoms closer than 6 Å, at most the 120 nearest,
+The graph is built by `torchms.graph`: atoms closer than 6 Å, at most the 120 nearest,
 periodic images of the atom itself included.
 
 ### Is the rewrite faithful
@@ -103,7 +103,7 @@ end.
 ## Other pretrained models
 
 Other published models are rewritten the same way, to check the graph functions of
-`pycrystalgen.graph` against models which use terms on three atoms and more. They predict the
+`torchms.graph` against models which use terms on three atoms and more. They predict the
 energy only, load the official weights, and are not used by `EnergyEstimator`. No package of
 these models is a dependency: their energies were computed once, outside of the project, by
 the scripts `scripts/reference_*.py`, for the 40 structures of the test of orb.

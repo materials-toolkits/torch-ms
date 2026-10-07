@@ -18,13 +18,13 @@ import torch
 import tqdm
 from collections import Counter
 
-from pycrystalgen.data import load_dataset
-from pycrystalgen.graph.coloring import color_refinement
-from pycrystalgen.graph.atomic_radius import atomic_radius
+from torchms.data import load_dataset
+from torchms.graph.coloring import color_refinement
+from torchms.graph.atomic_radius import atomic_radius
 from torch.utils.data import BatchSampler, DataLoader, RandomSampler
 
-from pycrystalgen.data.batching import Structures
-from pycrystalgen.graph.atomic_radius import atomic_radius
+from torchms.data.batching import Structures
+from torchms.graph.atomic_radius import atomic_radius
 
 lematerial = load_dataset("lematerial", "unique")
 

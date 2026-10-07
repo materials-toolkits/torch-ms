@@ -10,7 +10,7 @@ import numpy as np
 def main() -> None:
     from pymatgen.symmetry.groups import SpaceGroup
 
-    output_path = "src/pycrystalgen/data/constants/spacegroups.h5"
+    output_path = "src/torchms/data/constants/spacegroups.h5"
 
     with h5py.File(output_path, "w") as h5:
 

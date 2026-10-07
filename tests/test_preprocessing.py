@@ -10,9 +10,9 @@ from pathlib import Path
 import pytest
 import torch
 
-from pycrystalgen.data.hdf5 import HDF5Dataset
-from pycrystalgen.data.preprocessing import Preprocessing, preprocessing
-from pycrystalgen.data.constants import symbol_to_number
+from torchms.data.hdf5 import HDF5Dataset
+from torchms.data.preprocessing import Preprocessing, preprocessing
+from torchms.data.constants import symbol_to_number
 
 
 @pytest.fixture(autouse=True)
@@ -195,7 +195,7 @@ class TestPreprocessingFilter:
 
     @pytest.mark.parametrize("batch_size", [32, 2])
     def test_max_atoms(self, tmp_path, concatenated_triclinic_cif, batch_size):
-        from pycrystalgen.data.filters import Filter
+        from torchms.data.filters import Filter
 
         cif_file, _, expected_structures = concatenated_triclinic_cif
         hdf5_file = tmp_path / "output.hdf5"

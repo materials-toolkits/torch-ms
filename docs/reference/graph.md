@@ -1,29 +1,29 @@
-# pycrystalgen.graph
+# torchms.graph
 
 ## Graph
 
-::: pycrystalgen.graph.graph
+::: torchms.graph.graph
 
 ## Radius graph and nearest neighbours
 
-::: pycrystalgen.graph.cutoff
+::: torchms.graph.cutoff
 
 ## Chemical bonds
 
-::: pycrystalgen.graph.atomic_radius
+::: torchms.graph.atomic_radius
 
 ## Angles and dihedrals
 
-::: pycrystalgen.graph.line_graph
+::: torchms.graph.line_graph
 
 ## Hash of a structure
 
-::: pycrystalgen.graph.coloring
+::: torchms.graph.coloring
 
 ## Geometry
 
-::: pycrystalgen.graph.geometry
+::: torchms.graph.geometry
 
 ## Aggregation and index helpers
 
-::: pycrystalgen.graph.sparse
+::: torchms.graph.sparse

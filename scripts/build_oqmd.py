@@ -24,9 +24,9 @@ import tqdm
 
 from oqmd_extract import TABLES, extract
 from oqmd_to_cif import LATTICE, convert
-from pycrystalgen.data.constants import symbol_to_number
-from pycrystalgen.data.hdf5 import HDF5Dataset
-from pycrystalgen.data.preprocessing import Preprocessing, preprocessing
+from torchms.data.constants import symbol_to_number
+from torchms.data.hdf5 import HDF5Dataset
+from torchms.data.preprocessing import Preprocessing, preprocessing
 
 URL = "https://static.oqmd.org/static/downloads/qmdb__v1_8__022026.sql.gz"
 
@@ -54,7 +54,7 @@ def download(url: str, destination: Path) -> None:
 
 
 def valid_symbols(symbols: pd.Series) -> set[str]:
-    """Elements of the atoms table known by pycrystalgen."""
+    """Elements of the atoms table known by torchms."""
     valid = set()
     for symbol in symbols.dropna().unique():
         try:

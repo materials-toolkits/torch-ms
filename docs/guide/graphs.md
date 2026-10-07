@@ -1,13 +1,13 @@
 # Graphs
 
-`pycrystalgen.graph` builds graphs of crystals under periodic boundary conditions. An edge
+`torchms.graph` builds graphs of crystals under periodic boundary conditions. An edge
 goes from an atom of the cell to an atom of the cell or of one of its periodic images.
 
 ## Radius graph
 
 ```python
-from pycrystalgen.data import Structures
-from pycrystalgen.graph.cutoff import cutoff
+from torchms.data import Structures
+from torchms.graph.cutoff import cutoff
 
 structures = Structures.zincblende()
 graph = cutoff(structures, 3.0)
@@ -37,7 +37,7 @@ Fractional coordinates can be inside or outside the cell.
 ## Nearest neighbours
 
 ```python
-from pycrystalgen.graph.cutoff import nearest_neighbors
+from torchms.graph.cutoff import nearest_neighbors
 
 graph = nearest_neighbors(cutoff(Structures.diamond(), 4.0), 4)
 graph.num_edges   # tensor([32]): the 4 nearest neighbours of 8 atoms
@@ -51,7 +51,7 @@ Edges of the result are sorted by source atom, then by length.
 can keep only the first shell of distances:
 
 ```python
-from pycrystalgen.graph.atomic_radius import atomic_radius
+from torchms.graph.atomic_radius import atomic_radius
 
 graph = atomic_radius(structures, scaling=1.1)
 ```
@@ -76,7 +76,7 @@ energy_per_atom = graph.aggregate_edges_to_nodes(edge_values)       # sum over t
 per_structure = graph.aggregate_nodes_to_structures(atom_values)
 ```
 
-`pycrystalgen.graph.sparse.scatter` is the underlying function (`sum`, `mean`, `amax`, ...).
+`torchms.graph.sparse.scatter` is the underlying function (`sum`, `mean`, `amax`, ...).
 
 ## Angles and dihedrals
 
@@ -85,8 +85,8 @@ Models with terms on three or four atoms need the pairs and the chains of edges 
 three edges:
 
 ```python
-from pycrystalgen.graph.geometry import dihedral_angles, triplet_cosines
-from pycrystalgen.graph.line_graph import quadruplets, triplets
+from torchms.graph.geometry import dihedral_angles, triplet_cosines
+from torchms.graph.line_graph import quadruplets, triplets
 
 graph = cutoff(structures, 5.0)
 vectors = graph.edges_vectors()                      # (n_edges, 3), in Å
@@ -115,7 +115,7 @@ with the same key.
 atoms, from a graph of its bonds:
 
 ```python
-from pycrystalgen.graph.coloring import color_refinement
+from torchms.graph.coloring import color_refinement
 
 hashes = color_refinement(structures, atomic_radius(structures))   # (n_struct, 4) uint32
 ```
@@ -125,7 +125,7 @@ The hash depends on the number of atoms: a supercell has another hash than its c
 in a cell and in its supercells:
 
 ```python
-from pycrystalgen.graph.coloring import refined_coloring
+from torchms.graph.coloring import refined_coloring
 
 colors = refined_coloring(structures, atomic_radius(structures))   # (n_atoms, 4) uint32
 ```

@@ -23,10 +23,10 @@ from materials_project_to_cif import (
     iter_rows,
     site_symbols,
 )
-from pycrystalgen.data.batching import Structures
-from pycrystalgen.data.constants import symbol_to_number
-from pycrystalgen.data.hdf5 import HDF5Dataset
-from pycrystalgen.data.preprocessing import Preprocessing, preprocessing
+from torchms.data.batching import Structures
+from torchms.data.constants import symbol_to_number
+from torchms.data.hdf5 import HDF5Dataset
+from torchms.data.preprocessing import Preprocessing, preprocessing
 
 LABELS = {
     "formation_energy_per_atom": "formation_energy_per_atom",

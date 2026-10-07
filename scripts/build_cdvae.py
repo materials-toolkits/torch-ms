@@ -19,8 +19,8 @@ import torch
 from pymatgen.core import Structure
 
 from csv_to_cif import convert
-from pycrystalgen.data.hdf5 import HDF5Dataset
-from pycrystalgen.data.preprocessing import Preprocessing, preprocessing
+from torchms.data.hdf5 import HDF5Dataset
+from torchms.data.preprocessing import Preprocessing, preprocessing
 
 URL = "https://raw.githubusercontent.com/txie-93/cdvae/main/data/{name}/{split}.csv"
 SPLITS = ("train", "val", "test")

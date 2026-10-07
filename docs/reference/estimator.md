@@ -1,47 +1,47 @@
-# pycrystalgen.estimator
+# torchms.estimator
 
 ## Energy estimator
 
-::: pycrystalgen.estimator.energy
+::: torchms.estimator.energy
 
 ## Correction of the energies
 
-::: pycrystalgen.estimator.calibration
+::: torchms.estimator.calibration
 
 ## orb-v3 model
 
-::: pycrystalgen.estimator.orb.model
+::: torchms.estimator.orb.model
 
 ## Pretrained weights
 
-::: pycrystalgen.estimator.orb.weights
+::: torchms.estimator.orb.weights
 
 ## CHGNet
 
-::: pycrystalgen.estimator.chgnet.model
+::: torchms.estimator.chgnet.model
 
-::: pycrystalgen.estimator.chgnet.weights
+::: torchms.estimator.chgnet.weights
 
 ## M3GNet
 
-::: pycrystalgen.estimator.m3gnet.model
+::: torchms.estimator.m3gnet.model
 
-::: pycrystalgen.estimator.m3gnet.weights
+::: torchms.estimator.m3gnet.weights
 
 ## ALIGNN
 
-::: pycrystalgen.estimator.alignn.model
+::: torchms.estimator.alignn.model
 
-::: pycrystalgen.estimator.alignn.weights
+::: torchms.estimator.alignn.weights
 
 ## MACE
 
-::: pycrystalgen.estimator.mace.model
+::: torchms.estimator.mace.model
 
-::: pycrystalgen.estimator.mace.weights
+::: torchms.estimator.mace.weights
 
-::: pycrystalgen.estimator.mace.reader
+::: torchms.estimator.mace.reader
 
 ## Download of weights
 
-::: pycrystalgen.estimator.weights
+::: torchms.estimator.weights

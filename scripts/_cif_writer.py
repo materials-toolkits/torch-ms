@@ -1,4 +1,4 @@
-"""Write P1 CIF blocks readable by pycrystalgen.data.cif.CifParser.
+"""Write P1 CIF blocks readable by torchms.data.cif.CifParser.
 
 Shared by the dataset conversion scripts. Numbers are written in fixed-point
 notation because the parser does not read scientific notation.

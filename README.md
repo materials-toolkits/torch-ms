@@ -1,4 +1,4 @@
-# PyCrystalGen
+# Torch Material Science (TorchMS)
 
 ## Setup with uv
 
@@ -32,7 +32,7 @@ Preprocessed datasets are published on Hugging Face, in the same HDF5 format, an
 directly as batched `Structures`:
 
 ```python
-from pycrystalgen.data import load_dataset  # needs the "hub" extra
+from torchms.data import load_dataset  # needs the "hub" extra
 
 dataset = load_dataset("mp-20", "train")  # or load_dataset("mp-20/train")
 structures = dataset[:32]
@@ -100,17 +100,17 @@ uv run preprocessing lemat.cif lemat.hdf5 --num-workers 4 \
 `--max-energy-above-hull 0` keeps stable materials, `0.1` stable and meta-stable. With
 `--num-workers`, structures are not written in the order of the CIF file. From Python,
 `Preprocessing(filter=...)` accepts any callable returning a mask of the structures to
-keep (see `pycrystalgen.data.filters.Filter`).
+keep (see `torchms.data.filters.Filter`).
 
 Upload a preprocessed file with `hf upload user/repo lemat.hdf5 --repo-type dataset`.
 
 ### Energy above the convex hull
 
-`pycrystalgen.data.hull` computes the energy above the convex hull from total energies,
+`torchms.data.hull` computes the energy above the convex hull from total energies,
 one chemical system at a time. Energies must be comparable (same level of theory).
 
 ```python
-from pycrystalgen.data.hull import energy_above_hull, energy_above_reference, load_hull
+from torchms.data.hull import energy_above_hull, energy_above_reference, load_hull
 
 # hull of a dataset, from its own structures: 0 on the hull
 above = energy_above_hull(z, num_atoms, total_energy, num_workers=8)
@@ -143,13 +143,13 @@ the structures of the Materials Project and Alexandria.
 
 ### Estimated total energy
 
-`pycrystalgen.estimator` estimates the PBE total energy of a structure with a pretrained
+`torchms.estimator` estimates the PBE total energy of a structure with a pretrained
 graph network, on the scale of LeMat-Bulk, so that an energy above its convex hull can be
 computed without DFT:
 
 ```python
-from pycrystalgen.data import HDF5Dataset
-from pycrystalgen.estimator import EnergyEstimator
+from torchms.data import HDF5Dataset
+from torchms.estimator import EnergyEstimator
 
 # model, correction and convex hull of LeMat-Bulk, needs the "hub" extra
 estimator = EnergyEstimator.from_lematerial(device="cuda")
@@ -175,7 +175,7 @@ and NaN for a structure with an element absent from the hull. `estimator(structu
 The model is orb-v3 conservative (`orb-v3-conservative-inf-mpa`) of Orbital Materials,
 rewritten in `estimator/orb/` for the prediction of the energy only, without any new
 dependency; the official weights (102 MB) are downloaded on the first call into
-`~/.cache/pycrystalgen`. A small energy per atom of each element, fitted on LeMat-Bulk, is
+`~/.cache/torchms`. A small energy per atom of each element, fitted on LeMat-Bulk, is
 added (`estimator/calibration.py`, `energy_correction_orb.hdf5` in the LeMaterial dataset).
 
 - The energy is the one of the structure as given: it is not relaxed. Compare relaxed

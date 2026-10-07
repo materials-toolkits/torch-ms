@@ -4,7 +4,7 @@ Every dataset is published on Hugging Face in the same HDF5 format and is loaded
 file is downloaded on the first call and cached by `huggingface_hub`.
 
 ```python
-from pycrystalgen.data import load_dataset
+from torchms.data import load_dataset
 
 dataset = load_dataset("mp-20", "train")
 dataset = load_dataset("mp-20/train")     # same thing
@@ -26,7 +26,7 @@ Names are not case sensitive and `_` is accepted for `-`. An unknown name or spl
 `KeyError` listing the valid ones.
 
 ```python
-from pycrystalgen.data import available_datasets, dataset_url
+from torchms.data import available_datasets, dataset_url
 
 available_datasets()["oqmd"]      # ('all', 'unique')
 dataset_url("oqmd", "unique")
@@ -101,7 +101,7 @@ Ready-made random transforms are described in [Data augmentation](augmentation.m
 A local file, or a file of any other repository:
 
 ```python
-from pycrystalgen.data import HDF5Dataset
+from torchms.data import HDF5Dataset
 
 dataset = HDF5Dataset("my_structures.hdf5")
 dataset = HDF5Dataset.from_hub("user/repository", "file.hdf5")

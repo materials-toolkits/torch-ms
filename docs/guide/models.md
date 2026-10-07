@@ -1,6 +1,6 @@
 # Models
 
-`pycrystalgen.models` has two trainable models of the energy with terms on more than two
+`torchms.models` has two trainable models of the energy with terms on more than two
 atoms. They follow the two ways recent models do it:
 
 | Model | Graph | Terms on three atoms and more | As in |
@@ -12,8 +12,8 @@ Both take a batch of `Structures` and return one energy per structure. There is 
 loop in the library: they are `torch.nn.Module`.
 
 ```python
-from pycrystalgen.data import load_dataset
-from pycrystalgen.models import EquivariantNetwork, LineGraphNetwork
+from torchms.data import load_dataset
+from torchms.models import EquivariantNetwork, LineGraphNetwork
 
 structures = load_dataset("mp-20", "train")[:32]
 
@@ -73,7 +73,7 @@ mirror: the model cannot distinguish a crystal from its mirror image.
 
 This is not MACE: MACE learns one weight per coupling of its symmetric contraction and keeps
 vector and tensor features between layers in its larger models. `MaceEnergyModel`, in
-`pycrystalgen.estimator`, is the exact rewrite of its small model.
+`torchms.estimator`, is the exact rewrite of its small model.
 
 ## Which one
 

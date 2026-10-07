@@ -3,7 +3,7 @@
 ## Computation
 
 The energy above the hull of a structure is its energy per atom minus the energy of the most
-stable mix of phases with the same composition. `pycrystalgen.data.hull` computes it from
+stable mix of phases with the same composition. `torchms.data.hull` computes it from
 total energies:
 
 1. **Compositions**: elements of each structure and fraction of its atoms.

@@ -1,7 +1,7 @@
 [project]
-name = "pycrystalgen"
+name = "torchms"
 version = "0.1.0"
-description = "A Python library for crystal generation"
+description = "Torch Material Science: a Python library for machine learning on crystal structures"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -38,7 +38,7 @@ docs = [
 ]
 
 [project.scripts]
-preprocessing = "pycrystalgen.data.preprocessing:main"
+preprocessing = "torchms.data.preprocessing:main"
 
 [tool.poe.tasks]
 sync.sequence = [
@@ -65,7 +65,7 @@ venv = ".venv"
 target-version = ["py310"]
 
 [tool.pylint.master]
-source = ["src/pycrystalgen"]
+source = ["src/torchms"]
 recursive = true
 ignore = [".venv","tests"]
 

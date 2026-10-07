@@ -5,8 +5,8 @@ import types
 
 import pytest
 
-from pycrystalgen.data import HDF5Dataset, Structures
-from pycrystalgen.data.datasets import (
+from torchms.data import HDF5Dataset, Structures
+from torchms.data.datasets import (
     DATASETS,
     available_datasets,
     dataset_url,

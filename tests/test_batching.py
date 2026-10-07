@@ -3,8 +3,8 @@ import torch
 import numpy as np
 from unittest.mock import patch
 
-from pycrystalgen.data import Structures
-from pycrystalgen.data.batching import InvalidStructure
+from torchms.data import Structures
+from torchms.data.batching import InvalidStructure
 
 
 @pytest.fixture

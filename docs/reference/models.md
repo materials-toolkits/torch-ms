@@ -1,13 +1,13 @@
-# pycrystalgen.models
+# torchms.models
 
 ## Explicit angles
 
-::: pycrystalgen.models.line_graph_network
+::: torchms.models.line_graph_network
 
 ## Products of spherical harmonics
 
-::: pycrystalgen.models.equivariant_network
+::: torchms.models.equivariant_network
 
 ## Bases
 
-::: pycrystalgen.models.basis
+::: torchms.models.basis

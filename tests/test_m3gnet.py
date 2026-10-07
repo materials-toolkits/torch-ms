@@ -8,16 +8,16 @@ import pytest
 import torch
 from scipy.special import spherical_jn
 
-from pycrystalgen.data import Structures, parse_cif
-from pycrystalgen.data.augmentation import (
+from torchms.data import Structures, parse_cif
+from torchms.data.augmentation import (
     AtomPermutation,
     AtomTranslation,
     LatticeBasisChange,
     LatticeRotation,
     make_supercell,
 )
-from pycrystalgen.estimator.m3gnet import InvalidWeights, M3gnetEnergyModel, weights
-from pycrystalgen.estimator.m3gnet.model import (
+from torchms.estimator.m3gnet import InvalidWeights, M3gnetEnergyModel, weights
+from torchms.estimator.m3gnet.model import (
     ELEMENTS,
     MAX_L,
     MAX_N,

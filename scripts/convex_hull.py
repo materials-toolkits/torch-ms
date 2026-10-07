@@ -1,6 +1,6 @@
 """Compute the energy above the convex hull of the structures of a dataset.
 
-Command line of pycrystalgen.data.hull, run inside the project environment:
+Command line of torchms.data.hull, run inside the project environment:
 
     uv run python scripts/convex_hull.py dataset.hdf5 above.npy
     uv run python scripts/convex_hull.py dataset.hdf5 above.npy --fill
@@ -21,7 +21,7 @@ import os
 import h5py
 import numpy as np
 
-from pycrystalgen.data.hull import (
+from torchms.data.hull import (
     energy_above_hull,
     energy_above_reference,
     fill_missing,

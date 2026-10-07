@@ -5,8 +5,8 @@ import numpy as np
 import pytest
 import torch
 
-from pycrystalgen.data import HDF5Dataset, Structures
-from pycrystalgen.data.hull import (
+from torchms.data import HDF5Dataset, Structures
+from torchms.data.hull import (
     STABLE_TOLERANCE,
     Hull,
     compositions,

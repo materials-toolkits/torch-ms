@@ -8,12 +8,12 @@ import numpy as np
 import pytest
 import torch
 
-from pycrystalgen.data import HDF5Dataset, Structures
-from pycrystalgen.estimator import EnergyEstimator, OrbEnergyModel
-from pycrystalgen.estimator import calibration
-from pycrystalgen.estimator.orb import weights
-from pycrystalgen.estimator.energy import atom_batches, to_device
-from pycrystalgen.estimator.orb.model import (
+from torchms.data import HDF5Dataset, Structures
+from torchms.estimator import EnergyEstimator, OrbEnergyModel
+from torchms.estimator import calibration
+from torchms.estimator.orb import weights
+from torchms.estimator.energy import atom_batches, to_device
+from torchms.estimator.orb.model import (
     COVALENT_RADII,
     MAX_NEIGHBORS,
     RADIUS,
@@ -37,15 +37,15 @@ def test_checkpoint_path(tmp_path, monkeypatch):
     path = weights.checkpoint_path("orb-v3-conservative-inf-omat", tmp_path)
     assert path == tmp_path / "orb" / "orb-v3-conservative-inf-omat-20250404.ckpt"
 
-    monkeypatch.setenv("PYCRYSTALGEN_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setenv("TORCHMS_CACHE", str(tmp_path / "cache"))
     assert weights.cache_directory() == tmp_path / "cache"
     assert weights.checkpoint_path("orb-v3-conservative-inf-mpa").parent == (
         tmp_path / "cache" / "orb"
     )
 
-    monkeypatch.delenv("PYCRYSTALGEN_CACHE")
+    monkeypatch.delenv("TORCHMS_CACHE")
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
-    assert weights.cache_directory() == tmp_path / "xdg" / "pycrystalgen"
+    assert weights.cache_directory() == tmp_path / "xdg" / "torchms"
 
     with pytest.raises(KeyError, match="unknown model"):
         weights.checkpoint_path("orb-v9")
@@ -705,7 +705,7 @@ def test_fit_absolute_loss_ignores_outliers():
 
 def hull_file(tmp_path, model: OrbEnergyModel, shift: float = 0.0):
     """Hull of zincblende ZnS, of its elements and of sodium, from the model."""
-    from pycrystalgen.data.hull import save_hull
+    from torchms.data.hull import save_hull
 
     zinc = Structures.diamond(a=5.6, element=30)
     sulfur = Structures.diamond(a=5.6, element=16)
@@ -722,7 +722,7 @@ def hull_file(tmp_path, model: OrbEnergyModel, shift: float = 0.0):
 
 
 def test_energy_above_hull(tmp_path, float_model):
-    from pycrystalgen.data.hull import energy_above_reference, load_hull
+    from torchms.data.hull import energy_above_reference, load_hull
 
     path, reference = hull_file(tmp_path, float_model)
     estimator = EnergyEstimator(float_model, hull=load_hull(path))
@@ -764,7 +764,7 @@ def test_energy_above_hull(tmp_path, float_model):
 
 
 def test_energy_above_hull_can_be_negative(tmp_path, float_model):
-    from pycrystalgen.data.hull import load_hull
+    from torchms.data.hull import load_hull
 
     # in this hull, zincblende is 0.2 eV/atom above the line between its elements
     path, _ = hull_file(tmp_path, float_model, shift=-0.7)
@@ -798,7 +798,7 @@ def test_energy_above_hull_needs_a_hull(float_model):
 
 @pytest.mark.timeout(60)
 def test_predict_energy_above_hull(tmp_path, float_model):
-    from pycrystalgen.data.hull import load_hull
+    from torchms.data.hull import load_hull
 
     path, _ = hull_file(tmp_path, float_model)
     estimator = EnergyEstimator(float_model, hull=load_hull(path))
@@ -925,7 +925,7 @@ def test_hull_source_of_a_file(tmp_path, float_model, monkeypatch):
     estimator = EnergyEstimator.from_pretrained(hull_file=path)
     assert estimator.hull_source == f"file {path}"
 
-    from pycrystalgen.data.hull import load_hull
+    from torchms.data.hull import load_hull
 
     assert EnergyEstimator(float_model, hull=load_hull(path)).hull_source is None
     assert "unknown source" in repr(EnergyEstimator(float_model, hull=load_hull(path)))

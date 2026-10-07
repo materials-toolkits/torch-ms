@@ -31,7 +31,7 @@ are converted.
 
 ```python
 import torch
-from pycrystalgen.data import Structures
+from torchms.data import Structures
 
 structure = Structures(
     lattice=torch.eye(3).unsqueeze(0) * 4.0,
@@ -85,7 +85,7 @@ Datasets load on the CPU: move each batch after loading it.
 ## Reading CIF
 
 ```python
-from pycrystalgen.data import parse_cif
+from torchms.data import parse_cif
 
 structures = parse_cif(open("file.cif").read())   # one structure per data block
 ```

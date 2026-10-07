@@ -2194,78 +2194,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pycrystalgen"
-version = "0.1.0"
-source = { virtual = "." }
-dependencies = [
-    { name = "h5py" },
-    { name = "jaxtyping", version = "0.3.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "jaxtyping", version = "0.3.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "torch" },
-    { name = "tqdm" },
-]
-
-[package.optional-dependencies]
-hub = [
-    { name = "huggingface-hub" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "ase" },
-    { name = "black" },
-    { name = "huggingface-hub" },
-    { name = "poethepoet" },
-    { name = "pyarrow" },
-    { name = "pylint" },
-    { name = "pymatgen", version = "2025.10.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "pymatgen", version = "2026.3.23", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "pyright" },
-    { name = "pytest" },
-    { name = "pytest-timeout" },
-    { name = "spglib" },
-]
-docs = [
-    { name = "mkdocs-material" },
-    { name = "mkdocstrings", extra = ["python"] },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "h5py", specifier = ">=3.16.0" },
-    { name = "huggingface-hub", marker = "extra == 'hub'", specifier = ">=0.30.0" },
-    { name = "jaxtyping", specifier = ">=0.3.7" },
-    { name = "numpy", specifier = ">=2.2.6" },
-    { name = "scipy", specifier = ">=1.15.3" },
-    { name = "torch", specifier = ">=2.11.0" },
-    { name = "tqdm", specifier = ">=4.67.3" },
-]
-provides-extras = ["hub"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "ase", specifier = ">=3.28.0" },
-    { name = "black", specifier = ">=26.3.1" },
-    { name = "huggingface-hub", specifier = ">=2.1.1" },
-    { name = "poethepoet", specifier = ">=0.34.0" },
-    { name = "pyarrow", specifier = ">=25.0.1" },
-    { name = "pylint", specifier = ">=4.0.5" },
-    { name = "pymatgen", specifier = ">=2025.10.7" },
-    { name = "pyright", specifier = ">=1.1.408" },
-    { name = "pytest", specifier = ">=9.0.2" },
-    { name = "pytest-timeout", specifier = ">=2.4.0" },
-    { name = "spglib", specifier = ">=2.7.0" },
-]
-docs = [
-    { name = "mkdocs-material", specifier = ">=9.7.7" },
-    { name = "mkdocstrings", extras = ["python"], specifier = ">=1.0.6" },
-]
-
-[[package]]
 name = "pygments"
 version = "2.19.2"
 source = { registry = "https://pypi.org/simple" }
@@ -2974,6 +2902,78 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/fd/66/54a56a4a6ceaffb567231994a9745821d3af922a854ed33b0b3a278e0a99/torch-2.11.0-cp314-cp314t-manylinux_2_28_aarch64.whl", hash = "sha256:ab9a8482f475f9ba20e12db84b0e55e2f58784bdca43a854a6ccd3fd4b9f75e6", size = 419735835, upload-time = "2026-03-23T18:07:18.974Z" },
     { url = "https://files.pythonhosted.org/packages/b1/e7/0b6665f533aa9e337662dc190425abc0af1fe3234088f4454c52393ded61/torch-2.11.0-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:563ed3d25542d7e7bbc5b235ccfacfeb97fb470c7fee257eae599adb8005c8a2", size = 530613405, upload-time = "2026-03-23T18:08:07.014Z" },
     { url = "https://files.pythonhosted.org/packages/cf/bf/c8d12a2c86dbfd7f40fb2f56fbf5a505ccf2d9ce131eb559dfc7c51e1a04/torch-2.11.0-cp314-cp314t-win_amd64.whl", hash = "sha256:b2a43985ff5ef6ddd923bbcf99943e5f58059805787c5c9a2622bf05ca2965b0", size = 114792991, upload-time = "2026-03-23T18:08:19.216Z" },
+]
+
+[[package]]
+name = "torchms"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "h5py" },
+    { name = "jaxtyping", version = "0.3.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "jaxtyping", version = "0.3.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "torch" },
+    { name = "tqdm" },
+]
+
+[package.optional-dependencies]
+hub = [
+    { name = "huggingface-hub" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "ase" },
+    { name = "black" },
+    { name = "huggingface-hub" },
+    { name = "poethepoet" },
+    { name = "pyarrow" },
+    { name = "pylint" },
+    { name = "pymatgen", version = "2025.10.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "pymatgen", version = "2026.3.23", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pyright" },
+    { name = "pytest" },
+    { name = "pytest-timeout" },
+    { name = "spglib" },
+]
+docs = [
+    { name = "mkdocs-material" },
+    { name = "mkdocstrings", extra = ["python"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "h5py", specifier = ">=3.16.0" },
+    { name = "huggingface-hub", marker = "extra == 'hub'", specifier = ">=0.30.0" },
+    { name = "jaxtyping", specifier = ">=0.3.7" },
+    { name = "numpy", specifier = ">=2.2.6" },
+    { name = "scipy", specifier = ">=1.15.3" },
+    { name = "torch", specifier = ">=2.11.0" },
+    { name = "tqdm", specifier = ">=4.67.3" },
+]
+provides-extras = ["hub"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "ase", specifier = ">=3.28.0" },
+    { name = "black", specifier = ">=26.3.1" },
+    { name = "huggingface-hub", specifier = ">=2.1.1" },
+    { name = "poethepoet", specifier = ">=0.34.0" },
+    { name = "pyarrow", specifier = ">=25.0.1" },
+    { name = "pylint", specifier = ">=4.0.5" },
+    { name = "pymatgen", specifier = ">=2025.10.7" },
+    { name = "pyright", specifier = ">=1.1.408" },
+    { name = "pytest", specifier = ">=9.0.2" },
+    { name = "pytest-timeout", specifier = ">=2.4.0" },
+    { name = "spglib", specifier = ">=2.7.0" },
+]
+docs = [
+    { name = "mkdocs-material", specifier = ">=9.7.7" },
+    { name = "mkdocstrings", extras = ["python"], specifier = ">=1.0.6" },
 ]
 
 [[package]]

@@ -1,8 +1,8 @@
 import pytest
 import torch
 
-from pycrystalgen.data.batching import Structures
-from pycrystalgen.graph.atomic_radius import atomic_radius
+from torchms.data.batching import Structures
+from torchms.graph.atomic_radius import atomic_radius
 
 
 @pytest.fixture
@@ -64,14 +64,14 @@ def graph_edges(graph):
 
 
 def test_cutoff_default_has_no_self_image():
-    from pycrystalgen.graph.cutoff import cutoff
+    from torchms.graph.cutoff import cutoff
 
     assert cutoff(simple_cubic(), 3.5).num_edges.tolist() == [0]
     assert cutoff(Structures.zincblende(), 3.0).num_edges.tolist() == [32]
 
 
 def test_cutoff_self_images_single_atom_cell():
-    from pycrystalgen.graph.cutoff import cutoff
+    from torchms.graph.cutoff import cutoff
 
     graph = cutoff(simple_cubic(), 3.5, self_images=True)
     assert graph.num_edges.tolist() == [6]
@@ -90,7 +90,7 @@ def test_cutoff_self_images_single_atom_cell():
     ids=["zincblende", "diamond", "cubic"],
 )
 def test_cutoff_self_images_matches_ase(structures, radius):
-    from pycrystalgen.graph.cutoff import cutoff
+    from torchms.graph.cutoff import cutoff
 
     graph = cutoff(structures, radius, self_images=True)
 
@@ -98,7 +98,7 @@ def test_cutoff_self_images_matches_ase(structures, radius):
 
 
 def test_cutoff_self_images_batch():
-    from pycrystalgen.graph.cutoff import cutoff
+    from torchms.graph.cutoff import cutoff
 
     parts = [Structures.diamond(), simple_cubic(2.6), Structures.zincblende()]
     batch = Structures.collate(parts)
@@ -111,7 +111,7 @@ def test_cutoff_self_images_batch():
 
 
 def test_nearest_neighbors_keeps_the_closest():
-    from pycrystalgen.graph.cutoff import cutoff, nearest_neighbors
+    from torchms.graph.cutoff import cutoff, nearest_neighbors
 
     graph = cutoff(Structures.diamond(), 6.0, self_images=True)
     degree = torch.bincount(graph.edge_index[0], minlength=8)
@@ -129,7 +129,7 @@ def test_nearest_neighbors_keeps_the_closest():
 
 
 def test_nearest_neighbors_noop_and_batch():
-    from pycrystalgen.graph.cutoff import cutoff, nearest_neighbors
+    from torchms.graph.cutoff import cutoff, nearest_neighbors
 
     batch = Structures.collate(
         [Structures.diamond(), simple_cubic(2.6), Structures.zincblende()]
@@ -161,7 +161,7 @@ def test_nearest_neighbors_noop_and_batch():
 def triclinic(name: str) -> Structures:
     from pathlib import Path
 
-    from pycrystalgen.data import parse_cif
+    from torchms.data import parse_cif
 
     return parse_cif((Path(__file__).parent / "cif" / f"{name}.cif").read_text())
 
@@ -181,7 +181,7 @@ def ase_distances(structures: Structures, radius: float) -> torch.Tensor:
 
 @pytest.mark.parametrize("name", ["triclinic1", "triclinic2", "triclinic3"])
 def test_cutoff_triclinic_matches_ase(name):
-    from pycrystalgen.graph.cutoff import cutoff
+    from torchms.graph.cutoff import cutoff
 
     structures = triclinic(name)
     lattice = structures.lattice[0]
@@ -236,7 +236,7 @@ def unwrapped() -> Structures:
 
 @pytest.mark.parametrize("radius", [3.0, 5.0])
 def test_cutoff_coordinates_outside_the_cell(radius):
-    from pycrystalgen.graph.cutoff import cutoff
+    from torchms.graph.cutoff import cutoff
 
     structures = unwrapped()
     graph = cutoff(structures, radius, self_images=True)
@@ -284,7 +284,7 @@ def ase_neighbors(structures: Structures, radius: float):
 @pytest.mark.parametrize("name", ["triclinic1", "triclinic2", "triclinic3"])
 @pytest.mark.parametrize("scaling", [1.0, 1.6])
 def test_atomic_radius_triclinic_edges_match_ase(name, scaling):
-    from pycrystalgen.data.constants import get_element
+    from torchms.data.constants import get_element
 
     structures = triclinic(name)
     radii = torch.tensor(
@@ -312,7 +312,7 @@ def test_atomic_radius_triclinic_edges_match_ase(name, scaling):
 
 
 def test_cutoff_batch_of_non_orthogonal_cells():
-    from pycrystalgen.graph.cutoff import cutoff
+    from torchms.graph.cutoff import cutoff
 
     parts = [
         triclinic("triclinic2"),
@@ -346,7 +346,7 @@ def test_cutoff_batch_of_non_orthogonal_cells():
 @pytest.mark.parametrize("name", ["triclinic1", "triclinic3"])
 @pytest.mark.parametrize("k", [1, 6, 20])
 def test_nearest_neighbors_triclinic_matches_ase(name, k):
-    from pycrystalgen.graph.cutoff import cutoff, nearest_neighbors
+    from torchms.graph.cutoff import cutoff, nearest_neighbors
 
     structures = triclinic(name)
     radius = 6.0

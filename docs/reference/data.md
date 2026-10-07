@@ -1,35 +1,35 @@
-# pycrystalgen.data
+# torchms.data
 
 ## Structures
 
-::: pycrystalgen.data.batching
+::: torchms.data.batching
 
 ## Datasets by name
 
-::: pycrystalgen.data.datasets
+::: torchms.data.datasets
 
 ## HDF5 files
 
-::: pycrystalgen.data.hdf5
+::: torchms.data.hdf5
 
 ## CIF files
 
-::: pycrystalgen.data.cif
+::: torchms.data.cif
 
 ## Preprocessing
 
-::: pycrystalgen.data.preprocessing
+::: torchms.data.preprocessing
 
-::: pycrystalgen.data.filters
+::: torchms.data.filters
 
 ## Data augmentation
 
-::: pycrystalgen.data.augmentation.transforms
+::: torchms.data.augmentation.transforms
 
-::: pycrystalgen.data.augmentation.actions
+::: torchms.data.augmentation.actions
 
-::: pycrystalgen.data.augmentation.sampling
+::: torchms.data.augmentation.sampling
 
 ## Convex hull
 
-::: pycrystalgen.data.hull
+::: torchms.data.hull

@@ -1,4 +1,4 @@
-"""Reference energies of MACE, to check the rewrite of pycrystalgen.
+"""Reference energies of MACE, to check the rewrite of torchms.
 
 Run once, outside of the environment of the project, which does not depend on
 mace:

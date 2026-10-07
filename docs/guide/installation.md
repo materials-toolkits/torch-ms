@@ -1,6 +1,6 @@
 # Installation
 
-PyCrystalGen needs Python 3.10 or later and uses [uv](https://docs.astral.sh/uv/) to manage its
+TorchMS needs Python 3.10 or later and uses [uv](https://docs.astral.sh/uv/) to manage its
 environment.
 
 ```bash
