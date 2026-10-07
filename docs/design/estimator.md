@@ -179,3 +179,32 @@ The graphs follow the configuration of the training of the model. The function o
 which predicts a property builds another line graph, with all the bonds up to 5 Å; it was not
 reproduced.
 
+### MACE
+
+`MaceEnergyModel` is MACE-MP-0 small
+([mace](https://github.com/ACEsuit/mace), MIT,
+[arXiv:2206.07697](https://arxiv.org/abs/2206.07697)), in `estimator/mace/`. Its graph has
+pairs only, the atoms closer than 6 Å: terms on three and four atoms come from products. An
+atom sums over its neighbours a radial function times spherical harmonics (l ≤ 3) times the
+features of the neighbour; products of two and three of these sums are contracted to
+invariant features with coupling tensors. The layers of e3nn used by mace (linear layers,
+tensor products, normalized activations) are written with torch alone.
+
+| Against mace 0.3.16, 40 structures, double precision | |
+|---|---|
+| Edges of each structure | identical |
+| Largest difference of energy | 5e-15 eV/atom |
+
+The energy is exactly invariant to the rotations and reflections of `LatticeRotation`, unlike
+orb: it is checked in the tests, with the invariance of the coupling tensors.
+
+**The weights must be converted once.** mace publishes a pickled model which only mace can
+read. `scripts/reference_mace.py`, run outside of the project, writes a file of tensors in
+the cache of pycrystalgen, which `MaceEnergyModel.from_pretrained` loads; without it the
+tests of the pretrained model are skipped. The coupling tensors are taken from this file: mace
+stores them with the weights, and the weights are only valid for this choice of tensors.
+
+Only the small model, whose features are invariant, is rewritten. The medium and large models
+have vector and tensor features, which need Clebsch-Gordan coefficients in the tensor products
+between layers.
+

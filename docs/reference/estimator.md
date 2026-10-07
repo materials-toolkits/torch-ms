@@ -34,6 +34,12 @@
 
 ::: pycrystalgen.estimator.alignn.weights
 
+## MACE
+
+::: pycrystalgen.estimator.mace.model
+
+::: pycrystalgen.estimator.mace.weights
+
 ## Download of weights
 
 ::: pycrystalgen.estimator.weights
