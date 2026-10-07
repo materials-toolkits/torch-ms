@@ -89,6 +89,16 @@ from pycrystalgen.graph.coloring import color_refinement
 hashes = color_refinement(structures, atomic_radius(structures))   # (n_struct, 4) uint32
 ```
 
+The hash depends on the number of atoms: a supercell has another hash than its cell.
+`refined_coloring` gives the colors of the atoms the hash is computed from, which are the same
+in a cell and in its supercells:
+
+```python
+from pycrystalgen.graph.coloring import refined_coloring
+
+colors = refined_coloring(structures, atomic_radius(structures))   # (n_atoms, 4) uint32
+```
+
 !!! warning
     Graphs built before the fix of distances in non orthogonal cells (see
     [Graph conventions](../design/graphs.md)) were wrong for these cells. Hashes computed

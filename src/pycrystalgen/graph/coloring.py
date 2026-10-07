@@ -57,31 +57,38 @@ def _xor4(c: torch.Tensor) -> torch.Tensor:
     return c[:, 0] ^ c[:, 1] ^ c[:, 2] ^ c[:, 3]
 
 
-def color_refinement(
+def refined_coloring(
     structures: Structures,
     graph: Graph,
-) -> UInt32[torch.Tensor, "n_structures 4"]:
-    """Run Weisfeiler-Lehman color refinement and return a per-structure hash.
+) -> UInt32[torch.Tensor, "n_atoms 4"]:
+    """Run Weisfeiler-Lehman color refinement and return the color of each atom.
 
     Iteratively replaces each node's color with a hash of its neighbors' colors,
     restricted to structures whose partition is still changing. Stops when no
     structure's partition changes.
+
+    Two atoms with the same environment in the graph receive the same color. The
+    colors do not depend on the size of the cell: an atom of a supercell has the
+    color of the atom it is a copy of. They do not depend on the other
+    structures of the batch.
 
     Args:
         structures: Batched Structures, used for atomic numbers and batch indices.
         graph: Graph built from structures.
 
     Returns:
-        128-bit hash per structure, shape (n_structures, 4), dtype uint32.
+        128-bit hash color per atom, shape (n_atoms, 4), dtype uint32.
 
     Examples:
         >>> from pycrystalgen.data.batching import Structures
         >>> from pycrystalgen.graph.atomic_radius import atomic_radius
         >>> structures = Structures.zincblende()
         >>> graph = atomic_radius(structures)
-        >>> h = color_refinement(structures, graph)
-        >>> h.shape
-        torch.Size([1, 4])
+        >>> colors = refined_coloring(structures, graph)
+        >>> colors.shape
+        torch.Size([8, 4])
+        >>> colors.unique(dim=0).shape[0]  # one color for Zn, one for S
+        2
     """
     colors = initial_coloring(structures, graph)
     mask = torch.ones_like(structures.num_atoms, dtype=torch.bool)
@@ -109,8 +116,45 @@ def color_refinement(
         if equivalent.all():
             break
 
-        colors = next_color
+        # a round which does not change the partition of a structure is dropped,
+        # as the last one: its colors do not depend on the rest of the batch
+        colors = torch.where(
+            equivalent[structures.batch].unsqueeze(-1),
+            colors.to(torch.int64),
+            next_color.to(torch.int64),
+        ).to(torch.uint32)
         mask = ~equivalent
+
+    return colors
+
+
+def color_refinement(
+    structures: Structures,
+    graph: Graph,
+) -> UInt32[torch.Tensor, "n_structures 4"]:
+    """Hash each structure from the colors of its atoms after color refinement.
+
+    The hash does not depend on the order of the atoms. It depends on their
+    number: a supercell has another hash than its cell, compare the colors of
+    refined_coloring instead.
+
+    Args:
+        structures: Batched Structures, used for atomic numbers and batch indices.
+        graph: Graph built from structures.
+
+    Returns:
+        128-bit hash per structure, shape (n_structures, 4), dtype uint32.
+
+    Examples:
+        >>> from pycrystalgen.data.batching import Structures
+        >>> from pycrystalgen.graph.atomic_radius import atomic_radius
+        >>> structures = Structures.zincblende()
+        >>> graph = atomic_radius(structures)
+        >>> h = color_refinement(structures, graph)
+        >>> h.shape
+        torch.Size([1, 4])
+    """
+    colors = refined_coloring(structures, graph)
 
     return scatter(
         colors, structures.batch, structures.num_atoms.shape[0], reduce="hash"

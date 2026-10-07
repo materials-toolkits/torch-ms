@@ -51,6 +51,16 @@ exactly 1.0. Such coordinates exist in the datasets because of the rounding to 3
 of 148 million in LeMat-Bulk). Shifts are now the difference between the coordinates in the
 supercell and in the cell.
 
+**Hash of a structure in a batch.** `color_refinement` stops when the partition of the atoms
+of every structure is stable, and drops the last round. A structure which was stable before
+the others kept the round which found it stable, so it was refined one more time in a batch
+than alone and its hash depended on the other structures of the batch. The round which finds
+a structure stable is now dropped for this structure.
+
+!!! warning
+    Hashes from `color_refinement` computed in batches of several structures before this fix
+    must be computed again.
+
 ## What is tested
 
 Against the neighbour list of ASE, on triclinic cells, alone and in batches:
@@ -59,5 +69,9 @@ Against the neighbour list of ASE, on triclinic cells, alone and in batches:
 - `atomic_radius`: same edges, shifts and distances;
 - `nearest_neighbors`: the k shortest edges of each atom.
 
-Not tested on non orthogonal cells: `color_refinement`, and `edges_distances` after
-`Graph.collate` or `Graph.separate`.
+`color_refinement` and `refined_coloring`: same hashes and colors for a structure alone and in
+a batch, same hashes after the augmentations of `pycrystalgen.data.augmentation`, on cubic and
+triclinic cells.
+
+Not tested on non orthogonal cells: `edges_distances` after `Graph.collate` or
+`Graph.separate`.
