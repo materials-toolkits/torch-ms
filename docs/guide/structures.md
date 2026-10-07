@@ -57,6 +57,16 @@ batch.batch                   # tensor([0, 0, ..., 1, 1])
 first, second = Structures.separate(batch)
 ```
 
+`collate` also takes batches of several structures, and `separate` gives structures which
+are batches of one structure:
+
+```python
+larger = Structures.collate([batch, Structures.diamond(), batch])
+larger.num_atoms              # tensor([8, 8, 8, 8, 8])
+
+first.batch                   # tensor([0, 0, 0, 0, 0, 0, 0, 0])
+```
+
 The atoms of structure `i` are `batch.x[batch.ptr[i] : batch.ptr[i + 1]]`.
 
 ## Devices

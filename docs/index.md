@@ -4,6 +4,7 @@ PyCrystalGen is a Python library for machine learning on crystal structures. It 
 
 - **Datasets** in one common format, published on Hugging Face and loaded by name.
 - **`Structures`**, a batched container of crystals for PyTorch.
+- **Data augmentation**: other descriptions of the same crystals, to train on.
 - **Graphs** of crystals with periodic boundary conditions.
 - **Energy above the convex hull**, from DFT energies or estimated with a pretrained model.
 
@@ -25,6 +26,7 @@ energy, above_hull = estimator.predict_energy_above_hull(dataset)
 | install the library | [Installation](guide/installation.md) |
 | load a dataset | [Loading datasets](guide/datasets.md) |
 | understand the batch format | [Structures](guide/structures.md) |
+| augment the structures of a dataset | [Data augmentation](guide/augmentation.md) |
 | build neighbour graphs | [Graphs](guide/graphs.md) |
 | know if a crystal is stable | [Energy above the hull](guide/energy.md) |
 | convert your own CIF files | [Preprocessing your own data](guide/preprocessing.md) |
