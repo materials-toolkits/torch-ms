@@ -94,6 +94,70 @@ def centered_supercell(
     return supercell, atom_index
 
 
+def triplet_cosines(
+    vectors: Float[torch.Tensor, "n_edges 3"],
+    triplet_index: Int[torch.Tensor, "2 n_triplets"],
+) -> Float[torch.Tensor, "n_triplets"]:
+    """Cosine of the angle between the two edges of each triplet.
+
+    Args:
+        vectors: Cartesian vector of each edge, shape (n_edges, 3).
+        triplet_index: Indices of the two edges of each triplet, which start
+            from the same atom, shape (2, n_triplets).
+
+    Returns:
+        Cosine of the angle at the shared atom, in [-1, 1], shape (n_triplets,).
+
+    Examples:
+        >>> vectors = torch.tensor([[1.0, 0.0, 0.0], [0.0, 2.0, 0.0], [-3.0, 0.0, 0.0]])
+        >>> triplet_cosines(vectors, torch.tensor([[0, 0], [1, 2]]))
+        tensor([ 0., -1.])
+    """
+    a = F.normalize(vectors[triplet_index[0]], dim=-1)
+    b = F.normalize(vectors[triplet_index[1]], dim=-1)
+
+    return (a * b).sum(dim=-1).clamp(-1.0, 1.0)
+
+
+def dihedral_angles(
+    vectors: Float[torch.Tensor, "n_edges 3"],
+    quadruplet_index: Int[torch.Tensor, "3 n_quadruplets"],
+) -> Float[torch.Tensor, "n_quadruplets"]:
+    """Dihedral angle of each chain of three edges.
+
+    For a chain of atoms u, v, w, x, it is the angle between the planes
+    (u, v, w) and (v, w, x) around the bond v-w: 0 when u and x are on the
+    same side (cis), pi on opposite sides (trans). Its sign changes in the
+    mirror image of the chain.
+
+    Args:
+        vectors: Cartesian vector of each edge, shape (n_edges, 3).
+        quadruplet_index: Indices of the edges u→v, v→w and w→x of each chain,
+            shape (3, n_quadruplets).
+
+    Returns:
+        Angle in radians, in [-pi, pi], shape (n_quadruplets,).
+
+    Examples:
+        >>> vectors = torch.tensor(
+        ...     [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [-1.0, 0.0, 0.0]]
+        ... )
+        >>> index = torch.tensor([[0, 0], [1, 1], [2, 3]])
+        >>> dihedral_angles(vectors, index)  # a quarter turn, then cis
+        tensor([1.5708, 0.0000])
+    """
+    b1, b2, b3 = vectors[quadruplet_index].unbind(dim=0)
+
+    n1 = torch.cross(b1, b2, dim=-1)
+    n2 = torch.cross(b2, b3, dim=-1)
+    axis = F.normalize(b2, dim=-1)
+
+    sine = (torch.cross(n1, n2, dim=-1) * axis).sum(dim=-1)
+    cosine = (n1 * n2).sum(dim=-1)
+
+    return torch.atan2(sine, cosine)
+
+
 def edges_distances(
     source_x: Float[torch.Tensor, "n_atoms 3"],
     target_x: Float[torch.Tensor, "n_atoms_2 3"],

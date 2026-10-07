@@ -218,6 +218,60 @@ def batched_cartesian_product_3(
     return torch.stack([idx_a, idx_b, idx_c], dim=-1), batch, ptr
 
 
+def batched_join(
+    key_a: Int[torch.Tensor, "n_a"],
+    key_b: Int[torch.Tensor, "n_b"],
+    num_keys: int,
+) -> tuple[
+    Int[torch.Tensor, "total 2"],
+    Int[torch.Tensor, "total"],
+    Int[torch.Tensor, "num_keys+1"],
+]:
+    """All the pairs of elements of two sets which have the same key, without loops.
+
+    The key is, for instance, the atom shared by two edges: the pairs are then
+    the pairs of edges around each atom. Elements do not have to be sorted.
+
+    Args:
+        key_a: Key of each element of the first set, in [0, num_keys), shape (n_a,).
+        key_b: Key of each element of the second set, in [0, num_keys), shape (n_b,).
+        num_keys: Number of keys.
+
+    Returns:
+        Pairs (a, b) of indices with key_a[a] == key_b[b], shape (total, 2),
+        sorted by key, their key, shape (total,), and CSR pointers of the
+        pairs of each key, shape (num_keys+1,).
+
+    Examples:
+        >>> key_a = torch.tensor([1, 0, 1])
+        >>> key_b = torch.tensor([1, 1, 2, 0])
+        >>> pairs, key, ptr = batched_join(key_a, key_b, num_keys=3)
+        >>> pairs
+        tensor([[1, 3],
+                [0, 0],
+                [0, 1],
+                [2, 0],
+                [2, 1]])
+        >>> key
+        tensor([0, 1, 1, 1, 1])
+        >>> ptr
+        tensor([0, 1, 5, 5])
+    """
+    order_a = torch.argsort(key_a, stable=True)
+    order_b = torch.argsort(key_b, stable=True)
+
+    count_a = torch.bincount(key_a, minlength=num_keys)
+    count_b = torch.bincount(key_b, minlength=num_keys)
+    ptr_a = F.pad(torch.cumsum(count_a, dim=0), (1, 0), value=0)
+    ptr_b = F.pad(torch.cumsum(count_b, dim=0), (1, 0), value=0)
+
+    # pairs of positions in the sets sorted by key
+    indices, key, ptr = batched_cartesian_product_2(ptr_a, ptr_b)
+    pairs = torch.stack([order_a[indices[:, 0]], order_b[indices[:, 1]]], dim=-1)
+
+    return pairs, key, ptr
+
+
 def equivalent_partition(
     a: Int[torch.Tensor, "n_nodes"],
     b: Int[torch.Tensor, "n_nodes"],
