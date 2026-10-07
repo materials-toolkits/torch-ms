@@ -61,6 +61,17 @@ a structure stable is now dropped for this structure.
     Hashes from `color_refinement` computed in batches of several structures before this fix
     must be computed again.
 
+**Refinement which never stopped.** The color of an atom was replaced by a hash of the colors
+of its neighbours alone. The color of the atom itself was lost: lithium and sodium bonded to
+the same oxygen got the same color, and on some structures the partition of the atoms
+alternated between two groupings, so the refinement never stopped (27 of the first 576
+structures of LeMat-Bulk). The new color is now a hash of the color of the atom and of the
+colors of its neighbours, as in the Weisfeiler-Lehman test: a round only splits the classes.
+
+!!! warning
+    This changes every hash of `color_refinement` and every color of `refined_coloring`:
+    the ones computed before this fix must be computed again.
+
 ## What is tested
 
 Against the neighbour list of ASE, on triclinic cells, alone and in batches:
