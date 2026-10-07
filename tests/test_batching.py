@@ -454,6 +454,27 @@ class TestStructuresCollate:
         assert torch.isnan(batched.energy_above_hull).all()
         assert torch.isnan(batched.band_gap).all()
 
+    def test_collate_batches(self, two_structures_with_energy):
+        s1, s2 = two_structures_with_energy
+        expected = Structures.collate([s1, s2, s1, s2, s2])
+
+        # batches of two, two and one structures
+        batched = Structures.collate(
+            [Structures.collate([s1, s2]), Structures.collate([s1, s2]), s2]
+        )
+
+        batched.check_tensors()
+        assert torch.equal(batched.num_atoms, torch.tensor([2, 3, 2, 3, 3]))
+        assert torch.equal(
+            batched.batch, torch.tensor([0, 0, 1, 1, 1, 2, 2, 3, 3, 3, 4, 4, 4])
+        )
+        assert torch.equal(batched.ptr, torch.tensor([0, 2, 5, 7, 10, 13]))
+        assert torch.equal(batched.batch, expected.batch)
+        assert torch.equal(batched.x, expected.x)
+        assert torch.equal(batched.z, expected.z)
+        assert torch.equal(batched.lattice, expected.lattice)
+        assert torch.equal(batched.total_energy, expected.total_energy)
+
 
 class TestStructuresSeparate:
     def test_single_structure(self):
@@ -498,6 +519,17 @@ class TestStructuresSeparate:
         assert torch.equal(separated[1].total_energy, torch.tensor([-3.0]))
         assert torch.equal(separated[0].energy_above_hull, torch.tensor([0.1]))
         assert torch.equal(separated[1].energy_above_hull, torch.tensor([0.2]))
+
+    def test_separate_resets_batch(self, two_structures):
+        batched = Structures.collate(two_structures)
+        separated = Structures.separate(batched)
+
+        for orig, sep in zip(two_structures, separated):
+            assert torch.equal(sep.batch, torch.zeros_like(orig.batch))
+            assert torch.equal(sep.batch, orig.batch)
+            # a valid structure on its own
+            sep.check_tensors()
+            assert int(sep.batch.max()) < len(sep.num_atoms)
 
 
 class TestStructuresRoundTrip:
