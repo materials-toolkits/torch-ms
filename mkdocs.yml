@@ -65,6 +65,7 @@ nav:
       - Structures: guide/structures.md
       - Data augmentation: guide/augmentation.md
       - Graphs: guide/graphs.md
+      - Models: guide/models.md
       - Energy above the hull: guide/energy.md
       - Preprocessing your own data: guide/preprocessing.md
   - Datasets:
@@ -83,4 +84,5 @@ nav:
   - API reference:
       - pycrystalgen.data: reference/data.md
       - pycrystalgen.graph: reference/graph.md
+      - pycrystalgen.models: reference/models.md
       - pycrystalgen.estimator: reference/estimator.md
