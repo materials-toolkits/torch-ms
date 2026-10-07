@@ -34,20 +34,8 @@ LEMATERIAL_HULL_SOURCE = (
 
 
 def to_device(structures: Structures, device: torch.device | str) -> Structures:
-    """Copy of structures with its tensors on a device."""
-    return Structures(
-        lattice=structures.lattice.to(device),
-        x=structures.x.to(device),
-        z=structures.z.to(device),
-        num_atoms=structures.num_atoms.to(device),
-        batch=structures.batch.to(device),
-        ptr=structures.ptr.to(device),
-        total_energy=structures.total_energy.to(device),
-        energy_above_hull=structures.energy_above_hull.to(device),
-        band_gap=structures.band_gap.to(device),
-        formation_energy_per_atom=structures.formation_energy_per_atom.to(device),
-        _validate=True,
-    )
+    """Copy of structures with its tensors on a device, see Structures.to."""
+    return structures.to(device)
 
 
 def atom_batches(
