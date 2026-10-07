@@ -89,6 +89,8 @@ dataset = load_dataset("mp-20", "train", transform=translate)
 dataset = load_dataset("oqmd/unique", revision="main")   # options of hf_hub_download
 ```
 
+Ready-made random transforms are described in [Data augmentation](augmentation.md).
+
 A local file, or a file of any other repository:
 
 ```python

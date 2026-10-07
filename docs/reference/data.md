@@ -22,6 +22,14 @@
 
 ::: pycrystalgen.data.filters
 
+## Data augmentation
+
+::: pycrystalgen.data.augmentation.transforms
+
+::: pycrystalgen.data.augmentation.actions
+
+::: pycrystalgen.data.augmentation.sampling
+
 ## Convex hull
 
 ::: pycrystalgen.data.hull

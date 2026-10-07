@@ -63,6 +63,7 @@ nav:
       - Installation: guide/installation.md
       - Loading datasets: guide/datasets.md
       - Structures: guide/structures.md
+      - Data augmentation: guide/augmentation.md
       - Graphs: guide/graphs.md
       - Energy above the hull: guide/energy.md
       - Preprocessing your own data: guide/preprocessing.md
