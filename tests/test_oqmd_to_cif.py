@@ -18,7 +18,7 @@ from oqmd_to_cif import (  # noqa: E402
     write_structures,
 )
 
-from pycrystalgen.data import parse_cif  # noqa: E402
+from torchms.data import parse_cif  # noqa: E402
 
 CUBIC = [4.0, 0.0, 0.0, 0.0, 4.0, 0.0, 0.0, 0.0, 4.0]
 

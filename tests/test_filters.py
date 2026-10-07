@@ -1,7 +1,7 @@
 import torch
 
-from pycrystalgen.data import Structures
-from pycrystalgen.data.filters import Filter
+from torchms.data import Structures
+from torchms.data.filters import Filter
 
 
 def make_batch():

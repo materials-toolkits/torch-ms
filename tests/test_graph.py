@@ -1,7 +1,7 @@
 import torch
 import pytest
 
-from pycrystalgen.graph.graph import Graph, InvalidGraph
+from torchms.graph.graph import Graph, InvalidGraph
 
 # TODO: check this tests
 

@@ -1,9 +1,9 @@
 import pytest
 import torch
 
-from pycrystalgen.data.batching import Structures
-from pycrystalgen.graph.atomic_radius import atomic_radius
-from pycrystalgen.graph.sparse import scatter, equivalent_partition
+from torchms.data.batching import Structures
+from torchms.graph.atomic_radius import atomic_radius
+from torchms.graph.sparse import scatter, equivalent_partition
 
 
 def mix(x):
@@ -52,8 +52,8 @@ def test_atomic_radius_bidi_filter_requires_negated_shift():
 
 def test_atomic_radius_undirected():
     """Every edge (i, j, s) must have a reverse edge (j, i) with shift -s."""
-    from pycrystalgen.data.batching import Structures
-    from pycrystalgen.graph.atomic_radius import atomic_radius
+    from torchms.data.batching import Structures
+    from torchms.graph.atomic_radius import atomic_radius
 
     graph = atomic_radius(Structures.zincblende(), scaling=2.0)
     senders = graph.edge_index[0]

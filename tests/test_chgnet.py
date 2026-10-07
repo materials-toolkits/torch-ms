@@ -6,17 +6,17 @@ import numpy as np
 import pytest
 import torch
 
-from pycrystalgen.data import Structures, parse_cif
-from pycrystalgen.data.augmentation import (
+from torchms.data import Structures, parse_cif
+from torchms.data.augmentation import (
     AtomPermutation,
     AtomTranslation,
     LatticeBasisChange,
     LatticeRotation,
     make_supercell,
 )
-from pycrystalgen.estimator.chgnet import ChgnetEnergyModel, InvalidWeights, weights
-from pycrystalgen.estimator.chgnet.model import BOND_RADIUS, MODEL_ARGS, RADIUS
-from pycrystalgen.graph.line_graph import reverse_edges
+from torchms.estimator.chgnet import ChgnetEnergyModel, InvalidWeights, weights
+from torchms.estimator.chgnet.model import BOND_RADIUS, MODEL_ARGS, RADIUS
+from torchms.graph.line_graph import reverse_edges
 
 DATA = Path(__file__).parent / "data"
 NAME = "chgnet-0.3.0"

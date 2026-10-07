@@ -7,7 +7,7 @@ import pytest
 import torch
 from torch.utils.data import DataLoader
 
-from pycrystalgen.data import Structures, HDF5Dataset
+from torchms.data import Structures, HDF5Dataset
 
 
 @pytest.fixture

@@ -1,4 +1,4 @@
-site_name: PyCrystalGen
+site_name: TorchMS
 site_description: Datasets, graphs and energy estimation for crystal generation
 docs_dir: docs
 
@@ -82,7 +82,7 @@ nav:
       - Convex hull: design/hull.md
       - Energy estimator: design/estimator.md
   - API reference:
-      - pycrystalgen.data: reference/data.md
-      - pycrystalgen.graph: reference/graph.md
-      - pycrystalgen.models: reference/models.md
-      - pycrystalgen.estimator: reference/estimator.md
+      - torchms.data: reference/data.md
+      - torchms.graph: reference/graph.md
+      - torchms.models: reference/models.md
+      - torchms.estimator: reference/estimator.md

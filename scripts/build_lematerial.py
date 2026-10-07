@@ -13,7 +13,7 @@ among the structures sharing the same entalpic fingerprint.
 
 The energy above the hull comes from LeMat-Bulk-DFT-Hull-All. The few
 structures without one get the energy above the convex hull computed from the
-total energies of the dataset (see pycrystalgen.data.hull).
+total energies of the dataset (see torchms.data.hull).
 
 With --hull, the composition and the energy of the structures on the convex
 hull are saved, to compute the energy above the hull of other structures. This
@@ -47,16 +47,16 @@ from lematerial_to_cif import (
     load_unique_mask,
     parquet_files,
 )
-from pycrystalgen.data.batching import Structures
-from pycrystalgen.data.constants import symbol_to_number
-from pycrystalgen.data.hdf5 import HDF5Dataset
-from pycrystalgen.data.hull import (
+from torchms.data.batching import Structures
+from torchms.data.constants import symbol_to_number
+from torchms.data.hdf5 import HDF5Dataset
+from torchms.data.hull import (
     energy_above_reference,
     fill_missing,
     load_hull,
     save_hull,
 )
-from pycrystalgen.data.preprocessing import Preprocessing, preprocessing
+from torchms.data.preprocessing import Preprocessing, preprocessing
 
 SUBSET = "compatible_pbe"
 

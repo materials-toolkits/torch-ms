@@ -9,17 +9,17 @@ import numpy as np
 import pytest
 import torch
 
-from pycrystalgen.data import Structures, parse_cif
-from pycrystalgen.data.augmentation import (
+from torchms.data import Structures, parse_cif
+from torchms.data.augmentation import (
     AtomPermutation,
     AtomTranslation,
     LatticeBasisChange,
     LatticeRotation,
     make_supercell,
 )
-from pycrystalgen.estimator.alignn import AlignnModel, InvalidWeights, weights
-from pycrystalgen.estimator.weights import Checkpoint, sha256
-from pycrystalgen.estimator.alignn.model import (
+from torchms.estimator.alignn import AlignnModel, InvalidWeights, weights
+from torchms.estimator.weights import Checkpoint, sha256
+from torchms.estimator.alignn.model import (
     GRAPH_ARGS,
     MAX_NEIGHBORS,
     MODEL_ARGS,
@@ -28,8 +28,8 @@ from pycrystalgen.estimator.alignn.model import (
     RBFExpansion,
     element_features,
 )
-from pycrystalgen.graph.graph import Graph
-from pycrystalgen.graph.line_graph import reverse_edges
+from torchms.graph.graph import Graph
+from torchms.graph.line_graph import reverse_edges
 
 DATA = Path(__file__).parent / "data"
 NAME = "alignn-formation-energy-radius"

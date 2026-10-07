@@ -40,8 +40,8 @@ structures without energy above the hull are dropped by this filter. From Python
 returning a mask of the structures to keep can be used:
 
 ```python
-from pycrystalgen.data.filters import Filter
-from pycrystalgen.data.preprocessing import Preprocessing, preprocessing
+from torchms.data.filters import Filter
+from torchms.data.preprocessing import Preprocessing, preprocessing
 
 preprocessing(
     Preprocessing(

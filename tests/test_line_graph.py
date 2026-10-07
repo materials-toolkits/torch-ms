@@ -3,8 +3,8 @@ import math
 import pytest
 import torch
 
-from pycrystalgen.data import Structures, parse_cif
-from pycrystalgen.data.augmentation import (
+from torchms.data import Structures, parse_cif
+from torchms.data.augmentation import (
     AtomPermutation,
     AtomTranslation,
     LatticeBasisChange,
@@ -13,15 +13,15 @@ from pycrystalgen.data.augmentation import (
     random_orthogonal,
     rotate_lattice,
 )
-from pycrystalgen.graph.cutoff import cutoff, nearest_neighbors
-from pycrystalgen.graph.geometry import dihedral_angles, triplet_cosines
-from pycrystalgen.graph.line_graph import (
+from torchms.graph.cutoff import cutoff, nearest_neighbors
+from torchms.graph.geometry import dihedral_angles, triplet_cosines
+from torchms.graph.line_graph import (
     line_graph,
     quadruplets,
     reverse_edges,
     triplets,
 )
-from pycrystalgen.graph.sparse import batched_join
+from torchms.graph.sparse import batched_join
 
 RADIUS = 2.6
 

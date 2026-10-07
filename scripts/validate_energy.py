@@ -16,10 +16,10 @@ import h5py
 import numpy as np
 import pandas as pd
 
-from pycrystalgen.data.hdf5 import HDF5Dataset
-from pycrystalgen.data.hull import energy_above_reference, load_hull
-from pycrystalgen.estimator import EnergyEstimator
-from pycrystalgen.estimator.calibration import composition_matrix, load_correction
+from torchms.data.hdf5 import HDF5Dataset
+from torchms.data.hull import energy_above_reference, load_hull
+from torchms.estimator import EnergyEstimator
+from torchms.estimator.calibration import composition_matrix, load_correction
 
 MAX_ENERGY = 20.0
 STABLE = 1e-6

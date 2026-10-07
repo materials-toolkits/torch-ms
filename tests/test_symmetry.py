@@ -6,10 +6,10 @@ import pytest
 import spglib
 import torch
 
-from pycrystalgen.data.constants import get_symmetry_operations, symbol_to_number
-from pycrystalgen.data.symmetry import generate_symmetric_structure
-from pycrystalgen.data.compare import compare_structures
-from pycrystalgen.data.batching import Structures
+from torchms.data.constants import get_symmetry_operations, symbol_to_number
+from torchms.data.symmetry import generate_symmetric_structure
+from torchms.data.compare import compare_structures
+from torchms.data.batching import Structures
 
 
 @pytest.fixture

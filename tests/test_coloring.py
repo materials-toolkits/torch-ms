@@ -1,10 +1,10 @@
 import pytest
 import torch
 
-from pycrystalgen.data import Structures, parse_cif
-from pycrystalgen.graph.atomic_radius import atomic_radius
-from pycrystalgen.graph.coloring import color_refinement, refined_coloring
-from pycrystalgen.graph.graph import Graph
+from torchms.data import Structures, parse_cif
+from torchms.graph.atomic_radius import atomic_radius
+from torchms.graph.coloring import color_refinement, refined_coloring
+from torchms.graph.graph import Graph
 
 
 def make_structures() -> list[Structures]:

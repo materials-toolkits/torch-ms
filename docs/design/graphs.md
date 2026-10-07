@@ -81,7 +81,7 @@ Against the neighbour list of ASE, on triclinic cells, alone and in batches:
 - `nearest_neighbors`: the k shortest edges of each atom.
 
 `color_refinement` and `refined_coloring`: same hashes and colors for a structure alone and in
-a batch, same hashes after the augmentations of `pycrystalgen.data.augmentation`, on cubic and
+a batch, same hashes after the augmentations of `torchms.data.augmentation`, on cubic and
 triclinic cells.
 
 Not tested on non orthogonal cells: `edges_distances` after `Graph.collate` or

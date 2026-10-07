@@ -1,4 +1,4 @@
-# pycrystalgen — Claude Code notes
+# torchms — Claude Code notes
 
 ## Python environment
 
@@ -7,7 +7,7 @@ Always use `uv run` to run Python. Never bare `python3`.
 ## Batched graph indexing pattern
 
 Variable-size batched tensors follow the PyG-style convention used in `Structures`
-(`src/pycrystalgen/data/batching.py`): flat concatenated tensors with `ptr` (CSR-style
+(`src/torchms/data/batching.py`): flat concatenated tensors with `ptr` (CSR-style
 index pointers, shape `(n_struct+1,)`) and `batch` (per-element structure index, shape
 `(n_elements,)`).
 
@@ -61,11 +61,11 @@ Functions that build graph data return tuples, not dataclass instances.
 ## Batched cartesian product helpers
 
 `batched_cartesian_product_2` and `batched_cartesian_product_3` in
-`src/pycrystalgen/graph/scatter.py` implement the mixed-radix pattern above as reusable
+`src/torchms/graph/scatter.py` implement the mixed-radix pattern above as reusable
 helpers. Use them instead of re-implementing the pattern inline.
 
 ```python
-from pycrystalgen.graph.scatter import batched_cartesian_product_2, batched_cartesian_product_3
+from torchms.graph.scatter import batched_cartesian_product_2, batched_cartesian_product_3
 
 # pairs — each structure can have different sizes
 indices, batch, ptr = batched_cartesian_product_2(sizes_a, sizes_b)
@@ -82,12 +82,12 @@ Device is derived from `sizes_a` internally — no need to pass it explicitly.
 
 ## Scatter aggregation
 
-Use `scatter_sum` and `scatter_mean` from `src/pycrystalgen/graph/scatter.py` to aggregate
+Use `scatter_sum` and `scatter_mean` from `src/torchms/graph/scatter.py` to aggregate
 tensors by index without for loops (e.g. sum atom features per structure, aggregate edge
 messages to nodes).
 
 ```python
-from pycrystalgen.graph.scatter import scatter_sum, scatter_mean
+from torchms.graph.scatter import scatter_sum, scatter_mean
 
 energy        = scatter_sum(atom_energies, batch, n_struct)   # (n_struct,)
 node_features = scatter_sum(messages, edge_index[1], n_atoms) # (n_atoms, F)

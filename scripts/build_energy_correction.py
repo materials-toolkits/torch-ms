@@ -26,10 +26,10 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from lematerial_to_cif import REPO, REVISION, parquet_files
-from pycrystalgen.data.hdf5 import HDF5Dataset
-from pycrystalgen.data.hull import energy_above_reference, load_hull
-from pycrystalgen.estimator import EnergyEstimator
-from pycrystalgen.estimator.calibration import (
+from torchms.data.hdf5 import HDF5Dataset
+from torchms.data.hull import energy_above_reference, load_hull
+from torchms.estimator import EnergyEstimator
+from torchms.estimator.calibration import (
     apply_element_correction,
     composition_matrix,
     error_report,

@@ -18,7 +18,7 @@ from lematerial_to_cif import (  # noqa: E402
     unique_mask,
 )
 
-from pycrystalgen.data import parse_cif  # noqa: E402
+from torchms.data import parse_cif  # noqa: E402
 
 
 def test_hull_lookup():

@@ -3,8 +3,8 @@
 import pytest
 import torch
 
-from pycrystalgen.data import Structures, parse_cif
-from pycrystalgen.data.augmentation import (
+from torchms.data import Structures, parse_cif
+from torchms.data.augmentation import (
     AtomPermutation,
     AtomTranslation,
     LatticeBasisChange,
@@ -13,14 +13,14 @@ from pycrystalgen.data.augmentation import (
     random_orthogonal,
     rotate_lattice,
 )
-from pycrystalgen.estimator.orb.model import spherical_harmonics
-from pycrystalgen.models import (
+from torchms.estimator.orb.model import spherical_harmonics
+from torchms.models import (
     AngleBasis,
     EquivariantNetwork,
     LineGraphNetwork,
     gaunt_coefficients,
 )
-from pycrystalgen.models.basis import DEGREES
+from torchms.models.basis import DEGREES
 
 pytestmark = pytest.mark.timeout(30)
 

@@ -7,8 +7,8 @@ import numpy as np
 import pytest
 import torch
 
-from pycrystalgen.data import Structures, parse_cif
-from pycrystalgen.data.augmentation import (
+from torchms.data import Structures, parse_cif
+from torchms.data.augmentation import (
     AtomPermutation,
     AtomTranslation,
     LatticeBasisChange,
@@ -16,16 +16,16 @@ from pycrystalgen.data.augmentation import (
     make_supercell,
     random_orthogonal,
 )
-from pycrystalgen.estimator.mace import InvalidWeights, MaceEnergyModel, weights
-from pycrystalgen.estimator.mace.model import (
+from torchms.estimator.mace import InvalidWeights, MaceEnergyModel, weights
+from torchms.estimator.mace.model import (
     DEGREES,
     EXPECTED,
     NUM_HARMONICS,
     PARAMETERS,
     RADIUS,
 )
-from pycrystalgen.estimator.mace.reader import Placeholder, read_model
-from pycrystalgen.estimator.orb.model import spherical_harmonics
+from torchms.estimator.mace.reader import Placeholder, read_model
+from torchms.estimator.orb.model import spherical_harmonics
 
 DATA = Path(__file__).parent / "data"
 NAME = "mace-mp-0-small"

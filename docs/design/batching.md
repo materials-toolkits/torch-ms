@@ -1,7 +1,7 @@
 # Batching convention
 
 Crystals have different numbers of atoms, so a batch cannot be a dense tensor without padding.
-PyCrystalGen stores a batch as **flat concatenated tensors** with two index tensors, as PyTorch
+TorchMS stores a batch as **flat concatenated tensors** with two index tensors, as PyTorch
 Geometric does:
 
 - `batch` (n_elements,): index of the structure of each element;
@@ -20,7 +20,7 @@ batch = torch.arange(len(counts), device=device).repeat_interleave(counts)
 Operations are written on the whole batch. Sums per structure use `scatter`:
 
 ```python
-from pycrystalgen.graph.sparse import scatter
+from torchms.graph.sparse import scatter
 
 energy = scatter(atom_energies, structures.batch, n_struct)          # sum over atoms
 features = scatter(messages, graph.edge_index[1], n_atoms, "mean")   # mean over edges
@@ -31,7 +31,7 @@ decomposed like a number in a mixed base. `batched_cartesian_product_2` and
 `batched_cartesian_product_3` implement it:
 
 ```python
-from pycrystalgen.graph.sparse import batched_cartesian_product_2
+from torchms.graph.sparse import batched_cartesian_product_2
 
 indices, batch, ptr = batched_cartesian_product_2(ptr_a, ptr_b)
 # indices[:, 0] in the first set, indices[:, 1] in the second, for each structure
@@ -47,7 +47,7 @@ function never moves its inputs: a batch on two devices is an error of the calle
 
 Two places work on something else than tensors, by design:
 
-- the convex hull (`pycrystalgen.data.hull`) loops over chemical systems, not structures, and
+- the convex hull (`torchms.data.hull`) loops over chemical systems, not structures, and
   uses numpy and SciPy;
 - reading CIF files loops over data blocks.
 

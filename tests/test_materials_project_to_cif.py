@@ -15,7 +15,7 @@ from materials_project_to_cif import (  # noqa: E402
     write_row,
 )
 
-from pycrystalgen.data import parse_cif  # noqa: E402
+from torchms.data import parse_cif  # noqa: E402
 
 
 def make_row(**overrides):

@@ -9,11 +9,11 @@ from pathlib import Path
 import pytest
 import torch
 
-from pycrystalgen.data import parse_cif
-from pycrystalgen.data.batching import Structures
-from pycrystalgen.data.constants import symbol_to_number
+from torchms.data import parse_cif
+from torchms.data.batching import Structures
+from torchms.data.constants import symbol_to_number
 
-from pycrystalgen.data.compare import (
+from torchms.data.compare import (
     compare_atoms,
     compare_structures,
     compute_cell_parameters,
@@ -368,7 +368,7 @@ class TestRegexOverrides:
 
     def test_custom_regex_total_energy(self):
         """Test overriding total_energy pattern with custom regex."""
-        from pycrystalgen.data.cif import CifParser
+        from torchms.data.cif import CifParser
 
         cif_content = """
 data_test
@@ -398,7 +398,7 @@ Si 0.0 0.0 0.0 Si
 
     def test_custom_regex_band_gap(self):
         """Test overriding band_gap pattern with custom regex."""
-        from pycrystalgen.data.cif import CifParser
+        from torchms.data.cif import CifParser
 
         cif_content = """
 data_test
@@ -429,7 +429,7 @@ Si 0.0 0.0 0.0 Si
     @pytest.mark.skip(reason="Only P1 structures are supported")
     def test_custom_regex_multiple_overrides(self):
         """Test multiple regex overrides at once."""
-        from pycrystalgen.data.cif import CifParser
+        from torchms.data.cif import CifParser
 
         cif_content = """
 data_test
@@ -468,7 +468,7 @@ Si 0.0 0.0 0.0 Si
     def test_invalid_regex_raises_error(self):
         """Test that invalid regex raises re.error."""
         import re
-        from pycrystalgen.data.cif import CifParser
+        from torchms.data.cif import CifParser
 
         with pytest.raises(re.error):
             CifParser(regex_overrides={"band_gap": r"[invalid("})
@@ -476,7 +476,7 @@ Si 0.0 0.0 0.0 Si
     @pytest.mark.skip(reason="Only P1 structures are supported")
     def test_empty_override_uses_default(self, silicon_cif_fixture):
         """Test that empty overrides use default patterns."""
-        from pycrystalgen.data.cif import CifParser
+        from torchms.data.cif import CifParser
 
         cif_string = silicon_cif_fixture.read_text()
         parser = CifParser(regex_overrides={})
