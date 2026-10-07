@@ -99,3 +99,30 @@ end.
 - A structure with two atoms at the same position has no energy (NaN).
 - That OQMD is outside of the training data comes from the documentation of `orb-models`,
   which gives the Materials Project trajectories and Alexandria for this checkpoint.
+
+## Other pretrained models
+
+Other published models are rewritten the same way, to check the graph functions of
+`pycrystalgen.graph` against models which use terms on three atoms and more. They predict the
+energy only, load the official weights, and are not used by `EnergyEstimator`. No package of
+these models is a dependency: their energies were computed once, outside of the project, by
+the scripts `scripts/reference_*.py`, for the 40 structures of the test of orb.
+
+### CHGNet
+
+`ChgnetEnergyModel` is CHGNet 0.3.0
+([chgnet](https://github.com/CederGroupHub/chgnet), modified BSD,
+[arXiv:2302.14231](https://arxiv.org/abs/2302.14231)), in `estimator/chgnet/`. Atoms closer
+than 6 Å are bonded, an edge and its reverse sharing the features of one bond
+(`reverse_edges`); the angles are the pairs of bonds shorter than 3 Å around an atom
+(`triplets` with a mask), in a Fourier basis. Magnetic moments, forces and stress are not
+included.
+
+| Against chgnet 0.4.2, 40 structures | |
+|---|---|
+| Edges, bonds and angles of each structure (29,222 angles) | identical |
+| Largest difference of energy | 4.1e-6 eV/atom |
+| Mean difference of energy | 4.3e-7 eV/atom |
+
+Behaviours kept from chgnet: the cosine of an angle is multiplied by 1 - 1e-6 before the
+arc cosine, and an atom without neighbour is not an error.

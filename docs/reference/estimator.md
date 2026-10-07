@@ -15,3 +15,13 @@
 ## Pretrained weights
 
 ::: pycrystalgen.estimator.orb.weights
+
+## CHGNet
+
+::: pycrystalgen.estimator.chgnet.model
+
+::: pycrystalgen.estimator.chgnet.weights
+
+## Download of weights
+
+::: pycrystalgen.estimator.weights
