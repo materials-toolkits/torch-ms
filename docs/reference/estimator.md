@@ -28,6 +28,12 @@
 
 ::: pycrystalgen.estimator.m3gnet.weights
 
+## ALIGNN
+
+::: pycrystalgen.estimator.alignn.model
+
+::: pycrystalgen.estimator.alignn.weights
+
 ## Download of weights
 
 ::: pycrystalgen.estimator.weights

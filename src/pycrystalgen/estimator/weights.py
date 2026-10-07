@@ -11,10 +11,18 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class Checkpoint:
-    """Location and SHA-256 of the weights of a pretrained model."""
+    """Location and SHA-256 of the weights of a pretrained model.
+
+    Args:
+        url: Where to download the weights.
+        sha256: Expected SHA-256 of the file.
+        filename: Name of the file in the cache, the last part of the URL by
+            default.
+    """
 
     url: str
     sha256: str
+    filename: str | None = None
 
 
 class InvalidCheckpoint(Exception):
@@ -58,7 +66,8 @@ def local_path(
         cache: Directory of the weights, see cache_directory by default.
     """
     directory = cache_directory() if cache is None else Path(cache)
-    return directory / model / checkpoint.url.rsplit("/", maxsplit=1)[-1]
+    filename = checkpoint.filename or checkpoint.url.rsplit("/", maxsplit=1)[-1]
+    return directory / model / filename
 
 
 def fetch(
