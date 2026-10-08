@@ -79,3 +79,13 @@ max-locals = 20
 max-attributes = 12
 
 
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+torchms = ["**/*.json", "**/*.h5", "**/*.npz", "**/LICENSE"]
