@@ -8,7 +8,7 @@ from torchms.graph.atomic_radius import (
     atomic_radius,
 )
 from torchms.graph.cutoff import cutoff
-from torchms.graph.geometry import centered_supercell, edges_distances
+from torchms.graph.geometry import centered_supercell
 from torchms.graph.graph import Graph
 from torchms.graph.sparse import batched_cartesian_product_2
 
@@ -375,6 +375,13 @@ def test_nearest_neighbors_triclinic_matches_ase(name, k):
     assert (source[:-1] <= source[1:]).all()
     same = source[:-1] == source[1:]
     assert (distances[:-1][same] <= distances[1:][same] + 1e-9).all()
+
+
+def edges_distances(source_x, target_x, lattice, edges_batch, edges_index):
+    """Lengths of edges with a batched matrix product, as they were computed before."""
+    edges_frac = target_x[edges_index[1]] - source_x[edges_index[0]]
+
+    return torch.bmm(edges_frac.unsqueeze(1), lattice[edges_batch]).norm(dim=(-2, -1))
 
 
 def brute_force_cutoff(

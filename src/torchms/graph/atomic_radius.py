@@ -4,7 +4,7 @@ from jaxtyping import Float, Int
 
 from torchms.data.batching import Structures
 from torchms.data.constants import get_element
-from torchms.graph.geometry import image_order, periodic_pairs
+from torchms.graph.geometry import cartesian, image_order, periodic_pairs
 from torchms.graph.graph import Graph
 from torchms.graph.line_graph import reverse_index
 
@@ -126,13 +126,10 @@ def atomic_radius(
         structures.x, structures.lattice, structures.ptr, scaling * radii
     )
 
-    # rows of the lattice are the lattice vectors: cartesian = fractional @ lattice
     fractional = (structures.x[target] + shift.to(structures.x.dtype)) - (
         structures.x[source]
     )
-    dists = torch.bmm(fractional.unsqueeze(1), structures.lattice[pair_batch]).norm(
-        dim=(-2, -1)
-    )
+    dists = cartesian(fractional, structures.lattice, pair_batch).norm(dim=-1)
 
     mask = (source != target) & (dists <= scaling * (radii[source] + radii[target]))
     source, target, shift, dists = source[mask], target[mask], shift[mask], dists[mask]

@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from jaxtyping import Float, Int
 
 from torchms.data.batching import Structures, TensorLike
-from torchms.graph.geometry import edges_distances
+from torchms.graph.geometry import cartesian
 from torchms.graph.sparse import Reduce, scatter
 
 
@@ -329,10 +329,7 @@ class Graph:
             + self.edge_shift
             - self.structures.x[self.edge_index[0]]
         )
-        # rows of the lattice are the lattice vectors: cartesian = fractional @ lattice
-        return torch.bmm(
-            edges_frac.unsqueeze(1), self.structures.lattice[self.edge_batch]
-        ).squeeze(1)
+        return cartesian(edges_frac, self.structures.lattice, self.edge_batch)
 
     def edges_distances(self) -> Float[torch.Tensor, "n_edges"]:
         """Length of each edge in Å."""

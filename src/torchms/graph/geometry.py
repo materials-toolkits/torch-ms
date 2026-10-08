@@ -97,6 +97,36 @@ def centered_supercell(
     return supercell, atom_index
 
 
+def cartesian(
+    fractional: Float[torch.Tensor, "n 3"],
+    lattice: Float[torch.Tensor, "n_struct 3 3"],
+    batch: Int[torch.Tensor, "n"],
+) -> Float[torch.Tensor, "n 3"]:
+    """Cartesian vectors from fractional ones, each in the lattice of its structure.
+
+    The rows of a lattice are its vectors: cartesian = fractional @ lattice. It
+    is written with products and a sum. A batched product of matrices this
+    small is split on a GPU into many kernels, which took two thirds of the
+    time of a radius graph on large batches.
+
+    Args:
+        fractional: Vectors in fractional coordinates, shape (n, 3).
+        lattice: Lattice vectors as rows, shape (n_struct, 3, 3).
+        batch: Structure index of each vector, shape (n,).
+
+    Returns:
+        Vectors in Ångströms, shape (n, 3).
+
+    Examples:
+        >>> lattice = torch.tensor([[[2.0, 0.0, 0.0], [1.0, 3.0, 0.0], [0.0, 0.0, 4.0]]])
+        >>> fractional = torch.tensor([[1.0, 0.0, 0.0], [0.5, 1.0, 0.5]])
+        >>> cartesian(fractional, lattice, torch.tensor([0, 0]))
+        tensor([[2., 0., 0.],
+                [2., 3., 2.]])
+    """
+    return (fractional.unsqueeze(-1) * lattice[batch]).sum(dim=1)
+
+
 def periodic_pairs(
     x: Float[torch.Tensor, "n_atoms 3"],
     lattice: Float[torch.Tensor, "n_struct 3 3"],
@@ -277,5 +307,5 @@ def edges_distances(
     edges_index: Int[torch.Tensor, "2 n_edges"],
 ) -> Float[torch.Tensor, "n_edges"]:
     edges_frac = target_x[edges_index[1]] - source_x[edges_index[0]]
-    # rows of the lattice are the lattice vectors: cartesian = fractional @ lattice
-    return torch.bmm(edges_frac.unsqueeze(1), lattice[edges_batch]).norm(dim=(-2, -1))
+
+    return cartesian(edges_frac, lattice, edges_batch).norm(dim=-1)

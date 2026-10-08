@@ -3,7 +3,7 @@ import torch.nn.functional as F
 from jaxtyping import Float
 
 from torchms.data.batching import Structures
-from torchms.graph.geometry import image_order, periodic_pairs
+from torchms.graph.geometry import cartesian, image_order, periodic_pairs
 from torchms.graph.graph import Graph
 
 
@@ -55,11 +55,8 @@ def cutoff(structures: Structures, radius: float, self_images: bool = False) -> 
         wrapped, structures.lattice, structures.ptr, radius
     )
 
-    # rows of the lattice are the lattice vectors: cartesian = fractional @ lattice
     fractional = (wrapped[target] + shift.to(wrapped.dtype)) - wrapped[source]
-    dists = torch.bmm(fractional.unsqueeze(1), structures.lattice[pair_batch]).norm(
-        dim=(-2, -1)
-    )
+    dists = cartesian(fractional, structures.lattice, pair_batch).norm(dim=-1)
 
     if self_images:
         # only the atom itself, at a distance of zero, is not a neighbour
