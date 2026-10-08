@@ -11,7 +11,7 @@ from jaxtyping import Float, Int
 
 from torchms.data.batching import Structures, TensorLike
 from torchms.graph.geometry import cartesian
-from torchms.graph.sparse import Reduce, scatter
+from torchms.graph.sparse import Reduce, count_by, scatter
 
 
 class InvalidGraph(Exception):
@@ -127,9 +127,8 @@ class Graph:
 
         # Missing fields are derived from num_edges, they are checked with
         # the given ones in check_tensors.
-        counts = self.num_edges.flatten().long().clamp(min=0)
-
         if edge_batch is None:
+            counts = self.num_edges.flatten().long().clamp(min=0)
             self.edge_batch = torch.arange(
                 len(counts), dtype=torch.int64, device=counts.device
             ).repeat_interleave(counts)
@@ -137,6 +136,7 @@ class Graph:
             self.edge_batch = self.as_tensor("edge_batch", edge_batch)
 
         if edge_ptr is None:
+            counts = self.num_edges.flatten().long().clamp(min=0)
             self.edge_ptr = F.pad(torch.cumsum(counts, dim=0), (1, 0), value=0)
         else:
             self.edge_ptr = self.as_tensor("edge_ptr", edge_ptr)
@@ -303,21 +303,64 @@ class Graph:
             >>> graph.select_edges(torch.tensor([0, 1, 5])).num_edges
             tensor([3])
         """
-        num_edges = torch.bincount(
-            self.edge_batch[edges], minlength=len(self.num_atoms)
-        )
+        edge_batch = self.edge_batch[edges]
 
-        return Graph(
-            structures=self.structures,
-            edge_index=self.edge_index[:, edges],
-            edge_shift=self.edge_shift[edges],
-            num_atoms=self.num_atoms,
-            num_edges=num_edges,
+        return Graph.from_edges(
+            self.structures,
+            self.num_atoms,
+            self.edge_index[:, edges],
+            self.edge_shift[edges],
+            edge_batch=edge_batch,
             edge_vector=None if self.edge_vector is None else self.edge_vector[edges],
             edge_distance=(
                 None if self.edge_distance is None else self.edge_distance[edges]
             ),
-            _validate=False,
+        )
+
+    @classmethod
+    def from_edges(
+        cls,
+        structures: Structures | None,
+        num_atoms: Int[torch.Tensor, "n_struct"],
+        edge_index: Int[torch.Tensor, "2 n_edges"],
+        edge_shift: Int[torch.Tensor, "n_edges 3"],
+        *,
+        edge_batch: Int[torch.Tensor, "n_edges"],
+        edge_vector: Float[torch.Tensor, "n_edges 3"] | None = None,
+        edge_distance: Float[torch.Tensor, "n_edges"] | None = None,
+    ) -> Graph:
+        """Graph from edges ordered by structure, with the structure of each edge.
+
+        For the functions which build graphs: the edges are counted from
+        edge_batch and nothing is checked, which on a GPU would make the CPU
+        wait for it several times.
+
+        Args:
+            structures: Structures of the graph.
+            num_atoms: Number of atoms per structure, shape (n_struct,).
+            edge_index: Sender and receiver of each edge, shape (2, n_edges).
+            edge_shift: Periodic image of the receiver, shape (n_edges, 3).
+            edge_batch: Structure index of each edge, in ascending order, shape
+                (n_edges,).
+            edge_vector: Cartesian vector of each edge, if computed.
+            edge_distance: Length of each edge, if computed.
+
+        Returns:
+            The graph, not validated.
+        """
+        num_edges = count_by(edge_batch, len(num_atoms))
+
+        return cls(
+            structures=structures,
+            edge_index=edge_index,
+            edge_shift=edge_shift,
+            num_atoms=num_atoms,
+            num_edges=num_edges,
+            edge_batch=edge_batch,
+            edge_ptr=F.pad(torch.cumsum(num_edges, dim=0), (1, 0), value=0),
+            edge_vector=edge_vector,
+            edge_distance=edge_distance,
+            _validate=True,
         )
 
     def edges_vectors(self) -> Float[torch.Tensor, "n_edges 3"]:
@@ -617,9 +660,8 @@ class EdgeTuples:
 
         # Missing fields are derived from num_tuples, they are checked with
         # the given ones in check_tensors.
-        counts = self.num_tuples.flatten().long().clamp(min=0)
-
         if batch is None:
+            counts = self.num_tuples.flatten().long().clamp(min=0)
             self.batch = torch.arange(
                 len(counts), dtype=torch.int64, device=counts.device
             ).repeat_interleave(counts)
@@ -627,6 +669,7 @@ class EdgeTuples:
             self.batch = Graph.as_tensor("batch", batch)
 
         if ptr is None:
+            counts = self.num_tuples.flatten().long().clamp(min=0)
             self.ptr = F.pad(torch.cumsum(counts, dim=0), (1, 0), value=0)
         else:
             self.ptr = Graph.as_tensor("ptr", ptr)

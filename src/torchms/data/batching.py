@@ -132,9 +132,8 @@ class Structures:  # pylint: disable=too-many-instance-attributes
         else:
             self.num_atoms = self.as_tensor("num_atoms", num_atoms, torch.int64)
 
-        counts = self.num_atoms.flatten().long().clamp(min=0)
-
         if batch is None:
+            counts = self.num_atoms.flatten().long().clamp(min=0)
             self.batch = torch.arange(
                 len(counts), dtype=torch.int64, device=counts.device
             ).repeat_interleave(counts)
@@ -142,6 +141,7 @@ class Structures:  # pylint: disable=too-many-instance-attributes
             self.batch = self.as_tensor("batch", batch, torch.int64)
 
         if ptr is None:
+            counts = self.num_atoms.flatten().long().clamp(min=0)
             self.ptr = F.pad(torch.cumsum(counts, dim=0), (1, 0), value=0)
         else:
             self.ptr = self.as_tensor("ptr", ptr, torch.int64)

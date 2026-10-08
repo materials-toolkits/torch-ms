@@ -7,6 +7,7 @@ from torchms.data.constants import get_element
 from torchms.graph.geometry import cartesian, image_order, periodic_pairs
 from torchms.graph.graph import Graph
 from torchms.graph.line_graph import reverse_index
+from torchms.graph.sparse import count_by
 
 
 def _build_radii_tensor() -> torch.Tensor:
@@ -46,7 +47,7 @@ def _first_shell_mask(
     sd = dists[sort_idx]  # sorted distances
 
     # Local position of each edge within its structure (0-based).
-    struct_counts = torch.bincount(sb, minlength=n_struct)
+    struct_counts = count_by(sb, n_struct)
     struct_ptr = F.pad(struct_counts.cumsum(0), (1, 0), value=0)
     local_pos = torch.arange(n_sorted, device=device) - struct_ptr[sb]
 
@@ -132,36 +133,27 @@ def atomic_radius(
     dists = cartesian(fractional, structures.lattice, pair_batch).norm(dim=-1)
 
     mask = (source != target) & (dists <= scaling * (radii[source] + radii[target]))
-    source, target, shift, dists = source[mask], target[mask], shift[mask], dists[mask]
 
-    # edges of an atom sorted by image, then by neighbour
-    order = image_order(source, shift)
-    source, target, shift, dists = (
-        source[order],
-        target[order],
-        shift[order],
-        dists[order],
-    )
+    # the edges kept, sorted for each atom by image then by neighbour. Each
+    # mask is read once: on a GPU each reading makes the CPU wait for it.
+    kept = mask.nonzero().squeeze(1)
+    kept = kept[image_order(source[kept], shift[kept])]
+    source, target, shift, dists = source[kept], target[kept], shift[kept], dists[kept]
 
     if ensure_gap > 0.0:
-        gap_mask = _first_shell_mask(
-            dists, structures.batch[source], n_struct, ensure_gap
-        )
-        source, target, shift = source[gap_mask], target[gap_mask], shift[gap_mask]
+        kept = _first_shell_mask(dists, structures.batch[source], n_struct, ensure_gap)
+        kept = kept.nonzero().squeeze(1)
+        source, target, shift = source[kept], target[kept], shift[kept]
 
     # Keep only bidirectional edges so the sparse matrix is symmetric.
     # An edge (i, j, s) is kept iff (j, i, -s) also exists in the edge list.
     edge_index = torch.stack([source, target])
-    bidi_mask = reverse_index(edge_index, shift, n_atoms) >= 0
-    edge_index, shift = edge_index[:, bidi_mask], shift[bidi_mask]
+    kept = (reverse_index(edge_index, shift, n_atoms) >= 0).nonzero().squeeze(1)
 
-    num_edges = torch.bincount(structures.batch[edge_index[0]], minlength=n_struct)
-
-    return Graph(
-        structures=structures,
-        edge_index=edge_index,
-        edge_shift=shift,
-        num_atoms=structures.num_atoms,
-        num_edges=num_edges,
-        _validate=False,
+    return Graph.from_edges(
+        structures,
+        structures.num_atoms,
+        edge_index[:, kept],
+        shift[kept],
+        edge_batch=structures.batch[source[kept]],
     )

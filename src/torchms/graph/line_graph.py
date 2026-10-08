@@ -11,7 +11,7 @@ import torch.nn.functional as F
 from jaxtyping import Bool, Int
 
 from torchms.graph.graph import Graph
-from torchms.graph.sparse import batched_join
+from torchms.graph.sparse import batched_join, count_by
 
 
 def reverse_edges(graph: Graph) -> Int[torch.Tensor, "n_edges"]:
@@ -171,7 +171,7 @@ def _batch_of(
 ) -> tuple[Int[torch.Tensor, "n"], Int[torch.Tensor, "n_struct+1"]]:
     """Structure of each tuple of edges from its first edge, and CSR pointers."""
     batch = graph.edge_batch[edges]
-    count = torch.bincount(batch, minlength=len(graph.num_atoms))
+    count = count_by(batch, len(graph.num_atoms))
 
     return batch, F.pad(torch.cumsum(count, dim=0), (1, 0), value=0)
 

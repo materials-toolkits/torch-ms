@@ -22,7 +22,8 @@ def lattice_heights(
     Returns:
         Heights in Ångströms with shape (n, 3).
     """
-    normal = torch.cross(lattice[:, [1, 0, 0]], lattice[:, [2, 2, 1]], dim=-1)
+    # b × c, c × a, a × b: the normals of the faces opposite to a, b and c
+    normal = torch.cross(lattice.roll(-1, dims=1), lattice.roll(-2, dims=1), dim=-1)
     unit = F.normalize(normal, dim=-1)
     heights = (lattice * unit).sum(-1).abs()
 
@@ -190,7 +191,8 @@ def periodic_pairs(
     num_images = count.prod(dim=1)
     image_ptr = F.pad(torch.cumsum(num_images, dim=0), (1, 0), value=0)
     pair = torch.arange(len(num_images), device=device).repeat_interleave(num_images)
-    local = torch.arange(int(image_ptr[-1]), device=device) - image_ptr[pair]
+
+    local = torch.arange(len(pair), device=device) - image_ptr[pair]
 
     count_y, count_z = count[pair, 1], count[pair, 2]
     shift = low[pair] + torch.stack(

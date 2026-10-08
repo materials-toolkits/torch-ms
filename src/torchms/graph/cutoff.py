@@ -5,6 +5,7 @@ from jaxtyping import Float
 from torchms.data.batching import Structures
 from torchms.graph.geometry import cartesian, image_order, periodic_pairs
 from torchms.graph.graph import Graph
+from torchms.graph.sparse import count_by
 
 
 def cutoff(structures: Structures, radius: float, self_images: bool = False) -> Graph:
@@ -64,25 +65,22 @@ def cutoff(structures: Structures, radius: float, self_images: bool = False) -> 
     else:
         mask = (source != target) & (dists <= radius)
 
-    source, target, shift = source[mask], target[mask], shift[mask]
-
-    # edges of an atom sorted by image, then by neighbour
+    # the edges kept, sorted for each atom by image then by neighbour. The
+    # mask is read once: on a GPU each reading makes the CPU wait for it.
+    kept = mask.nonzero().squeeze(1)
+    source, target, shift = source[kept], target[kept], shift[kept]
     order = image_order(source, shift)
     source, target, shift = source[order], target[order], shift[order]
 
     # image of the target, moved from the wrapped to the given coordinates
     edge_shift = shift + (cell[source] - cell[target]).long()
 
-    edge_batch = structures.batch[source]
-    num_edges = torch.bincount(edge_batch, minlength=len(structures.num_atoms))
-
-    return Graph(
-        structures=structures,
-        edge_index=torch.stack([source, target]),
-        edge_shift=edge_shift,
-        num_atoms=structures.num_atoms,
-        num_edges=num_edges,
-        _validate=False,
+    return Graph.from_edges(
+        structures,
+        structures.num_atoms,
+        torch.stack([source, target]),
+        edge_shift,
+        edge_batch=structures.batch[source],
     )
 
 
@@ -117,7 +115,7 @@ def nearest_neighbors(graph: Graph, k: int) -> Graph:
     order = by_distance[torch.argsort(source[by_distance], stable=True)]
 
     # rank of each edge among the edges of its source atom
-    degree = torch.bincount(source, minlength=n_atoms)
+    degree = count_by(source, n_atoms)
     source_ptr = F.pad(torch.cumsum(degree, dim=0), (1, 0), value=0)
     rank = torch.arange(len(order), device=device) - source_ptr[source[order]]
 
