@@ -39,6 +39,43 @@ def reverse_edges(graph: Graph) -> Int[torch.Tensor, "n_edges"]:
     """
     device = graph.device()
     n_edges = graph.edge_index.shape[1]
+    n_atoms = int(graph.num_atoms.sum())
+    sender, receiver = graph.edge_index
+
+    if n_edges == 0:
+        return torch.zeros(0, dtype=torch.int64, device=device)
+
+    # one integer per edge: its atoms and its image, as the digits of a number
+    largest = int(graph.edge_shift.abs().max())
+    base = 2 * largest + 1
+
+    if n_atoms * n_atoms * base**3 >= 2**63:
+        return _reverse_edges_by_rows(graph)
+
+    def key(first: torch.Tensor, second: torch.Tensor, shift: torch.Tensor):
+        image = shift + largest
+        atoms = first * n_atoms + second
+
+        return ((atoms * base + image[:, 0]) * base + image[:, 1]) * base + image[:, 2]
+
+    edge_key = key(sender, receiver, graph.edge_shift)
+    reverse_key = key(receiver, sender, -graph.edge_shift)
+
+    # position of the key of each reverse among the sorted keys of the edges
+    order = torch.argsort(edge_key, stable=True)
+    sorted_key = edge_key[order]
+    position = torch.searchsorted(sorted_key, reverse_key).clamp(max=n_edges - 1)
+
+    return torch.where(sorted_key[position] == reverse_key, order[position], -1)
+
+
+def _reverse_edges_by_rows(graph: Graph) -> Int[torch.Tensor, "n_edges"]:
+    """Reverse of each edge by comparing rows, see reverse_edges.
+
+    Slower, for graphs too large for one integer per edge.
+    """
+    device = graph.device()
+    n_edges = graph.edge_index.shape[1]
     sender, receiver = graph.edge_index
 
     edges = torch.cat([sender[:, None], receiver[:, None], graph.edge_shift], dim=1)
