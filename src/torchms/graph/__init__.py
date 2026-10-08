@@ -7,9 +7,10 @@ from torchms.graph.geometry import (
     lattice_heights,
     triplet_cosines,
 )
-from torchms.graph.graph import Graph, InvalidGraph
+from torchms.graph.graph import EdgeTuples, Graph, InvalidGraph
 from torchms.graph.coloring import color_refinement
 from torchms.graph.line_graph import (
+    edge_pairs,
     line_graph,
     quadruplets,
     reverse_edges,
@@ -21,8 +22,26 @@ from torchms.graph.sparse import (
     batched_join,
     scatter,
 )
+from torchms.graph.transforms import (
+    AddAtomicRadiusGraph,
+    AddLineGraph,
+    AddQuadruplets,
+    AddRadiusGraph,
+    AddTriplets,
+    KeepNearestNeighbors,
+    KeepRadius,
+)
 
 __all__ = [
+    "AddAtomicRadiusGraph",
+    "AddLineGraph",
+    "AddQuadruplets",
+    "AddRadiusGraph",
+    "AddTriplets",
+    "KeepNearestNeighbors",
+    "KeepRadius",
+    "EdgeTuples",
+    "edge_pairs",
     "atomic_radius",
     "batched_cartesian_product_2",
     "batched_cartesian_product_3",

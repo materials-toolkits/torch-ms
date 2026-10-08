@@ -118,6 +118,65 @@ def _batch_of(
     return batch, F.pad(torch.cumsum(count, dim=0), (1, 0), value=0)
 
 
+def edge_pairs(
+    graph: Graph,
+    edge_mask: Bool[torch.Tensor, "n_edges"] | None = None,
+    backtrack: bool = False,
+) -> tuple[
+    Int[torch.Tensor, "2 n_pairs"],
+    Int[torch.Tensor, "n_pairs"],
+    Int[torch.Tensor, "n_struct+1"],
+]:
+    """Pairs of edges head to tail u→v, v→w: the edges of the line graph.
+
+    Args:
+        graph: Graph of the atoms.
+        edge_mask: Edges which can be part of a pair, shape (n_edges,). All of
+            them by default.
+        backtrack: If False, an edge is not followed by its reverse: w is
+            another atom than u, or another image of u.
+
+    Returns:
+        Indices of the first and second edge of each pair, shape (2, n_pairs),
+        sorted by the atom they share, structure index of each pair, shape
+        (n_pairs,), and CSR pointers of the pairs of each structure, shape
+        (n_struct+1,).
+
+    Examples:
+        Each of the 32 edges of diamond is followed by the 3 other edges of the
+        atom it arrives at.
+
+        >>> from torchms.data.batching import Structures
+        >>> from torchms.graph.cutoff import cutoff
+        >>> graph = cutoff(Structures.diamond(), 2.0)
+        >>> pair_index, pair_batch, pair_ptr = edge_pairs(graph)
+        >>> pair_ptr
+        tensor([ 0, 96])
+        >>> first, second = pair_index
+        >>> bool((graph.edge_index[1, first] == graph.edge_index[0, second]).all())
+        True
+        >>> edge_pairs(graph, backtrack=True)[2]
+        tensor([  0, 128])
+    """
+    device = graph.device()
+    edges = _selected(graph, edge_mask)
+    n_edges = graph.edge_index.shape[1]
+
+    reverse = None
+    if not backtrack:
+        # reverse of each selected edge among the selected edges
+        position = torch.full((n_edges + 1,), -1, dtype=torch.int64, device=device)
+        position[edges] = torch.arange(len(edges), device=device)
+        reverse = position[reverse_edges(graph)[edges]]
+
+    pairs = line_graph(graph.edge_index[:, edges], int(graph.num_atoms.sum()), reverse)
+
+    pair_index = edges[pairs]
+    pair_batch, pair_ptr = _batch_of(graph, pair_index[0])
+
+    return pair_index, pair_batch, pair_ptr
+
+
 def triplets(
     graph: Graph, edge_mask: Bool[torch.Tensor, "n_edges"] | None = None
 ) -> tuple[

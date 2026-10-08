@@ -142,14 +142,4 @@ def nearest_neighbors(graph: Graph, k: int) -> Graph:
     source_ptr = F.pad(torch.cumsum(degree, dim=0), (1, 0), value=0)
     rank = torch.arange(len(order), device=device) - source_ptr[source[order]]
 
-    kept = order[rank < k]
-    num_edges = torch.bincount(graph.edge_batch[kept], minlength=len(graph.num_atoms))
-
-    return Graph(
-        structures=graph.structures,
-        edge_index=graph.edge_index[:, kept],
-        edge_shift=graph.edge_shift[kept],
-        num_atoms=graph.num_atoms,
-        num_edges=num_edges,
-        _validate=False,
-    )
+    return graph.select_edges(order[rank < k])

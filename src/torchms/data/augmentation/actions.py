@@ -55,7 +55,9 @@ def permute_atoms(
         raise ValueError("atoms must be permuted inside their structure")
 
     return dataclasses.replace(
-        structures, x=structures.x[permutation], z=structures.z[permutation]
+        structures.without_graphs(),
+        x=structures.x[permutation],
+        z=structures.z[permutation],
     )
 
 
@@ -88,7 +90,7 @@ def rotate_lattice(
     # rows of the lattice are the lattice vectors
     lattice = torch.bmm(structures.lattice, rotation.transpose(1, 2))
 
-    return dataclasses.replace(structures, lattice=lattice)
+    return dataclasses.replace(structures.without_graphs(), lattice=lattice)
 
 
 def translate_atoms(
@@ -110,7 +112,7 @@ def translate_atoms(
     """
     x = wrap(structures.x + translation[structures.batch])
 
-    return dataclasses.replace(structures, x=x)
+    return dataclasses.replace(structures.without_graphs(), x=x)
 
 
 def unimodular_inverse(
@@ -174,7 +176,7 @@ def change_lattice_basis(
     lattice = torch.bmm(basis.to(structures.lattice.dtype), structures.lattice)
     x = torch.bmm(structures.x.unsqueeze(1), inverse[structures.batch]).squeeze(1)
 
-    return dataclasses.replace(structures, lattice=lattice, x=wrap(x))
+    return dataclasses.replace(structures.without_graphs(), lattice=lattice, x=wrap(x))
 
 
 def make_supercell(
@@ -243,7 +245,7 @@ def make_supercell(
     x = (structures.x[atom_index] + shifts[atom_cell]) / repeat[atom_struct]
 
     return dataclasses.replace(
-        structures,
+        structures.without_graphs(),
         lattice=structures.lattice * repeat.unsqueeze(-1),
         x=x.to(structures.x.dtype),
         z=structures.z[atom_index],
