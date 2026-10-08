@@ -101,7 +101,7 @@ def periodic_pairs(
     x: Float[torch.Tensor, "n_atoms 3"],
     lattice: Float[torch.Tensor, "n_struct 3 3"],
     ptr: Int[torch.Tensor, "n_struct+1"],
-    radius: float,
+    radius: float | Float[torch.Tensor, "n_atoms"],
 ) -> tuple[
     Int[torch.Tensor, "n_pairs"],
     Int[torch.Tensor, "n_pairs"],
@@ -120,7 +120,8 @@ def periodic_pairs(
         x: Fractional coordinates of the atoms, shape (n_atoms, 3).
         lattice: Lattice vectors as rows, shape (n_struct, 3, 3).
         ptr: Index of the first atom of each structure, shape (n_struct+1,).
-        radius: Radius in Ångströms.
+        radius: Radius in Ångströms. Or a radius per atom, shape (n_atoms,):
+            the radius of a pair is then the sum of the ones of its two atoms.
 
     Returns:
         Index of the first atom, index of the second atom, image of the second
@@ -144,8 +145,11 @@ def periodic_pairs(
     source, target = pairs[:, 0], pairs[:, 1]
 
     # largest difference of fractional coordinates, with a margin for rounding
-    width = radius / lattice_heights(lattice).clamp_min(1e-8) + 1e-4
-    width = width[pair_batch]
+    width = 1.0 / lattice_heights(lattice).clamp_min(1e-8)[pair_batch]
+    if isinstance(radius, torch.Tensor):
+        width = width * (radius[source] + radius[target]).unsqueeze(1) + 1e-4
+    else:
+        width = width * radius + 1e-4
 
     # images s of the target with |x[target] + s - x[source]| <= width
     delta = x[source] - x[target]
@@ -165,6 +169,40 @@ def periodic_pairs(
     )
 
     return source[pair], target[pair], shift, pair_batch[pair]
+
+
+def image_order(
+    source: Int[torch.Tensor, "n_edges"], shift: Int[torch.Tensor, "n_edges 3"]
+) -> Int[torch.Tensor, "n_edges"]:
+    """Order of edges by sender, then by periodic image of the receiver.
+
+    Edges with the same sender and image stay in their order: pairs from
+    periodic_pairs are then sorted by sender, image and receiver.
+
+    Args:
+        source: Sender of each edge, shape (n_edges,).
+        shift: Periodic image of the receiver of each edge, shape (n_edges, 3).
+
+    Returns:
+        Indices sorting the edges, shape (n_edges,).
+
+    Examples:
+        >>> source = torch.tensor([0, 0, 1, 0])
+        >>> shift = torch.tensor([[0, 0, 1], [0, 0, 0], [0, 0, 0], [-1, 0, 0]])
+        >>> image_order(source, shift)
+        tensor([3, 1, 0, 2])
+    """
+    if len(source) == 0:
+        return source
+
+    # one integer per sender and image. It is far from 64 bits: the pairs of a
+    # cell with so many images cannot be held in memory.
+    largest = int(shift.abs().max())
+    base = 2 * largest + 1
+    image = shift + largest
+    key = ((source * base + image[:, 0]) * base + image[:, 1]) * base + image[:, 2]
+
+    return torch.argsort(key, stable=True)
 
 
 def triplet_cosines(

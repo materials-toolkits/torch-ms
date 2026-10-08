@@ -4,9 +4,9 @@ from jaxtyping import Float, Int
 
 from torchms.data.batching import Structures
 from torchms.data.constants import get_element
-from torchms.graph.geometry import centered_supercell, edges_distances
+from torchms.graph.geometry import image_order, periodic_pairs
 from torchms.graph.graph import Graph
-from torchms.graph.sparse import batched_cartesian_product_2
+from torchms.graph.line_graph import reverse_index
 
 
 def _build_radii_tensor() -> torch.Tensor:
@@ -115,68 +115,55 @@ def atomic_radius(
         >>> graph2.num_edges
         tensor([32])
     """
-    device = structures.device()
     n_struct = len(structures.num_atoms)
+    n_atoms = len(structures.z)
 
-    radii = _ATOMIC_RADII.to(device)[structures.z]  # (n_atoms,)
-    max_radius = float(radii.max()) * scaling * 2
+    radii = _ATOMIC_RADII.to(structures.device())[structures.z]  # (n_atoms,)
 
-    supercell, atom_index = centered_supercell(structures, max_radius)
-
-    pair_idx, pair_batch, _ = batched_cartesian_product_2(structures.ptr, supercell.ptr)
-    pair_idx = pair_idx.t()
-
-    dists = edges_distances(
-        structures.x,
-        supercell.x,
-        structures.lattice,
-        pair_batch,
-        pair_idx,
+    # the images of each pair which can be within the sum of its two radii,
+    # exact for coordinates inside and outside the cell
+    source, target, shift, pair_batch = periodic_pairs(
+        structures.x, structures.lattice, structures.ptr, scaling * radii
     )
 
-    real_target = atom_index[pair_idx[1]]
-    r_i = radii[pair_idx[0]]
-    r_j = radii[real_target]
-    threshold = scaling * (r_i + r_j)
-
-    mask = (pair_idx[0] != real_target) & (dists <= threshold)
-
-    # image of the target: its coordinates in the supercell minus the ones in
-    # the cell, also exact for coordinates outside [0, 1)
-    edge_shift = (
-        (supercell.x[pair_idx[1][mask]] - structures.x[real_target[mask]])
-        .round()
-        .long()
+    # rows of the lattice are the lattice vectors: cartesian = fractional @ lattice
+    fractional = (structures.x[target] + shift.to(structures.x.dtype)) - (
+        structures.x[source]
     )
-    pair_idx[1] = real_target
-    pair_idx = pair_idx[:, mask]
+    dists = torch.bmm(fractional.unsqueeze(1), structures.lattice[pair_batch]).norm(
+        dim=(-2, -1)
+    )
 
-    filtered_dists = dists[mask]
-    edge_batch = structures.batch[pair_idx[0]]
+    mask = (source != target) & (dists <= scaling * (radii[source] + radii[target]))
+    source, target, shift, dists = source[mask], target[mask], shift[mask], dists[mask]
+
+    # edges of an atom sorted by image, then by neighbour
+    order = image_order(source, shift)
+    source, target, shift, dists = (
+        source[order],
+        target[order],
+        shift[order],
+        dists[order],
+    )
 
     if ensure_gap > 0.0:
-        gap_mask = _first_shell_mask(filtered_dists, edge_batch, n_struct, ensure_gap)
-        pair_idx = pair_idx[:, gap_mask]
-        edge_shift = edge_shift[gap_mask]
-        edge_batch = edge_batch[gap_mask]
+        gap_mask = _first_shell_mask(
+            dists, structures.batch[source], n_struct, ensure_gap
+        )
+        source, target, shift = source[gap_mask], target[gap_mask], shift[gap_mask]
 
     # Keep only bidirectional edges so the sparse matrix is symmetric.
     # An edge (i, j, s) is kept iff (j, i, -s) also exists in the edge list.
-    n_edges = pair_idx.shape[1]
-    fwd = torch.cat([pair_idx.t(), edge_shift], dim=1)
-    rev = torch.cat([pair_idx[[1, 0]].t(), -edge_shift], dim=1)
-    _, uid = torch.unique(torch.cat([fwd, rev], dim=0), dim=0, return_inverse=True)
-    bidi_mask = torch.isin(uid[:n_edges], uid[n_edges:])
-    pair_idx = pair_idx[:, bidi_mask]
-    edge_shift = edge_shift[bidi_mask]
-    edge_batch = edge_batch[bidi_mask]
+    edge_index = torch.stack([source, target])
+    bidi_mask = reverse_index(edge_index, shift, n_atoms) >= 0
+    edge_index, shift = edge_index[:, bidi_mask], shift[bidi_mask]
 
-    num_edges = torch.bincount(edge_batch, minlength=n_struct)
+    num_edges = torch.bincount(structures.batch[edge_index[0]], minlength=n_struct)
 
     return Graph(
         structures=structures,
-        edge_index=pair_idx,
-        edge_shift=edge_shift,
+        edge_index=edge_index,
+        edge_shift=shift,
         num_atoms=structures.num_atoms,
         num_edges=num_edges,
         _validate=False,

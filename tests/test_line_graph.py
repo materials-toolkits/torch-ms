@@ -417,7 +417,10 @@ class TestReverseEdgesMethods:
     @staticmethod
     def graphs():
         from torchms.graph.cutoff import nearest_neighbors
-        from torchms.graph.line_graph import _reverse_edges_by_rows
+        from torchms.graph.line_graph import _reverse_index_by_rows
+
+        def _reverse_edges_by_rows(graph):
+            return _reverse_index_by_rows(graph.edge_index, graph.edge_shift)
 
         generator = torch.Generator().manual_seed(0)
         structures = []

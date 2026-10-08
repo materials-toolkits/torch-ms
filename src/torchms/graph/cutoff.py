@@ -3,7 +3,7 @@ import torch.nn.functional as F
 from jaxtyping import Float
 
 from torchms.data.batching import Structures
-from torchms.graph.geometry import periodic_pairs
+from torchms.graph.geometry import image_order, periodic_pairs
 from torchms.graph.graph import Graph
 
 
@@ -69,14 +69,8 @@ def cutoff(structures: Structures, radius: float, self_images: bool = False) -> 
 
     source, target, shift = source[mask], target[mask], shift[mask]
 
-    # edges of an atom sorted by image, then by neighbour. The pairs are sorted
-    # by atom then by neighbour: one stable sort by atom and image. The key is
-    # far from 64 bits, the pairs of a cell with so many images cannot be held.
-    largest = int(shift.abs().max()) if len(source) > 0 else 0
-    base = 2 * largest + 1
-    image = shift + largest
-    key = ((source * base + image[:, 0]) * base + image[:, 1]) * base + image[:, 2]
-    order = torch.argsort(key, stable=True)
+    # edges of an atom sorted by image, then by neighbour
+    order = image_order(source, shift)
     source, target, shift = source[order], target[order], shift[order]
 
     # image of the target, moved from the wrapped to the given coordinates

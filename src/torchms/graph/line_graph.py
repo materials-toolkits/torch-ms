@@ -37,20 +37,38 @@ def reverse_edges(graph: Graph) -> Int[torch.Tensor, "n_edges"]:
         >>> bool((graph.edge_shift[reverse] == -graph.edge_shift).all())
         True
     """
-    device = graph.device()
-    n_edges = graph.edge_index.shape[1]
-    n_atoms = int(graph.num_atoms.sum())
-    sender, receiver = graph.edge_index
+    return reverse_index(graph.edge_index, graph.edge_shift, int(graph.num_atoms.sum()))
+
+
+def reverse_index(
+    edge_index: Int[torch.Tensor, "2 n_edges"],
+    edge_shift: Int[torch.Tensor, "n_edges 3"],
+    n_atoms: int,
+) -> Int[torch.Tensor, "n_edges"]:
+    """Index of the reverse of each edge, from the tensors of the edges.
+
+    Args:
+        edge_index: Sender and receiver of each edge, shape (2, n_edges).
+        edge_shift: Periodic image of the receiver, shape (n_edges, 3).
+        n_atoms: Number of atoms.
+
+    Returns:
+        Index of the reverse edge, -1 when it is not an edge, shape (n_edges,).
+        See reverse_edges.
+    """
+    device = edge_index.device
+    n_edges = edge_index.shape[1]
+    sender, receiver = edge_index
 
     if n_edges == 0:
         return torch.zeros(0, dtype=torch.int64, device=device)
 
     # one integer per edge: its atoms and its image, as the digits of a number
-    largest = int(graph.edge_shift.abs().max())
+    largest = int(edge_shift.abs().max())
     base = 2 * largest + 1
 
     if n_atoms * n_atoms * base**3 >= 2**63:
-        return _reverse_edges_by_rows(graph)
+        return _reverse_index_by_rows(edge_index, edge_shift)
 
     def key(first: torch.Tensor, second: torch.Tensor, shift: torch.Tensor):
         image = shift + largest
@@ -58,8 +76,8 @@ def reverse_edges(graph: Graph) -> Int[torch.Tensor, "n_edges"]:
 
         return ((atoms * base + image[:, 0]) * base + image[:, 1]) * base + image[:, 2]
 
-    edge_key = key(sender, receiver, graph.edge_shift)
-    reverse_key = key(receiver, sender, -graph.edge_shift)
+    edge_key = key(sender, receiver, edge_shift)
+    reverse_key = key(receiver, sender, -edge_shift)
 
     # position of the key of each reverse among the sorted keys of the edges
     order = torch.argsort(edge_key, stable=True)
@@ -69,17 +87,20 @@ def reverse_edges(graph: Graph) -> Int[torch.Tensor, "n_edges"]:
     return torch.where(sorted_key[position] == reverse_key, order[position], -1)
 
 
-def _reverse_edges_by_rows(graph: Graph) -> Int[torch.Tensor, "n_edges"]:
-    """Reverse of each edge by comparing rows, see reverse_edges.
+def _reverse_index_by_rows(
+    edge_index: Int[torch.Tensor, "2 n_edges"],
+    edge_shift: Int[torch.Tensor, "n_edges 3"],
+) -> Int[torch.Tensor, "n_edges"]:
+    """Reverse of each edge by comparing rows, see reverse_index.
 
     Slower, for graphs too large for one integer per edge.
     """
-    device = graph.device()
-    n_edges = graph.edge_index.shape[1]
-    sender, receiver = graph.edge_index
+    device = edge_index.device
+    n_edges = edge_index.shape[1]
+    sender, receiver = edge_index
 
-    edges = torch.cat([sender[:, None], receiver[:, None], graph.edge_shift], dim=1)
-    reverse = torch.cat([receiver[:, None], sender[:, None], -graph.edge_shift], dim=1)
+    edges = torch.cat([sender[:, None], receiver[:, None], edge_shift], dim=1)
+    reverse = torch.cat([receiver[:, None], sender[:, None], -edge_shift], dim=1)
 
     # the same identifier for an edge and for the reverse of its reverse
     unique, identifier = torch.unique(
