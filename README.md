@@ -1,30 +1,18 @@
 # Torch Material Science (TorchMS)
 
-## Setup with uv
+## Installation
 
-### Installation on linux and macOS
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-Alternative with `pip`:
-```bash
-pip install uv
-```
-
-### Add dependencies
+TorchMS is a library: add it to the dependencies of your project. It needs Python 3.10 or
+later.
 
 ```bash
-uv add 'requests==2.31.0'
+uv add "torchms @ git+https://gitlab.univ-artois.fr/astrid.klipfel/torch-ms.git"
+# or
+pip install "torchms @ git+https://gitlab.univ-artois.fr/astrid.klipfel/torch-ms.git"
 ```
 
-### Run
-
-Run `python main.py` inside uv's virtual env.
-```bash
-uv run python main.py
-```
+Use `torchms[hub]` instead of `torchms` to load the published datasets and the energy
+estimator from Hugging Face.
 
 ## Datasets
 
@@ -191,33 +179,24 @@ uv run python scripts/build_energy_correction.py datasets  # fit the correction,
 uv run python scripts/validate_energy.py datasets          # end to end validation
 ```
 
-## Documentation
+## Development
 
-The documentation (user guide, datasets, design notes and API reference) is in `docs/`:
+To work on the library itself, clone the repository and let
+[uv](https://docs.astral.sh/uv/) build its environment:
 
 ```bash
-uv run poe docs        # preview on http://127.0.0.1:8000
-uv run poe docs-build  # static site in site/
+git clone https://gitlab.univ-artois.fr/astrid.klipfel/torch-ms.git
+cd torch-ms
+uv sync
 ```
 
-## Testing
-
-Run testing with `pytest`:
 ```bash
-uv run pytest
+uv run pytest          # tests, including the examples of the docstrings
+uv run pyright src     # type checking
+uv run black .         # formatting
+uv run pylint src      # linter
+uv run poe docs        # documentation, preview on http://127.0.0.1:8000
+uv run poe docs-build  # documentation, static site in site/
 ```
 
-## Formatting
-
-Format all files with `black`:
-```bash
-uv run black .
-```
-
-## Linter
-
-Check with `pylint`:
-```bash
-uv run pylint .
-```
-
+The documentation (user guide, datasets, design notes and API reference) is in `docs/`.

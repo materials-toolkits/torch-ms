@@ -1,49 +1,78 @@
 # Installation
 
-TorchMS needs Python 3.10 or later and uses [uv](https://docs.astral.sh/uv/) to manage its
-environment.
+TorchMS is a library: add it to the dependencies of your project, then import `torchms`. It
+needs Python 3.10 or later and PyTorch 2.11 or later, and is installed from its git
+repository.
 
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh   # install uv, once
+=== "uv"
 
-git clone https://gitlab.univ-artois.fr/astrid.klipfel/torch-ms.git
-cd torch-ms
-uv sync
+    ```bash
+    uv add "torchms @ git+https://gitlab.univ-artois.fr/astrid.klipfel/torch-ms.git"
+    ```
+
+=== "pip"
+
+    ```bash
+    pip install "torchms @ git+https://gitlab.univ-artois.fr/astrid.klipfel/torch-ms.git"
+    ```
+
+Check the installation:
+
+```python
+import torch
+from torchms.data import Structures
+
+structures = Structures(
+    lattice=torch.eye(3).unsqueeze(0) * 4.0,
+    x=torch.zeros(1, 3),
+    z=torch.tensor([29]),
+    num_atoms=torch.tensor([1]),
+)
+print(structures)
 ```
 
-Always run Python through `uv run`, which uses the environment of the project:
+## Loading from Hugging Face
+
+The published datasets and the weights of the energy estimator are downloaded from Hugging
+Face. This needs `huggingface_hub`, which comes with the `hub` extra:
+
+=== "uv"
+
+    ```bash
+    uv add "torchms[hub] @ git+https://gitlab.univ-artois.fr/astrid.klipfel/torch-ms.git"
+    ```
+
+=== "pip"
+
+    ```bash
+    pip install "torchms[hub] @ git+https://gitlab.univ-artois.fr/astrid.klipfel/torch-ms.git"
+    ```
+
+Without it, the rest of the library works: `HDF5Dataset("file.hdf5")` reads a local file.
+
+## A fixed version
+
+The commands above install the last commit of `main`. For results that can be reproduced,
+end the address with a tag, a branch or a commit:
 
 ```bash
-uv run python my_script.py
-uv run pytest
+uv add "torchms @ git+https://gitlab.univ-artois.fr/astrid.klipfel/torch-ms.git@3dd18de"
 ```
 
-## Optional parts
-
-| Need | Command | What it adds |
-|---|---|---|
-| Loading datasets and the estimator from Hugging Face | `uv sync --extra hub` | `huggingface_hub` |
-| Building this documentation | `uv sync --group docs` | MkDocs Material, mkdocstrings |
-
-The development group (tests, type checker, ASE, pymatgen, pyarrow) is installed by default by
-`uv sync`.
+uv writes the commit in `uv.lock` in any case; `uv lock --upgrade-package torchms` moves to
+the last one.
 
 ## GPU
 
-PyTorch is installed with CUDA support. The energy estimator runs on CPU but is much faster on
-a GPU: about 600 structures per second on a laptop GPU with 8 GB of memory.
+TorchMS runs on the device of the tensors it is given, and installs nothing for the GPU by
+itself: it uses the PyTorch of your environment. See the
+[PyTorch instructions](https://pytorch.org/get-started/locally/) for a build matching your
+CUDA version. The energy estimator runs on CPU but is much faster on a GPU: about
+600 structures per second on a laptop GPU with 8 GB of memory.
 
-## Checks
+## Command line
 
-```bash
-uv run pytest          # tests, including the examples of the docstrings
-uv run pyright src     # type checking
-uv run black .         # formatting
-```
+The library installs one command, `preprocessing`, which converts CIF files to the HDF5
+format of the datasets (see [Preprocessing your own data](preprocessing.md)).
 
-## Building the documentation
-
-```bash
-uv run --group docs mkdocs serve          # preview on http://127.0.0.1:8000
-uv run --group docs mkdocs build --strict # static site in site/
-```
+To change TorchMS itself, see [Development](../development.md).

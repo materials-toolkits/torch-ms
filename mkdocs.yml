@@ -56,6 +56,8 @@ markdown_extensions:
   - pymdownx.highlight
   - pymdownx.superfences
   - pymdownx.details
+  - pymdownx.tabbed:
+      alternate_style: true
 
 nav:
   - Home: index.md
@@ -87,3 +89,4 @@ nav:
       - torchms.graph: reference/graph.md
       - torchms.models: reference/models.md
       - torchms.estimator: reference/estimator.md
+  - Development: development.md
