@@ -290,3 +290,325 @@ Structures per second arriving on the GPU with their graphs: built by the transf
 | full chain, geometry | 4 | 7,834 | 11,003 |
 | full chain, geometry | 8 | 10,023 | 9,499 |
 | full chain, geometry | 16 | 11,017 | 10,886 |
+
+
+## Second run: large batches, operations of a call, torch.compile
+
+Same day, to find why the H100 is not faster than the RTX 4060 on batches of 128.
+`scripts/benchmark_graph_gpu.py` on the H100 and on the local RTX 4060.
+
+- **Commit**: `1e701a2` for the script, copied alone to `~/torchms/scripts/`; the library on
+  the cluster is still the one deployed at `99032bc`, which the script only reads. Working
+  tree clean.
+- **Data**: `lematerial_300k.hdf5`, 300,000 structures of `datasets/lematerial/unique.hdf5`
+  drawn with the seed of `--sample 300000`, written locally and copied: 9.3 atoms per
+  structure on average, 360 at most.
+
+| Job | Partition | Node | Resources | Elapsed | State |
+|---|---|---|---|---|---|
+| 13158401 `gpu_h100` | `h100` | nodeGcor1 | 1 GPU, 32 CPUs, 64 GB | 3 min 48 s | COMPLETED |
+| 13158402 `gpu16_h100` | `h100` | nodeGcor1 | 1 GPU, 32 CPUs, 64 GB | 1 min 54 s | COMPLETED |
+
+```bash
+# 13158401, in run_gpu.sh
+python scripts/benchmark_graph_gpu.py datasets/lematerial_300k.hdf5 --output results/h100_gpu.md
+# 13158402, in run_gpu16.sh
+python scripts/benchmark_graph_gpu.py datasets/lematerial_300k.hdf5 \
+    --parts loader --workers-gpu 16 --output results/h100_gpu_16_readers.md
+```
+
+The second job exists because the first one compared 16 workers building the graphs with 4
+workers reading for the GPU, which holds the GPU back with large batches.
+
+**Logs**: both reached `benchmark done`. No line matches
+`error|traceback|exception|out of memory|failed`. The node has `/usr/bin/gcc`, and
+`torch.compile` ran in its three modes.
+
+### Results
+
+Structures per second, `AddRadiusGraph(5)`.
+
+| | RTX 4060 (local) | H100 |
+|---|---:|---:|
+| Batches of 128 on the GPU | 108,498 | 65,323 |
+| Batches of 8,192 on the GPU | 188,403 | 763,922 |
+| One call on a batch of one structure | 0.86 ms | 1.78 ms |
+| Operations of torch per call | 469 | 466 |
+| Share of the CPU time in operations which wait for the GPU | 12 % | 11 % |
+| `torch.compile`, default mode, against not compiled | 95,693 / 98,905 | 54,940 / 53,080 |
+| Batches of 8,192 through the loader, built in 16 workers | 47,694 | 65,438 |
+| Batches of 8,192 through the loader, built on the GPU, 16 readers | 175,230 | 184,336 |
+
+- **The fixed cost of a call explains the batches of 128.** The time of a batch on the H100
+  fits `1.71 ms + 1.10 µs per structure`: 87 % of a batch of 128 is fixed. The fixed part is
+  the time of a batch of one structure, twice longer on the cluster as its CPU thread.
+- **With large batches the H100 is 4 times faster than the RTX 4060**, and uses 0.7 GB.
+- **The round trips between CPU and GPU are a tenth of the CPU time**, not the cause that was
+  expected. The cause is the number of operations, about 470 per call.
+- **`torch.compile` changes nothing**: +3.5 % on the H100, -3.2 % locally with the default
+  mode, slower with `dynamic=True` and `reduce-overhead`, same edges.
+- **Through the loader the H100 is limited by the reading**: 184,000 structures per second
+  at best, a quarter of what it builds from memory.
+
+The line fitted on the RTX 4060 has a negative fixed cost: its rate stops growing at 512
+and a line does not describe it. The time of a batch of one structure is the measure of its
+fixed cost.
+
+The column "GPU working" of the profile goes over 100 % for large batches. The times of the
+profiler are not used anywhere else.
+
+### Report of the H100
+
+#### Setting
+
+- file: `datasets/lematerial_300k.hdf5`, 300,000 structures, 9.3 atoms per structure on average (max 360)
+- CPU: x86_64, 64 threads, 32 used by torch
+- GPU: NVIDIA H100 NVL, 93 GB
+- torch 2.14.1+cu130, Python 3.10.20
+
+#### Size of the batch
+
+Batches already on the GPU. The time of a batch is fitted by `fixed + per structure × size` over the sizes (least squares).
+
+`AddRadiusGraph(5)`:
+
+| batch size | structures / s | ms per batch | GPU memory (GB) |
+|---|---:|---:|---:|
+| 128 | 65,323 | 1.96 | 0.05 |
+| 512 | 228,674 | 2.24 | 0.08 |
+| 2048 | 529,672 | 3.87 | 0.21 |
+| 8192 | 763,922 | 10.72 | 0.71 |
+
+Fixed cost 1.71 ms per batch, 1.10 µs per structure: the fixed cost is 87 % of a batch of 128, 77 % of a batch of 512, 44 % of a batch of 2048, 16 % of a batch of 8192.
+
+full chain, geometry:
+
+| batch size | structures / s | ms per batch | GPU memory (GB) |
+|---|---:|---:|---:|
+| 128 | 23,272 | 5.50 | 0.05 |
+| 512 | 85,067 | 6.02 | 0.08 |
+| 2048 | 241,761 | 8.47 | 0.21 |
+| 8192 | 408,937 | 20.03 | 0.71 |
+
+Fixed cost 5.06 ms per batch, 1.82 µs per structure: the fixed cost is 92 % of a batch of 128, 84 % of a batch of 512, 60 % of a batch of 2048, 25 % of a batch of 8192.
+
+#### Through the loader
+
+Structures per second arriving on the GPU with their graphs, from `DataLoader(dataset, batch_size=..., shuffle=True)`: built in 16 workers then moved, or read by 4 workers and built on the GPU by `OnDevice`.
+
+`AddRadiusGraph(5)`:
+
+| batch size | built in 16 workers | built on the GPU, 4 workers | GPU / workers |
+|---|---:|---:|---:|
+| 128 | 29,247 | 22,616 | 0.77 |
+| 512 | 49,349 | 25,560 | 0.52 |
+| 2048 | 50,149 | 25,638 | 0.51 |
+| 8192 | 58,181 | 40,957 | 0.70 |
+
+full chain, geometry:
+
+| batch size | built in 16 workers | built on the GPU, 4 workers | GPU / workers |
+|---|---:|---:|---:|
+| 128 | 16,998 | 15,109 | 0.89 |
+| 512 | 34,702 | 26,211 | 0.76 |
+| 2048 | 34,286 | 25,165 | 0.73 |
+| 8192 | 41,283 | 39,361 | 0.95 |
+
+#### What a call is made of
+
+`AddRadiusGraph(5)` on batches on the GPU. The wall time is measured without the profiler; the counts and the time of the GPU come from `torch.profiler`. An operation waits when it gives the CPU a value or a size computed on the GPU (`item`, `nonzero`, `repeat_interleave`, `bincount`, masks).
+
+| batch size | wall (ms) | GPU working (ms) | GPU working | operations | GPU kernels | operations which wait |
+|---|---:|---:|---:|---:|---:|---:|
+| 1 | 1.78 | 0.61 | 34 % | 488 | 170 | 38 |
+| 128 | 2.44 | 1.15 | 47 % | 466 | 191 | 38 |
+| 2048 | 4.16 | 5.63 | 135 % | 466 | 212 | 38 |
+
+Operations of a call on a batch of 1, by CPU time:
+
+| operation | calls | share of the CPU time | waits |
+|---|---:|---:|---:|
+| `aten::index` | 29 | 14 % |  |
+| `aten::cumsum` | 6 | 6 % |  |
+| `aten::bmm` | 1 | 5 % |  |
+| `aten::nonzero` | 3 | 4 % | yes |
+| `aten::add` | 12 | 4 % |  |
+| `aten::empty` | 24 | 3 % |  |
+| `aten::constant_pad_nd` | 3 | 3 % |  |
+| `aten::sub` | 10 | 3 % |  |
+| `aten::repeat_interleave` | 6 | 3 % | yes |
+| `aten::copy_` | 16 | 3 % |  |
+| `aten::mul` | 8 | 3 % |  |
+| `aten::_local_scalar_dense` | 13 | 2 % | yes |
+
+The operations which wait take 11 % of the CPU time of the operations, under the profiler.
+
+#### torch.compile
+
+`cutoff(structures, 5.0)` on 8 batches of 128 structures on the GPU. The first pass compiles; the rate is measured after it, on the same batches.
+
+| function | first pass on 8 batches (s) | structures / s after it | same edges |
+|---|---:|---:|---:|
+| not compiled |  | 53,080 |  |
+| `torch.compile(f)` | 21.0 | 54,940 | yes |
+| `torch.compile(f, dynamic=True)` | 8.9 | 50,875 | yes |
+| `torch.compile(f, mode="reduce-overhead")` | 7.4 | 37,601 | yes |
+
+### Report of the H100, 16 workers reading
+
+#### Setting
+
+- file: `datasets/lematerial_300k.hdf5`, 300,000 structures, 9.3 atoms per structure on average (max 360)
+- CPU: x86_64, 64 threads, 32 used by torch
+- GPU: NVIDIA H100 NVL, 93 GB
+- torch 2.14.1+cu130, Python 3.10.20
+
+#### Through the loader
+
+Structures per second arriving on the GPU with their graphs, from `DataLoader(dataset, batch_size=..., shuffle=True)`: built in 16 workers then moved, or read by 16 workers and built on the GPU by `OnDevice`.
+
+`AddRadiusGraph(5)`:
+
+| batch size | built in 16 workers | built on the GPU, 16 workers | GPU / workers |
+|---|---:|---:|---:|
+| 128 | 30,246 | 27,439 | 0.91 |
+| 512 | 52,520 | 88,282 | 1.68 |
+| 2048 | 57,805 | 118,301 | 2.05 |
+| 8192 | 65,438 | 184,336 | 2.82 |
+
+full chain, geometry:
+
+| batch size | built in 16 workers | built on the GPU, 16 workers | GPU / workers |
+|---|---:|---:|---:|
+| 128 | 17,422 | 15,434 | 0.89 |
+| 512 | 36,430 | 55,020 | 1.51 |
+| 2048 | 37,543 | 116,030 | 3.09 |
+| 8192 | 44,023 | 178,935 | 4.06 |
+
+### Report of the RTX 4060
+
+#### Setting
+
+- file: `lematerial_300k.hdf5`, 300,000 structures, 9.3 atoms per structure on average (max 360)
+- CPU: x86_64, 32 threads, 24 used by torch
+- GPU: NVIDIA GeForce RTX 4060, 8 GB
+- torch 2.11.0+cu130, Python 3.10.18
+
+#### Size of the batch
+
+Batches already on the GPU. The time of a batch is fitted by `fixed + per structure × size` over the sizes (least squares).
+
+`AddRadiusGraph(5)`:
+
+| batch size | structures / s | ms per batch | GPU memory (GB) |
+|---|---:|---:|---:|
+| 128 | 108,498 | 1.18 | 0.02 |
+| 512 | 216,330 | 2.37 | 0.05 |
+| 2048 | 202,164 | 10.13 | 0.18 |
+| 8192 | 188,403 | 43.48 | 0.69 |
+
+Fixed cost -0.15 ms per batch, 5.31 µs per structure: the fixed cost is -12 % of a batch of 128, -6 % of a batch of 512, -1 % of a batch of 2048, -0 % of a batch of 8192.
+
+full chain, geometry:
+
+| batch size | structures / s | ms per batch | GPU memory (GB) |
+|---|---:|---:|---:|
+| 128 | 41,954 | 3.05 | 0.03 |
+| 512 | 111,766 | 4.58 | 0.06 |
+| 2048 | 129,761 | 15.78 | 0.19 |
+| 8192 | 107,778 | 76.01 | 0.69 |
+
+Fixed cost -0.23 ms per batch, 9.22 µs per structure: the fixed cost is -8 % of a batch of 128, -5 % of a batch of 512, -1 % of a batch of 2048, -0 % of a batch of 8192.
+
+#### Through the loader
+
+Structures per second arriving on the GPU with their graphs, from `DataLoader(dataset, batch_size=..., shuffle=True)`: built in 16 workers then moved, or read by 4 workers and built on the GPU by `OnDevice`.
+
+`AddRadiusGraph(5)`:
+
+| batch size | built in 16 workers | built on the GPU, 4 workers | GPU / workers |
+|---|---:|---:|---:|
+| 128 | 33,654 | 38,639 | 1.15 |
+| 512 | 39,274 | 46,417 | 1.18 |
+| 2048 | 39,582 | 45,094 | 1.14 |
+| 8192 | 54,006 | 62,218 | 1.15 |
+
+full chain, geometry:
+
+| batch size | built in 16 workers | built on the GPU, 4 workers | GPU / workers |
+|---|---:|---:|---:|
+| 128 | 21,253 | 26,758 | 1.26 |
+| 512 | 25,129 | 45,651 | 1.82 |
+| 2048 | 25,624 | 44,481 | 1.74 |
+| 8192 | 63,580 | 60,367 | 0.95 |
+
+#### What a call is made of
+
+`AddRadiusGraph(5)` on batches on the GPU. The wall time is measured without the profiler; the counts and the time of the GPU come from `torch.profiler`. An operation waits when it gives the CPU a value or a size computed on the GPU (`item`, `nonzero`, `repeat_interleave`, `bincount`, masks).
+
+| batch size | wall (ms) | GPU working (ms) | GPU working | operations | GPU kernels | operations which wait |
+|---|---:|---:|---:|---:|---:|---:|
+| 1 | 0.86 | 0.47 | 54 % | 491 | 171 | 38 |
+| 128 | 1.33 | 1.26 | 95 % | 469 | 192 | 38 |
+| 2048 | 9.49 | 18.09 | 191 % | 469 | 214 | 38 |
+
+Operations of a call on a batch of 1, by CPU time:
+
+| operation | calls | share of the CPU time | waits |
+|---|---:|---:|---:|
+| `aten::index` | 29 | 14 % |  |
+| `aten::cumsum` | 6 | 6 % |  |
+| `aten::add` | 12 | 4 % |  |
+| `aten::empty` | 26 | 4 % |  |
+| `aten::nonzero` | 3 | 4 % | yes |
+| `aten::sub` | 10 | 4 % |  |
+| `aten::copy_` | 16 | 3 % |  |
+| `aten::repeat_interleave` | 6 | 3 % | yes |
+| `aten::mul` | 8 | 3 % |  |
+| `aten::_local_scalar_dense` | 13 | 3 % | yes |
+| `aten::arange` | 12 | 3 % |  |
+| `aten::as_strided` | 84 | 2 % |  |
+
+The operations which wait take 12 % of the CPU time of the operations, under the profiler.
+
+#### torch.compile
+
+`cutoff(structures, 5.0)` on 8 batches of 128 structures on the GPU. The first pass compiles; the rate is measured after it, on the same batches.
+
+| function | first pass on 8 batches (s) | structures / s after it | same edges |
+|---|---:|---:|---:|
+| not compiled |  | 98,905 |  |
+| `torch.compile(f)` | 6.3 | 95,693 | yes |
+| `torch.compile(f, dynamic=True)` | 1.8 | 86,843 | yes |
+| `torch.compile(f, mode="reduce-overhead")` | 3.4 | 72,268 | yes |
+
+### Report of the RTX 4060, 16 workers reading
+
+#### Setting
+
+- file: `lematerial_300k.hdf5`, 300,000 structures, 9.3 atoms per structure on average (max 360)
+- CPU: x86_64, 32 threads, 24 used by torch
+- GPU: NVIDIA GeForce RTX 4060, 8 GB
+- torch 2.11.0+cu130, Python 3.10.18
+
+#### Through the loader
+
+Structures per second arriving on the GPU with their graphs, from `DataLoader(dataset, batch_size=..., shuffle=True)`: built in 16 workers then moved, or read by 16 workers and built on the GPU by `OnDevice`.
+
+`AddRadiusGraph(5)`:
+
+| batch size | built in 16 workers | built on the GPU, 16 workers | GPU / workers |
+|---|---:|---:|---:|
+| 128 | 35,032 | 42,941 | 1.23 |
+| 512 | 39,921 | 90,089 | 2.26 |
+| 2048 | 44,172 | 130,380 | 2.95 |
+| 8192 | 47,694 | 175,230 | 3.67 |
+
+full chain, geometry:
+
+| batch size | built in 16 workers | built on the GPU, 16 workers | GPU / workers |
+|---|---:|---:|---:|
+| 128 | 23,183 | 27,126 | 1.17 |
+| 512 | 26,317 | 66,656 | 2.53 |
+| 2048 | 21,430 | 104,975 | 4.90 |
+| 8192 | 57,092 | 103,806 | 1.82 |

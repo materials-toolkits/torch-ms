@@ -222,9 +222,10 @@ it only moves the batches. The two ways give the same graphs.
 
 | Your case | Build the graphs | Why |
 |---|---|---|
-| A GPU, and no reason below to do otherwise | on the GPU, with 4 workers reading | the fastest way, or within 10 % of it, with few CPU cores |
+| A GPU, batches of about 128, and no reason below to do otherwise | on the GPU, with 4 workers reading | the fastest way, or within 10 % of it, with few CPU cores |
 | Few CPU cores (4 workers or less) | on the GPU | 1.3 to 5 times faster than the workers can be |
-| Large batches (512 and more) | on the GPU | its rate grows with the batch, the one of a CPU thread does not |
+| Large batches (512 and more) | on the GPU, with a worker reading per core | 1.5 to 5 times faster than the workers; with 4 readers the reading holds the GPU back |
+| A GPU much faster than its CPU, an H100 for instance | on the GPU, with large batches | it is no faster than a small GPU on batches of 128, 4 times faster on batches of 8,192 |
 | The loading limits the training: the GPU waits for batches | on the GPU | see the first line |
 | The model keeps the GPU busy, and 8 to 16 CPU cores are free | in the workers | two thirds to all of the rate of the GPU way, and the GPU is left to the model |
 | No GPU | in the workers, 8 to 16 | — |
@@ -233,9 +234,10 @@ it only moves the batches. The two ways give the same graphs.
 | Graphs needed by the transform of the dataset itself (filter, statistics) | in the workers | they must exist before the batch leaves the dataset |
 
 This comes from measures on two machines, a desktop with an RTX 4060 and a node of a cluster
-with an H100. A more powerful GPU did not change the rule: for batches of 128 structures the
-H100 builds graphs no faster than the RTX 4060, because the CPU thread which drives it is
-slower on the cluster, and it only pulls ahead with larger batches.
+with an H100. Building a graph is about 470 small operations whatever the size of the batch,
+started one by one by a CPU thread: a GPU only shows its power when the batches are large.
+For batches of 128 structures the H100 builds graphs no faster than the RTX 4060. Compiling
+the transforms with `torch.compile` changes nothing.
 
 The numbers behind this table, for both machines, two datasets, each transform, 0 to 16
 workers and both ways, are in [Loader and graph construction: measures](../design/loader.md), with the script

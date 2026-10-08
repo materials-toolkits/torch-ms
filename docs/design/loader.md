@@ -36,16 +36,17 @@ What these measures do not say:
   difference between them is not the effect of the GPU alone.
 - Both datasets have small cells. Nothing here is about cells of hundreds of atoms.
 - The GPU does nothing else during the measures. In a training it also runs the model.
-- Batches larger than 128 are measured for the construction of a graph alone, not through
-  the loader.
+- Batches larger than 128 are only in [their own section](#large-batches-and-what-limits-the-gpu),
+  on another sample of LeMat-Bulk.
 
 ## What to do
 
 | Hardware and task | Do | Measure |
 |---|---|---|
-| A GPU, and no reason below to do otherwise | Build on the GPU: `OnDevice(loader, "cuda", transform)` with 4 workers reading. It is the fastest way or within 10 % of it on both machines, with a quarter of the cores. | [Workers or GPU](#workers-or-gpu) |
+| A GPU, batches of about 128, and no reason below to do otherwise | Build on the GPU: `OnDevice(loader, "cuda", transform)` with 4 workers reading. It is the fastest way or within 10 % of it on both machines, with a quarter of the cores. | [Workers or GPU](#workers-or-gpu) |
 | A GPU, 4 CPU cores or less for the loading | Build on the GPU. 1.3 to 5 times the rate of the workers. | [Workers or GPU](#workers-or-gpu) |
-| Large batches, 512 structures and more | Build on the GPU. Its rate grows with the batch (3.2 times from 128 to 512 on the H100), the one of a CPU thread does not. | [Graph construction](#graph-construction) |
+| Large batches, 512 structures and more | Build on the GPU, with as many workers reading as there are cores (16 here): 1.5 to 5 times the rate of the workers on both machines. With 4 readers the reading holds the GPU back. | [Large batches](#large-batches-through-the-loader) |
+| An H100, or any GPU much faster than its CPU | Use large batches. Its fixed cost is 87 % of a batch of 128 and 16 % of a batch of 8,192, where it builds 764,000 structures per second against 65,000. | [Size of the batch](#size-of-the-batch) |
 | The model keeps the GPU busy, and 8 to 16 CPU cores are free | Build in the workers: transform given to the dataset, `num_workers` 8 to 16. Same rate as the GPU way on the H100 machine, two thirds of it or more on the RTX 4060 machine, and the GPU is left to the model. | [Workers or GPU](#workers-or-gpu) |
 | No GPU | Build in the workers, 8 to 16 of them. | [DataLoader](#dataloader) |
 | Batches of a few structures | Build on the CPU: a GPU is 2.5 to 3 times slower than one thread on a single structure. | [Graph construction](#graph-construction) |
@@ -53,20 +54,24 @@ What these measures do not say:
 | Workers, in any case | `persistent_workers=True`: workers take 0.15 s (fork) to 2.3 s (spawn) to start, at each epoch. | [DataLoader](#dataloader) |
 | A dataset of one structure per item (`CifDataset`) | Build on the batch with `OnDevice`, on the CPU or the GPU, not per structure in the dataset: 4.5 to 7.5 times faster. | [Collate](#collate) |
 
-Two results were not expected:
+Three results were not expected:
 
 - **The H100 does not build the graphs of a batch of 128 faster than the RTX 4060**: 64,000
-  structures per second against 97,000 for the radius graph at 5 Å. A graph is many small
-  operations, and what seems to limit them is the CPU thread which starts them on the GPU,
-  twice slower on the cluster. This cause was not isolated: the machines also differ by their
-  version of torch. The H100 shows with large batches: 211,000 at 512 against 164,000.
-- **A more powerful GPU does not make the GPU way win by more.** With 16 workers the two ways
-  are equal on the H100 machine, while the GPU way stays 1.5 times ahead on the RTX 4060
-  machine for MP-20. What decides is the speed of one CPU thread, the number of cores and
-  the size of the batch.
+  structures per second against 97,000 for the radius graph at 5 Å on MP-20. A call is about
+  470 small operations whatever the batch, started one by one by a CPU thread which is twice
+  slower on the cluster: 1.8 ms on the H100 machine before any structure is counted, 0.9 ms
+  on the desktop. With batches of 8,192 the H100 is 4 times faster than the RTX 4060.
+- **A more powerful GPU does not make the GPU way win by more for batches of 128.** With 16
+  workers the two ways are equal on the H100 machine, while the GPU way stays 1.5 times
+  ahead on the RTX 4060 machine for MP-20. What decides is the speed of one CPU thread, the
+  number of cores and the size of the batch.
+- **`torch.compile` and the round trips between CPU and GPU are not where the time goes.**
+  Compiling changes nothing, and the operations which wait for the GPU are a tenth of the
+  CPU time. See [what limits the GPU](#large-batches-and-what-limits-the-gpu).
 
-Whatever the way, with 8 workers or more, the loading gives 13,000 to 43,000 structures per
-second with their graphs: the whole training set of MP-20 in one or two seconds. It only
+Whatever the way, with 8 workers or more and batches of 128, the loading gives 13,000 to
+43,000 structures per second with their graphs: the whole training set of MP-20 in one or two
+seconds. It only
 matters when the model trains at a comparable rate.
 
 ## Reading
@@ -175,7 +180,8 @@ H100 machine:
 A batch of one structure is slow everywhere, and 2.5 to 3 times slower on the GPU than on a
 CPU thread. On one thread the rate does not grow after 32 to 128 structures. On the GPU it
 keeps growing: 1.6 times from 128 to 512 on the RTX 4060, 3.2 times on the H100, which is
-then the faster of the two.
+then the faster of the two. Sizes up to 8,192 are in
+[Size of the batch](#size-of-the-batch).
 
 ## Collate
 
@@ -327,8 +333,9 @@ Rate of the GPU way divided by the rate of the workers way, on MP-20:
 | 8 | 1.5 | 1.0 to 1.1 |
 | 16 | 1.5 | 1.0 |
 
-- The GPU way reaches its rate with 2 to 4 workers reading, on both machines, and does not
-  gain from more.
+- With batches of 128, the GPU way reaches its rate with 2 to 4 workers reading, on both
+  machines, and does not gain from more. With larger batches it does, see
+  [Large batches through the loader](#large-batches-through-the-loader).
 - The workers way gains from every worker up to 8 or 16. On the H100 machine it then equals
   the GPU way; on the RTX 4060 machine it stays at two thirds of it.
 - The rates of the H100 machine are lower than the ones of the RTX 4060 machine in both
@@ -343,6 +350,121 @@ the radius graph, 3.4 to 5.5 ms for the full chain. In the workers it takes none
 GPU when the loading limits the training, in the workers when the model does and the cores
 are there. Augmentations are cheap on the CPU and stay in the transform of the dataset in
 both cases.
+
+## Large batches, and what limits the GPU
+
+Measured with `scripts/benchmark_graph_gpu.py`, at commit `1e701a2`, on 300,000 structures
+drawn at random from LeMat-Bulk, the same file on both machines:
+
+```bash
+uv run python scripts/benchmark_graph_gpu.py datasets/lematerial/unique.hdf5 --sample 300000
+```
+
+### Size of the batch
+
+Structures per second, batches already on the GPU:
+
+| batch size | radius graph, RTX 4060 | radius graph, H100 | ms per batch, H100 | full chain, RTX 4060 | full chain, H100 | ms per batch, H100 |
+|---|---:|---:|---:|---:|---:|---:|
+| 128 | 108,498 | 65,323 | 1.96 | 41,954 | 23,272 | 5.50 |
+| 512 | 216,330 | 228,674 | 2.24 | 111,766 | 85,067 | 6.02 |
+| 2048 | 202,164 | 529,672 | 3.87 | 129,761 | 241,761 | 8.47 |
+| 8192 | 188,403 | 763,922 | 10.72 | 107,778 | 408,937 | 20.03 |
+
+- The RTX 4060 stops gaining at 512 structures, around 200,000 structures per second for the
+  radius graph: it is busy.
+- The H100 gains up to 8,192, where it is 4 times faster than the RTX 4060. A batch of 8,192
+  takes it 5.5 times the time of a batch of 128, for 64 times the structures.
+- The time of a batch on the H100 is close to `1.7 ms + 1.1 µs per structure` for the radius
+  graph and `5.1 ms + 1.8 µs per structure` for the full chain. The fixed part is 87 to 92 %
+  of a batch of 128, and 16 to 25 % of a batch of 8,192.
+- A batch of 8,192 structures with its graphs takes 0.7 GB of GPU memory.
+
+### Where the fixed cost comes from
+
+| `AddRadiusGraph(5)`, one call | RTX 4060 machine | H100 machine |
+|---|---:|---:|
+| Time on a batch of one structure (ms) | 0.86 | 1.78 |
+| Time on a batch of 128 (ms) | 1.33 | 2.44 |
+| Time on a batch of 2,048 (ms) | 9.49 | 4.16 |
+| Operations of torch, batch of 128 | 469 | 466 |
+| GPU kernels, batch of 128 | 192 | 191 |
+| Operations which wait for the GPU | 38 | 38 |
+| Their share of the CPU time of the operations | 12 % | 11 % |
+
+A call is about 470 operations of torch, whatever the size of the batch. The time of a
+batch of one structure is the time to start them: 1.8 µs each on the desktop, 3.6 µs on the
+cluster, whose CPU thread is twice slower. This is the fixed cost, and why the H100 is
+slower than the RTX 4060 for small batches.
+
+The operations which make the CPU wait for the GPU (`item`, `nonzero`, `repeat_interleave`,
+masks) are 38 of them and take a tenth of the CPU time: removing them would gain little.
+Fewer operations per call would gain more, and means writing the graph functions again.
+
+The operations which take the most CPU time, on the H100 machine, for a batch of one
+structure:
+
+| operation | calls | share of the CPU time | waits |
+|---|---:|---:|---:|
+| `aten::index` | 29 | 14 % |  |
+| `aten::cumsum` | 6 | 6 % |  |
+| `aten::bmm` | 1 | 5 % |  |
+| `aten::nonzero` | 3 | 4 % | yes |
+| `aten::add` | 12 | 4 % |  |
+| `aten::empty` | 24 | 3 % |  |
+| `aten::constant_pad_nd` | 3 | 3 % |  |
+| `aten::sub` | 10 | 3 % |  |
+| `aten::repeat_interleave` | 6 | 3 % | yes |
+| `aten::copy_` | 16 | 3 % |  |
+
+### torch.compile
+
+| `cutoff(structures, 5.0)`, batches of 128 | RTX 4060 | H100 | first pass, RTX 4060 (s) | first pass, H100 (s) |
+|---|---:|---:|---:|---:|
+| not compiled | 98,905 | 53,080 |  |  |
+| `torch.compile(f)` | 95,693 | 54,940 | 6.3 | 21.0 |
+| `torch.compile(f, dynamic=True)` | 86,843 | 50,875 | 1.8 | 8.9 |
+| `torch.compile(f, mode="reduce-overhead")` | 72,268 | 37,601 | 3.4 | 7.4 |
+
+`torch.compile` changes nothing: within 4 % with its default mode, slower with the two
+others, for 2 to 21 seconds of compilation. The edges are the same. The sizes of the tensors
+of a graph depend on the data, which a compiler cannot fix in advance.
+
+### Large batches through the loader
+
+Structures per second arriving on the GPU with their graphs: built in 16 workers, or read by
+4 or 16 workers and built on the GPU by `OnDevice`.
+
+`AddRadiusGraph(5)`:
+
+| batch size | RTX 4060: in 16 workers | RTX 4060: on the GPU, 4 readers | RTX 4060: on the GPU, 16 readers | H100: in 16 workers | H100: on the GPU, 4 readers | H100: on the GPU, 16 readers |
+|---|---:|---:|---:|---:|---:|---:|
+| 128 | 35,032 | 38,639 | 42,941 | 30,246 | 22,616 | 27,439 |
+| 512 | 39,921 | 46,417 | 90,089 | 52,520 | 25,560 | 88,282 |
+| 2048 | 44,172 | 45,094 | 130,380 | 57,805 | 25,638 | 118,301 |
+| 8192 | 47,694 | 62,218 | 175,230 | 65,438 | 40,957 | 184,336 |
+
+Full chain with geometry:
+
+| batch size | RTX 4060: in 16 workers | RTX 4060: on the GPU, 4 readers | RTX 4060: on the GPU, 16 readers | H100: in 16 workers | H100: on the GPU, 4 readers | H100: on the GPU, 16 readers |
+|---|---:|---:|---:|---:|---:|---:|
+| 128 | 23,183 | 26,758 | 27,126 | 17,422 | 15,109 | 15,434 |
+| 512 | 26,317 | 45,651 | 66,656 | 36,430 | 26,211 | 55,020 |
+| 2048 | 21,430 | 44,481 | 104,975 | 37,543 | 25,165 | 116,030 |
+| 8192 | 57,092 | 60,367 | 103,806 | 44,023 | 39,361 | 178,935 |
+
+- With batches of 512 and more and 16 workers reading, building on the GPU is 1.5 to 5 times
+  faster than building in the workers, on both machines.
+- With 4 workers reading, the GPU way is held back by the reading. On the H100 machine it is
+  then slower than 16 workers building the graphs, at every size.
+- With batches of 128, the two ways are within 25 % of each other on both machines.
+- Through the loader the H100 gives at most 184,000 structures per second, a quarter of the
+  764,000 it builds from memory: the reading is what limits it. The RTX 4060 gives 175,000,
+  close to what it builds from memory.
+- The rates of the workers way in this table come from the run with 16 readers. In the run
+  with 4 readers they were within 16 % of them.
+- A measure lasts 10 seconds: at 8,192 it rests on fewer than 20 batches, and is the least
+  sure of each column.
 
 ## What was optimised
 
