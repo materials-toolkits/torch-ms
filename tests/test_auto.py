@@ -186,17 +186,29 @@ class TestHardware:
         assert detect_hardware("cpu").cpus == 3
 
     def files(self, tmp_path, monkeypatch, meminfo=None, limit=None, usage=None):
+        """A made-up system: the memory of the machine, and a cgroup two levels deep."""
         path = tmp_path / "meminfo"
         if meminfo is not None:
             path.write_text(f"MemTotal: 99 kB\nMemAvailable:   {meminfo} kB\n")
         monkeypatch.setattr(auto, "MEMINFO", path)
 
-        limit_file, usage_file = tmp_path / "limit", tmp_path / "usage"
+        root = tmp_path / "cgroup"
+        job = root / "slurm" / "job_1"
+        job.mkdir(parents=True)
+        (tmp_path / "proc").write_text("0::/slurm/job_1\n")
+        monkeypatch.setattr(auto, "PROC_CGROUP", tmp_path / "proc")
+        monkeypatch.setattr(auto, "CGROUP_ROOT", root)
+        monkeypatch.delenv("SLURM_MEM_PER_NODE", raising=False)
+
+        for directory in (root, job.parent, job):
+            (directory / "memory.max").write_text("max\n")
+            (directory / "memory.current").write_text("5\n")
         if limit is not None:
-            limit_file.write_text(f"{limit}\n")
+            (job / "memory.max").write_text(f"{limit}\n")
         if usage is not None:
-            usage_file.write_text(f"{usage}\n")
-        monkeypatch.setattr(auto, "CGROUP_MEMORY", ((limit_file, usage_file),))
+            (job / "memory.current").write_text(f"{usage}\n")
+
+        return root
 
     def test_ram_of_the_machine(self, tmp_path, monkeypatch):
         self.files(tmp_path, monkeypatch, meminfo=1000)
@@ -208,13 +220,37 @@ class TestHardware:
 
         assert auto.available_ram() == 60 * GB
 
+    def test_limit_of_a_cgroup_above(self, tmp_path, monkeypatch):
+        root = self.files(tmp_path, monkeypatch, meminfo=10**8)
+        (root / "slurm" / "memory.max").write_text(f"{8 * GB}\n")
+        (root / "slurm" / "memory.current").write_text(f"{GB}\n")
+
+        assert auto.available_ram() == 7 * GB
+
+    def test_cgroups_of_the_first_version(self, tmp_path, monkeypatch):
+        root = self.files(tmp_path, monkeypatch, meminfo=10**8)
+        (tmp_path / "proc").write_text("3:cpu,cpuacct:/a\n7:memory:/slurm/job_1\n")
+        job = root / "memory" / "slurm" / "job_1"
+        job.mkdir(parents=True)
+        (job / "memory.limit_in_bytes").write_text(f"{16 * GB}\n")
+        (job / "memory.usage_in_bytes").write_text(f"{GB}\n")
+
+        assert auto.available_ram() == 15 * GB
+
+    def test_memory_asked_to_slurm(self, tmp_path, monkeypatch):
+        self.files(tmp_path, monkeypatch, meminfo=10**8)
+        monkeypatch.setenv("SLURM_MEM_PER_NODE", "8192")
+
+        assert auto.available_ram() == 8 * GB
+
     def test_job_without_limit(self, tmp_path, monkeypatch):
-        self.files(tmp_path, monkeypatch, meminfo=1000, limit="max", usage=5)
+        self.files(tmp_path, monkeypatch, meminfo=1000)
 
         assert auto.available_ram() == 1000 * 1024
 
     def test_unknown_ram(self, tmp_path, monkeypatch):
         self.files(tmp_path, monkeypatch)
+        monkeypatch.setattr(auto, "PROC_CGROUP", tmp_path / "missing")
 
         assert auto.available_ram() is None
         assert detect_hardware("cpu").ram_available is None

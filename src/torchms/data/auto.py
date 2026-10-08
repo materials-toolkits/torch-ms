@@ -50,14 +50,9 @@ MAX_WORKERS = 16
 MAX_BATCH_SIZE = 8192
 
 MEMINFO = Path("/proc/meminfo")
-# limit and usage of the memory of a job, for the two versions of cgroups
-CGROUP_MEMORY = (
-    (Path("/sys/fs/cgroup/memory.max"), Path("/sys/fs/cgroup/memory.current")),
-    (
-        Path("/sys/fs/cgroup/memory/memory.limit_in_bytes"),
-        Path("/sys/fs/cgroup/memory/memory.usage_in_bytes"),
-    ),
-)
+# the cgroup of this process, and where the limits of the cgroups are
+PROC_CGROUP = Path("/proc/self/cgroup")
+CGROUP_ROOT = Path("/sys/fs/cgroup")
 
 
 @dataclass(frozen=True)
@@ -89,11 +84,45 @@ def read_bytes(path: Path) -> int | None:
         return None
 
 
+def cgroup_memory() -> list[tuple[Path, Path]]:
+    """Files of the limit and of the usage of the memory of this process.
+
+    The cgroup of the process and the ones above it, each of which can have a
+    limit, for the two versions of cgroups.
+    """
+    files = []
+
+    try:
+        lines = PROC_CGROUP.read_text(encoding="ascii").splitlines()
+    except OSError:
+        lines = []
+
+    for line in lines:
+        _, controllers, path = line.split(":", maxsplit=2)
+
+        if controllers == "":
+            root, limit, usage = CGROUP_ROOT, "memory.max", "memory.current"
+        elif "memory" in controllers.split(","):
+            root = CGROUP_ROOT / "memory"
+            limit, usage = "memory.limit_in_bytes", "memory.usage_in_bytes"
+        else:
+            continue
+
+        directory = root / path.strip("/")
+        while True:
+            files.append((directory / limit, directory / usage))
+            if directory == root or root not in directory.parents:
+                break
+            directory = directory.parent
+
+    return files
+
+
 def available_ram() -> int | None:
     """Bytes of RAM this process can still use, None if unknown.
 
     The memory available on the machine, and no more than what is left of the
-    limit of the job when it runs in a cgroup, under Slurm for instance.
+    limit of the job: the one of its cgroup, or the memory asked to Slurm.
     """
     available = None
 
@@ -104,13 +133,19 @@ def available_ram() -> int | None:
     except (OSError, ValueError, IndexError):
         pass
 
-    for limit_file, usage_file in CGROUP_MEMORY:
+    limits = []
+    for limit_file, usage_file in cgroup_memory():
         limit, usage = read_bytes(limit_file), read_bytes(usage_file)
-        # a job without limit has "max", or a number larger than any memory
-        if limit is None or usage is None or limit >= 2**60:
-            continue
+        # a cgroup without limit has "max", or a number larger than any memory
+        if limit is not None and usage is not None and limit < 2**60:
+            limits.append(max(limit - usage, 0))
 
-        left = max(limit - usage, 0)
+    # Slurm does not always put the memory of a job in a cgroup
+    slurm = os.environ.get("SLURM_MEM_PER_NODE", "")
+    if slurm.isdigit():
+        limits.append(int(slurm) * 2**20)
+
+    for left in limits:
         available = left if available is None else min(available, left)
 
     return available
