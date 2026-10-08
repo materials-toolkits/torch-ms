@@ -44,6 +44,16 @@ dataset = load_dataset("mp-20", "train", transform=augment)
 Each transform accepts a `generator` for reproducible draws, on the device of the structures.
 Without it the global random state of torch is used.
 
+Augmentations come **before** the [graph transforms](graphs.md#graphs-as-transforms) in a
+chain. They change the atoms or the cell, which a graph does not follow: structures with a
+graph, a line graph, triplets or quadruplets come out of an augmentation without them.
+
+```python
+from torchms.graph.transforms import AddRadiusGraph, AddTriplets
+
+transform = Compose([augment, AddRadiusGraph(5.0), AddTriplets(3.0)])
+```
+
 ## Applying a chosen element
 
 The functions take the elements to apply, one per structure:

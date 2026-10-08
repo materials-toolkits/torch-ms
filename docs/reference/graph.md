@@ -4,6 +4,10 @@
 
 ::: torchms.graph.graph
 
+## Graph transforms
+
+::: torchms.graph.transforms
+
 ## Radius graph and nearest neighbours
 
 ::: torchms.graph.cutoff

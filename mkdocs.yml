@@ -81,6 +81,7 @@ nav:
       - Graph conventions: design/graphs.md
       - Convex hull: design/hull.md
       - Energy estimator: design/estimator.md
+      - Loader and graph construction: design/loader.md
   - API reference:
       - torchms.data: reference/data.md
       - torchms.graph: reference/graph.md

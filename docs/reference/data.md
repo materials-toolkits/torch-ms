@@ -12,6 +12,10 @@
 
 ::: torchms.data.hdf5
 
+## Loader on a device
+
+::: torchms.data.loader
+
 ## CIF files
 
 ::: torchms.data.cif
