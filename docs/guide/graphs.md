@@ -222,17 +222,23 @@ it only moves the batches. The two ways give the same graphs.
 
 | Your case | Build the graphs | Why |
 |---|---|---|
-| 8 CPU cores or more for the loading, and a model which keeps the GPU busy | in the workers | 65 to 95 % of the rate of the GPU way, and the GPU is left to the model |
-| Few CPU cores (4 workers or less) | on the GPU | 1.4 to 5 times faster than the workers can be |
-| The loading limits the training: the GPU waits for batches | on the GPU | it is the fastest way measured, with 2 to 4 workers reading |
-| No GPU | in the workers, 8 or more | — |
-| Large batches (512 and more) | on the GPU | its rate grows with the batch, the one of a CPU thread decreases after 128 |
+| A GPU, and no reason below to do otherwise | on the GPU, with 4 workers reading | the fastest way, or within 10 % of it, with few CPU cores |
+| Few CPU cores (4 workers or less) | on the GPU | 1.3 to 5 times faster than the workers can be |
+| Large batches (512 and more) | on the GPU | its rate grows with the batch, the one of a CPU thread does not |
+| The loading limits the training: the GPU waits for batches | on the GPU | see the first line |
+| The model keeps the GPU busy, and 8 to 16 CPU cores are free | in the workers | two thirds to all of the rate of the GPU way, and the GPU is left to the model |
+| No GPU | in the workers, 8 to 16 | — |
 | Small batches, down to one structure | in the workers | a GPU is slower than a CPU thread on one structure |
 | Evaluation or inference without loader | on the device of the model | call the transform on the batch |
 | Graphs needed by the transform of the dataset itself (filter, statistics) | in the workers | they must exist before the batch leaves the dataset |
 
-The numbers behind this table, for two datasets, each transform, 0 to 16 workers and both
-ways, are in [Loader and graph construction: measures](../design/loader.md), with the script
+This comes from measures on two machines, a desktop with an RTX 4060 and a node of a cluster
+with an H100. A more powerful GPU did not change the rule: for batches of 128 structures the
+H100 builds graphs no faster than the RTX 4060, because the CPU thread which drives it is
+slower on the cluster, and it only pulls ahead with larger batches.
+
+The numbers behind this table, for both machines, two datasets, each transform, 0 to 16
+workers and both ways, are in [Loader and graph construction: measures](../design/loader.md), with the script
 to measure your own machine and dataset.
 
 ## Fields attached to the structures
