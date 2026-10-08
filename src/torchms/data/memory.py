@@ -150,8 +150,7 @@ class InMemoryDataset(Dataset):
             batch_size: Number of structures per batch.
             shuffle: If True, the structures are drawn in a random order.
             drop_last: If True, a last batch smaller than batch_size is not given.
-            generator: Random number generator of the order, on the device of
-                the dataset.
+            generator: Random number generator of the order, on any device.
 
         Yields:
             Batches of structures, on the device of the dataset.
@@ -159,7 +158,10 @@ class InMemoryDataset(Dataset):
         device = self.device()
 
         if shuffle:
-            order = torch.randperm(len(self), device=device, generator=generator)
+            # drawn on the device of the generator, which can be another one
+            drawn_on = device if generator is None else generator.device
+            order = torch.randperm(len(self), device=drawn_on, generator=generator)
+            order = order.to(device)
         else:
             order = torch.arange(len(self), device=device)
 
