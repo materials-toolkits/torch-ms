@@ -598,3 +598,67 @@ class TestFormationEnergy:
         structures = parse_cif(triclinic_cif)
 
         assert torch.isnan(structures.formation_energy_per_atom).all()
+
+
+class TestCifDatasetLoader:
+    """A DataLoader batches the structures of CIF files, and their graphs."""
+
+    @staticmethod
+    def make_dataset(tmp_path, transform=None):
+        import shutil
+        from pathlib import Path
+
+        from torchms.data import CifDataset
+
+        # the files in P1, the only ones read
+        for name in ("triclinic1", "triclinic2", "triclinic3"):
+            shutil.copy(Path("tests/cif") / f"{name}.cif", tmp_path / f"{name}.cif")
+
+        return CifDataset(tmp_path, transform=transform)
+
+    def test_batches_of_structures(self, tmp_path):
+        from torch.utils.data import DataLoader
+
+        from torchms.data import Structures
+
+        dataset = self.make_dataset(tmp_path)
+        batches = list(DataLoader(dataset, batch_size=2))
+
+        assert [batch.num_atoms.tolist() for batch in batches] == [[40, 4], [32]]
+        expected = Structures.collate([dataset[i] for i in range(2)])
+        assert torch.equal(batches[0].x, expected.x)
+        assert torch.equal(batches[0].ptr, expected.ptr)
+
+    def test_graphs_built_per_structure_are_batched(self, tmp_path):
+        from torch.utils.data import DataLoader
+
+        from torchms.data import Structures
+        from torchms.data.augmentation import Compose
+        from torchms.graph.transforms import AddRadiusGraph, AddTriplets
+
+        chain = Compose([AddRadiusGraph(3.2, geometry=True), AddTriplets(3.0, True)])
+        plain = self.make_dataset(tmp_path)
+        expected = chain(Structures.collate([plain[i] for i in range(len(plain))]))
+
+        dataset = self.make_dataset(tmp_path, transform=chain)
+        (batch,) = list(DataLoader(dataset, batch_size=4))
+
+        assert torch.equal(batch.graph.num_edges, expected.graph.num_edges)
+        assert torch.equal(batch.graph.edge_ptr, expected.graph.edge_ptr)
+        assert torch.equal(batch.triplets.num_tuples, expected.triplets.num_tuples)
+        # the indices of the batch point to the right atoms and edges
+        assert torch.allclose(
+            batch.graph.edge_distance, batch.graph.edges_distances(), atol=1e-5
+        )
+        assert torch.allclose(
+            batch.graph.edge_distance.sort().values,
+            expected.graph.edge_distance.sort().values,
+            atol=1e-5,
+        )
+        assert torch.allclose(
+            batch.triplets.angle.sort().values,
+            expected.triplets.angle.sort().values,
+            atol=1e-4,
+        )
+        sender = batch.graph.edge_index[0, batch.triplets.index]
+        assert (sender[0] == sender[1]).all()

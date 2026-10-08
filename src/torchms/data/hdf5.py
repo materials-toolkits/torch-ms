@@ -22,6 +22,26 @@ class HDF5Dataset(Dataset):
 
     The file is opened once in each process which reads the dataset: the
     dataset can be given to a DataLoader with several workers, and pickled.
+
+    A DataLoader batches it without sampler nor collate function. The
+    structures of a batch are read in one call and the transform is applied
+    once, to the whole batch.
+
+    Args:
+        hdf5_file: Path of the HDF5 file.
+        transform: Optional transform applied to each batch of structures read:
+            augmentations, graph construction (torchms.graph.transforms).
+
+    Examples:
+        >>> import tempfile
+        >>> from torch.utils.data import DataLoader
+        >>> batch = Structures.collate([Structures.diamond(), Structures.zincblende()])
+        >>> with tempfile.TemporaryDirectory() as directory:
+        ...     file = os.path.join(directory, "structures.hdf5")
+        ...     HDF5Dataset.from_structures(file, [batch, batch])
+        ...     loader = DataLoader(HDF5Dataset(file), batch_size=3, shuffle=True)
+        ...     [len(structures.num_atoms) for structures in loader]
+        [3, 1]
     """
 
     def __init__(
@@ -75,31 +95,53 @@ class HDF5Dataset(Dataset):
         """Return the number of structures in the dataset."""
         return self.dataset("num_atoms").shape[0]
 
+    def read(self, name: str, indices: np.ndarray) -> torch.Tensor:
+        """Read rows of a dataset of the file, in any order.
+
+        HDF5 reads rows in ascending order without duplicates: other indices
+        are read sorted, then put back in the order asked.
+
+        Args:
+            name: Name of the dataset.
+            indices: Indices of the rows, shape (n,). In any order, the same
+                row can be asked several times.
+
+        Returns:
+            Rows in the order of indices, shape (n, ...).
+        """
+        dataset = self.dataset(name)
+
+        if len(indices) < 2 or bool((indices[1:] > indices[:-1]).all()):
+            return torch.from_numpy(dataset[indices])
+
+        unique, inverse = np.unique(indices, return_inverse=True)
+
+        return torch.from_numpy(dataset[unique][inverse])
+
     def __getitem__(self, idx):
         """Get structures by index.
 
-        Supports int, slice, tensor, or iterable of indices.
-        Should be in ascending order.
+        Supports int, slice, tensor, or iterable of indices, in any order. The
+        structures are returned as one batch, in the order of the indices.
         """
         if isinstance(idx, slice):
-            indices = list(range(*idx.indices(len(self))))
-        elif isinstance(idx, int):
-            indices = [idx]
+            indices = np.arange(*idx.indices(len(self)), dtype=np.int64)
         elif isinstance(idx, torch.Tensor):
             indices = idx.type(torch.int64).flatten().numpy()
         else:
-            indices = np.array(idx, dtype=np.int64)
+            indices = np.array(idx, dtype=np.int64).reshape(-1)
+
+        # indices from the end, as for a list
+        indices = np.where(indices < 0, indices + len(self), indices)
 
         # Load structure data from indices
-        lattice = torch.from_numpy(self.dataset("lattice")[indices])
-        num_atoms = torch.from_numpy(self.dataset("num_atoms")[indices])
-        ptr = torch.from_numpy(self.dataset("ptr")[indices])
-        total_energy = torch.from_numpy(self.dataset("total_energy")[indices])
-        energy_above_hull = torch.from_numpy(self.dataset("energy_above_hull")[indices])
-        band_gap = torch.from_numpy(self.dataset("band_gap")[indices])
-        formation_energy_per_atom = torch.from_numpy(
-            self.dataset("formation_energy_per_atom")[indices]
-        )
+        lattice = self.read("lattice", indices)
+        num_atoms = self.read("num_atoms", indices)
+        ptr = self.read("ptr", indices)
+        total_energy = self.read("total_energy", indices)
+        energy_above_hull = self.read("energy_above_hull", indices)
+        band_gap = self.read("band_gap", indices)
+        formation_energy_per_atom = self.read("formation_energy_per_atom", indices)
 
         # Computing indices of atoms in the dataset
         batch = torch.arange(num_atoms.shape[0], dtype=torch.int64).repeat_interleave(
@@ -110,8 +152,8 @@ class HDF5Dataset(Dataset):
         atoms_idx += ptr[batch] - atoms_ptr[batch]
 
         # Load atoms from atom's indices
-        x = torch.from_numpy(self.dataset("x")[atoms_idx.numpy()])
-        z = torch.from_numpy(self.dataset("z")[atoms_idx.numpy()])
+        x = self.read("x", atoms_idx.numpy())
+        z = self.read("z", atoms_idx.numpy())
 
         # Build validated structures
         samples = Structures(
@@ -132,6 +174,20 @@ class HDF5Dataset(Dataset):
             samples = self.transform(samples)
 
         return samples
+
+    def __getitems__(self, indices: list[int]) -> list[Structures]:
+        """Get the structures of a batch of a DataLoader.
+
+        Called by a DataLoader with a batch size instead of __getitem__ on each
+        index: the structures are read in one call and transformed once.
+
+        Args:
+            indices: Indices of the structures of the batch, in any order.
+
+        Returns:
+            List of one batch of structures, for the collate function.
+        """
+        return [self[indices]]
 
     @classmethod
     def from_hub(
