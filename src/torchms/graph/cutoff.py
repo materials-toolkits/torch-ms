@@ -3,9 +3,8 @@ import torch.nn.functional as F
 from jaxtyping import Float
 
 from torchms.data.batching import Structures
-from torchms.graph.geometry import centered_supercell, edges_distances
+from torchms.graph.geometry import periodic_pairs
 from torchms.graph.graph import Graph
-from torchms.graph.sparse import batched_cartesian_product_2
 
 
 def cutoff(structures: Structures, radius: float, self_images: bool = False) -> Graph:
@@ -47,59 +46,48 @@ def cutoff(structures: Structures, radius: float, self_images: bool = False) -> 
         >>> cutoff(structure, 3.5, self_images=True).num_edges
         tensor([6])
     """
-    n_struct = len(structures.num_atoms)
-
-    # neighbours are searched from atoms wrapped in the cell: the supercell is
-    # centered on the cell. Edges are then expressed for the given coordinates.
+    # neighbours are searched from atoms wrapped in the cell. Edges are then
+    # expressed for the given coordinates.
     cell = structures.x.floor()
-    wrapped = Structures(
-        lattice=structures.lattice,
-        x=structures.x - cell,
-        z=structures.z,
-        num_atoms=structures.num_atoms,
-        batch=structures.batch,
-        ptr=structures.ptr,
-        _validate=True,
+    wrapped = structures.x - cell
+
+    source, target, shift, pair_batch = periodic_pairs(
+        wrapped, structures.lattice, structures.ptr, radius
     )
 
-    supercell, atom_index = centered_supercell(wrapped, radius)
-
-    pair_idx, pair_batch, _ = batched_cartesian_product_2(wrapped.ptr, supercell.ptr)
-    pair_idx = pair_idx.t()
-
-    dists = edges_distances(
-        wrapped.x,
-        supercell.x,
-        wrapped.lattice,
-        pair_batch,
-        pair_idx,
+    # rows of the lattice are the lattice vectors: cartesian = fractional @ lattice
+    fractional = (wrapped[target] + shift.to(wrapped.dtype)) - wrapped[source]
+    dists = torch.bmm(fractional.unsqueeze(1), structures.lattice[pair_batch]).norm(
+        dim=(-2, -1)
     )
 
-    real_target = atom_index[pair_idx[1]]
     if self_images:
         # only the atom itself, at a distance of zero, is not a neighbour
-        mask = ((pair_idx[0] != real_target) | (dists > 1e-6)) & (dists <= radius)
+        mask = ((source != target) | (dists > 1e-6)) & (dists <= radius)
     else:
-        mask = (pair_idx[0] != real_target) & (dists <= radius)
+        mask = (source != target) & (dists <= radius)
 
-    # image of the target: its coordinates in the supercell minus its wrapped
-    # coordinates, then moved from the wrapped to the given coordinates
-    source, target = pair_idx[0][mask], real_target[mask]
-    edge_shift = (
-        (supercell.x[pair_idx[1][mask]] - wrapped.x[target]).round()
-        + cell[source]
-        - cell[target]
-    ).long()
+    source, target, shift = source[mask], target[mask], shift[mask]
 
-    pair_idx[1] = real_target
+    # edges of an atom sorted by image, then by neighbour. The pairs are sorted
+    # by atom then by neighbour: one stable sort by atom and image. The key is
+    # far from 64 bits, the pairs of a cell with so many images cannot be held.
+    largest = int(shift.abs().max()) if len(source) > 0 else 0
+    base = 2 * largest + 1
+    image = shift + largest
+    key = ((source * base + image[:, 0]) * base + image[:, 1]) * base + image[:, 2]
+    order = torch.argsort(key, stable=True)
+    source, target, shift = source[order], target[order], shift[order]
 
-    pair_idx = pair_idx[:, mask]
-    edge_batch = structures.batch[pair_idx[0]]
-    num_edges = torch.bincount(edge_batch, minlength=n_struct)
+    # image of the target, moved from the wrapped to the given coordinates
+    edge_shift = shift + (cell[source] - cell[target]).long()
+
+    edge_batch = structures.batch[source]
+    num_edges = torch.bincount(edge_batch, minlength=len(structures.num_atoms))
 
     return Graph(
         structures=structures,
-        edge_index=pair_idx,
+        edge_index=torch.stack([source, target]),
         edge_shift=edge_shift,
         num_atoms=structures.num_atoms,
         num_edges=num_edges,

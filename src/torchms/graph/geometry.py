@@ -3,7 +3,10 @@ import torch.nn.functional as F
 from jaxtyping import Float, Int
 
 from torchms.data.batching import Structures
-from torchms.graph.sparse import batched_cartesian_product_3
+from torchms.graph.sparse import (
+    batched_cartesian_product_2,
+    batched_cartesian_product_3,
+)
 
 
 def lattice_heights(
@@ -92,6 +95,76 @@ def centered_supercell(
         num_atoms=num_per_struct,
     )
     return supercell, atom_index
+
+
+def periodic_pairs(
+    x: Float[torch.Tensor, "n_atoms 3"],
+    lattice: Float[torch.Tensor, "n_struct 3 3"],
+    ptr: Int[torch.Tensor, "n_struct+1"],
+    radius: float,
+) -> tuple[
+    Int[torch.Tensor, "n_pairs"],
+    Int[torch.Tensor, "n_pairs"],
+    Int[torch.Tensor, "n_pairs 3"],
+    Int[torch.Tensor, "n_pairs"],
+]:
+    """Pairs of an atom and a periodic image of an atom which can be within a radius.
+
+    Two points whose fractional coordinates differ by d along a lattice vector
+    are at least d times the height of the cell apart. For each pair of atoms
+    of a structure, only the images of the second one closer than
+    radius / height along each of the three lattice vectors are listed: a box
+    around the first atom, which holds every image within the radius.
+
+    Args:
+        x: Fractional coordinates of the atoms, shape (n_atoms, 3).
+        lattice: Lattice vectors as rows, shape (n_struct, 3, 3).
+        ptr: Index of the first atom of each structure, shape (n_struct+1,).
+        radius: Radius in Ångströms.
+
+    Returns:
+        Index of the first atom, index of the second atom, image of the second
+        atom in lattice vectors, shape (n_pairs, 3), and structure index, of
+        each pair. Sorted by first atom, then second atom, then image. Every
+        pair closer than the radius is listed, with others which are farther.
+
+    Examples:
+        One atom in a cubic cell of 3 Å: its images at most one cell away, in a
+        box of 3 × 3 × 3 cells.
+
+        >>> source, target, shift, batch = periodic_pairs(
+        ...     torch.zeros(1, 3), 3.0 * torch.eye(3)[None], torch.tensor([0, 1]), 3.5
+        ... )
+        >>> shift.shape, shift.min().item(), shift.max().item()
+        (torch.Size([27, 3]), -1, 1)
+    """
+    device = x.device
+
+    pairs, pair_batch, _ = batched_cartesian_product_2(ptr, ptr)
+    source, target = pairs[:, 0], pairs[:, 1]
+
+    # largest difference of fractional coordinates, with a margin for rounding
+    width = radius / lattice_heights(lattice).clamp_min(1e-8) + 1e-4
+    width = width[pair_batch]
+
+    # images s of the target with |x[target] + s - x[source]| <= width
+    delta = x[source] - x[target]
+    low = torch.ceil(delta - width).long()
+    count = (torch.floor(delta + width).long() - low + 1).clamp(min=0)
+
+    # all the images of each pair: a flat index is a mixed-radix number
+    num_images = count.prod(dim=1)
+    image_ptr = F.pad(torch.cumsum(num_images, dim=0), (1, 0), value=0)
+    pair = torch.arange(len(num_images), device=device).repeat_interleave(num_images)
+    local = torch.arange(int(image_ptr[-1]), device=device) - image_ptr[pair]
+
+    count_y, count_z = count[pair, 1], count[pair, 2]
+    shift = low[pair] + torch.stack(
+        [local // (count_y * count_z), (local // count_z) % count_y, local % count_z],
+        dim=1,
+    )
+
+    return source[pair], target[pair], shift, pair_batch[pair]
 
 
 def triplet_cosines(
