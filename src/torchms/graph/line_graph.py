@@ -11,7 +11,7 @@ import torch.nn.functional as F
 from jaxtyping import Bool, Int
 
 from torchms.graph.graph import Graph
-from torchms.graph.sparse import batched_join
+from torchms.graph.sparse import batched_join, count_by
 
 
 def reverse_edges(graph: Graph) -> Int[torch.Tensor, "n_edges"]:
@@ -37,12 +37,70 @@ def reverse_edges(graph: Graph) -> Int[torch.Tensor, "n_edges"]:
         >>> bool((graph.edge_shift[reverse] == -graph.edge_shift).all())
         True
     """
-    device = graph.device()
-    n_edges = graph.edge_index.shape[1]
-    sender, receiver = graph.edge_index
+    return reverse_index(graph.edge_index, graph.edge_shift, int(graph.num_atoms.sum()))
 
-    edges = torch.cat([sender[:, None], receiver[:, None], graph.edge_shift], dim=1)
-    reverse = torch.cat([receiver[:, None], sender[:, None], -graph.edge_shift], dim=1)
+
+def reverse_index(
+    edge_index: Int[torch.Tensor, "2 n_edges"],
+    edge_shift: Int[torch.Tensor, "n_edges 3"],
+    n_atoms: int,
+) -> Int[torch.Tensor, "n_edges"]:
+    """Index of the reverse of each edge, from the tensors of the edges.
+
+    Args:
+        edge_index: Sender and receiver of each edge, shape (2, n_edges).
+        edge_shift: Periodic image of the receiver, shape (n_edges, 3).
+        n_atoms: Number of atoms.
+
+    Returns:
+        Index of the reverse edge, -1 when it is not an edge, shape (n_edges,).
+        See reverse_edges.
+    """
+    device = edge_index.device
+    n_edges = edge_index.shape[1]
+    sender, receiver = edge_index
+
+    if n_edges == 0:
+        return torch.zeros(0, dtype=torch.int64, device=device)
+
+    # one integer per edge: its atoms and its image, as the digits of a number
+    largest = int(edge_shift.abs().max())
+    base = 2 * largest + 1
+
+    if n_atoms * n_atoms * base**3 >= 2**63:
+        return _reverse_index_by_rows(edge_index, edge_shift)
+
+    def key(first: torch.Tensor, second: torch.Tensor, shift: torch.Tensor):
+        image = shift + largest
+        atoms = first * n_atoms + second
+
+        return ((atoms * base + image[:, 0]) * base + image[:, 1]) * base + image[:, 2]
+
+    edge_key = key(sender, receiver, edge_shift)
+    reverse_key = key(receiver, sender, -edge_shift)
+
+    # position of the key of each reverse among the sorted keys of the edges
+    order = torch.argsort(edge_key, stable=True)
+    sorted_key = edge_key[order]
+    position = torch.searchsorted(sorted_key, reverse_key).clamp(max=n_edges - 1)
+
+    return torch.where(sorted_key[position] == reverse_key, order[position], -1)
+
+
+def _reverse_index_by_rows(
+    edge_index: Int[torch.Tensor, "2 n_edges"],
+    edge_shift: Int[torch.Tensor, "n_edges 3"],
+) -> Int[torch.Tensor, "n_edges"]:
+    """Reverse of each edge by comparing rows, see reverse_index.
+
+    Slower, for graphs too large for one integer per edge.
+    """
+    device = edge_index.device
+    n_edges = edge_index.shape[1]
+    sender, receiver = edge_index
+
+    edges = torch.cat([sender[:, None], receiver[:, None], edge_shift], dim=1)
+    reverse = torch.cat([receiver[:, None], sender[:, None], -edge_shift], dim=1)
 
     # the same identifier for an edge and for the reverse of its reverse
     unique, identifier = torch.unique(
@@ -113,9 +171,68 @@ def _batch_of(
 ) -> tuple[Int[torch.Tensor, "n"], Int[torch.Tensor, "n_struct+1"]]:
     """Structure of each tuple of edges from its first edge, and CSR pointers."""
     batch = graph.edge_batch[edges]
-    count = torch.bincount(batch, minlength=len(graph.num_atoms))
+    count = count_by(batch, len(graph.num_atoms))
 
     return batch, F.pad(torch.cumsum(count, dim=0), (1, 0), value=0)
+
+
+def edge_pairs(
+    graph: Graph,
+    edge_mask: Bool[torch.Tensor, "n_edges"] | None = None,
+    backtrack: bool = False,
+) -> tuple[
+    Int[torch.Tensor, "2 n_pairs"],
+    Int[torch.Tensor, "n_pairs"],
+    Int[torch.Tensor, "n_struct+1"],
+]:
+    """Pairs of edges head to tail u→v, v→w: the edges of the line graph.
+
+    Args:
+        graph: Graph of the atoms.
+        edge_mask: Edges which can be part of a pair, shape (n_edges,). All of
+            them by default.
+        backtrack: If False, an edge is not followed by its reverse: w is
+            another atom than u, or another image of u.
+
+    Returns:
+        Indices of the first and second edge of each pair, shape (2, n_pairs),
+        sorted by the atom they share, structure index of each pair, shape
+        (n_pairs,), and CSR pointers of the pairs of each structure, shape
+        (n_struct+1,).
+
+    Examples:
+        Each of the 32 edges of diamond is followed by the 3 other edges of the
+        atom it arrives at.
+
+        >>> from torchms.data.batching import Structures
+        >>> from torchms.graph.cutoff import cutoff
+        >>> graph = cutoff(Structures.diamond(), 2.0)
+        >>> pair_index, pair_batch, pair_ptr = edge_pairs(graph)
+        >>> pair_ptr
+        tensor([ 0, 96])
+        >>> first, second = pair_index
+        >>> bool((graph.edge_index[1, first] == graph.edge_index[0, second]).all())
+        True
+        >>> edge_pairs(graph, backtrack=True)[2]
+        tensor([  0, 128])
+    """
+    device = graph.device()
+    edges = _selected(graph, edge_mask)
+    n_edges = graph.edge_index.shape[1]
+
+    reverse = None
+    if not backtrack:
+        # reverse of each selected edge among the selected edges
+        position = torch.full((n_edges + 1,), -1, dtype=torch.int64, device=device)
+        position[edges] = torch.arange(len(edges), device=device)
+        reverse = position[reverse_edges(graph)[edges]]
+
+    pairs = line_graph(graph.edge_index[:, edges], int(graph.num_atoms.sum()), reverse)
+
+    pair_index = edges[pairs]
+    pair_batch, pair_ptr = _batch_of(graph, pair_index[0])
+
+    return pair_index, pair_batch, pair_ptr
 
 
 def triplets(

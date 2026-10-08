@@ -15,6 +15,7 @@ from torchms.data.augmentation import (
 )
 from torchms.graph.cutoff import cutoff, nearest_neighbors
 from torchms.graph.geometry import dihedral_angles, triplet_cosines
+from torchms.graph.graph import Graph
 from torchms.graph.line_graph import (
     line_graph,
     quadruplets,
@@ -408,3 +409,75 @@ def test_rotation_of_the_lattice_rotates_the_vectors():
         "nij,nj->ni", rotation[graph.edge_batch], graph.edges_vectors()
     )
     assert torch.allclose(rotated.edges_vectors(), expected, atol=1e-4)
+
+
+class TestReverseEdgesMethods:
+    """The reverse from one integer per edge is the one from the rows of the edges."""
+
+    @staticmethod
+    def graphs():
+        from torchms.graph.cutoff import nearest_neighbors
+        from torchms.graph.line_graph import _reverse_index_by_rows
+
+        def _reverse_edges_by_rows(graph):
+            return _reverse_index_by_rows(graph.edge_index, graph.edge_shift)
+
+        generator = torch.Generator().manual_seed(0)
+        structures = []
+        for n_atoms in (1, 2, 5, 9):
+            lattice = 3.0 * torch.eye(3) + torch.rand(3, 3, generator=generator)
+            # coordinates outside the cell, for large periodic images
+            x = 6.0 * torch.rand(n_atoms, 3, generator=generator) - 3.0
+            structures.append(
+                Structures(lattice=lattice[None], x=x, z=torch.ones(n_atoms).long())
+            )
+        batch = Structures.collate(structures + [Structures.diamond()])
+
+        with_images = cutoff(batch, 5.0, self_images=True)
+        return _reverse_edges_by_rows, {
+            "cutoff": cutoff(batch, 4.0),
+            "self images": with_images,
+            # edges without reverse
+            "nearest neighbours": nearest_neighbors(with_images, 3),
+            "no edge": cutoff(batch, 0.1),
+        }
+
+    @pytest.mark.parametrize(
+        "name", ["cutoff", "self images", "nearest neighbours", "no edge"]
+    )
+    def test_same_as_rows(self, name):
+        by_rows, graphs = self.graphs()
+        graph = graphs[name]
+        reverse = reverse_edges(graph)
+
+        assert reverse.dtype == torch.int64
+        assert reverse.shape == (graph.edge_index.shape[1],)
+        assert torch.equal(reverse, by_rows(graph))
+
+    def test_nearest_neighbours_miss_reverses(self):
+        _, graphs = self.graphs()
+        reverse = reverse_edges(graphs["nearest neighbours"])
+
+        assert (reverse == -1).any() and (reverse >= 0).any()
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="no GPU")
+    def test_same_on_gpu(self):
+        _, graphs = self.graphs()
+        for graph in graphs.values():
+            on_gpu = reverse_edges(graph.to("cuda"))
+            assert on_gpu.device.type == "cuda"
+            assert torch.equal(on_gpu.cpu(), reverse_edges(graph))
+
+    def test_too_large_for_one_integer(self):
+        by_rows, graphs = self.graphs()
+        graph = graphs["cutoff"]
+        # images so far that atoms and image do not fit in 64 bits
+        far = Graph(
+            edge_index=graph.edge_index,
+            edge_shift=graph.edge_shift * 10_000_000,
+            num_atoms=graph.num_atoms,
+            num_edges=graph.num_edges,
+        )
+
+        assert torch.equal(reverse_edges(far), by_rows(far))
+        assert torch.equal(reverse_edges(far), reverse_edges(graph))

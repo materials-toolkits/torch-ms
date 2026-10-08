@@ -391,3 +391,197 @@ class TestProcesses:
         assert len(batches) == 2
         assert torch.equal(torch.cat([batch.z for batch in batches]), mixed_batch.z)
         assert torch.equal(torch.cat([batch.x for batch in batches]), mixed_batch.x)
+
+
+class TestAnyOrder:
+    """Indices in any order, read in one call."""
+
+    @pytest.fixture
+    def dataset(self, tmp_path):
+        generator = torch.Generator().manual_seed(0)
+        structures = [
+            Structures(
+                lattice=(4.0 * torch.eye(3) + torch.rand(3, 3, generator=generator))[
+                    None
+                ],
+                x=torch.rand(n_atoms, 3, generator=generator),
+                z=torch.randint(1, 90, (n_atoms,), generator=generator),
+                total_energy=[float(i)],
+            )
+            for i, n_atoms in enumerate([3, 1, 5, 2, 4, 2, 6])
+        ]
+        hdf5_path = tmp_path / "test.hdf5"
+        HDF5Dataset.from_structures(hdf5_path, structures)
+
+        return HDF5Dataset(hdf5_path), structures
+
+    @staticmethod
+    def assert_same(result: Structures, expected: Structures):
+        assert torch.equal(result.lattice, expected.lattice)
+        assert torch.equal(result.x, expected.x)
+        assert torch.equal(result.z, expected.z)
+        assert torch.equal(result.num_atoms, expected.num_atoms)
+        assert torch.equal(result.batch, expected.batch)
+        assert torch.equal(result.ptr, expected.ptr)
+        assert torch.equal(result.total_energy, expected.total_energy)
+
+    @pytest.mark.parametrize(
+        "indices",
+        [[4, 0, 6, 2], [6, 5, 4, 3, 2, 1, 0], [3, 3, 0, 3], [-1, 0, -7], [2], []],
+    )
+    def test_list(self, dataset, indices):
+        dataset, structures = dataset
+
+        if len(indices) == 0:
+            pytest.skip("structures cannot be empty")
+
+        expected = Structures.collate([structures[i] for i in indices])
+        self.assert_same(dataset[indices], expected)
+
+    def test_tensor(self, dataset):
+        dataset, structures = dataset
+        indices = torch.tensor([5, 1, 4, 1])
+
+        expected = Structures.collate([structures[i] for i in indices.tolist()])
+        self.assert_same(dataset[indices], expected)
+
+    def test_negative_index_and_slices(self, dataset):
+        dataset, structures = dataset
+
+        self.assert_same(dataset[-1], structures[-1])
+        self.assert_same(dataset[::-2], Structures.collate(structures[::-2]))
+        self.assert_same(dataset[1:6:2], Structures.collate(structures[1:6:2]))
+
+    def test_getitems_reads_one_batch(self, dataset):
+        dataset, structures = dataset
+        calls = []
+
+        def record(batch: Structures) -> Structures:
+            calls.append(len(batch.num_atoms))
+            return batch
+
+        dataset.transform = record
+        (batch,) = dataset.__getitems__([4, 0, 6])
+
+        assert calls == [3]
+        self.assert_same(batch, Structures.collate([structures[i] for i in (4, 0, 6)]))
+
+
+class TestDataLoader:
+    """A DataLoader batches the dataset without sampler nor collate function."""
+
+    @pytest.fixture
+    def dataset(self, tmp_path):
+        structures = [
+            Structures.diamond() if i % 2 == 0 else Structures.zincblende()
+            for i in range(10)
+        ]
+        for i, struct in enumerate(structures):
+            struct.total_energy = torch.tensor([float(i)])
+
+        hdf5_path = tmp_path / "test.hdf5"
+        HDF5Dataset.from_structures(hdf5_path, structures)
+
+        return HDF5Dataset(hdf5_path)
+
+    def test_in_order(self, dataset):
+        batches = list(DataLoader(dataset, batch_size=4))
+
+        assert all(isinstance(batch, Structures) for batch in batches)
+        assert [len(batch.num_atoms) for batch in batches] == [4, 4, 2]
+        energy = torch.cat([batch.total_energy for batch in batches])
+        assert energy.tolist() == list(range(10))
+        assert torch.equal(torch.cat([batch.x for batch in batches]), dataset[:].x)
+
+    def test_shuffle(self, dataset):
+        generator = torch.Generator().manual_seed(0)
+        loader = DataLoader(dataset, batch_size=3, shuffle=True, generator=generator)
+        batches = list(loader)
+
+        energy = torch.cat([batch.total_energy for batch in batches])
+        assert energy.tolist() != list(range(10))
+        assert sorted(energy.tolist()) == list(range(10))
+        for batch in batches:
+            # atoms follow their structure: diamond is carbon, zincblende is not
+            is_diamond = batch.total_energy.long() % 2 == 0
+            assert ((batch.z == 6) == is_diamond[batch.batch]).all()
+
+    def test_drop_last(self, dataset):
+        batches = list(DataLoader(dataset, batch_size=4, drop_last=True))
+
+        assert [len(batch.num_atoms) for batch in batches] == [4, 4]
+
+    def test_random_split(self, dataset):
+        generator = torch.Generator().manual_seed(0)
+        train, test = torch.utils.data.random_split(dataset, [7, 3], generator)
+
+        seen = []
+        for subset in (train, test):
+            batches = list(DataLoader(subset, batch_size=2, shuffle=True))
+            assert all(isinstance(batch, Structures) for batch in batches)
+            seen.append(torch.cat([batch.total_energy for batch in batches]).tolist())
+
+        assert len(seen[0]) == 7 and len(seen[1]) == 3
+        assert sorted(seen[0] + seen[1]) == list(range(10))
+
+    def test_collate_function(self, dataset):
+        def count(batch: list[Structures]) -> int:
+            assert isinstance(batch, list) and len(batch) == 1
+            return len(batch[0].num_atoms)
+
+        assert list(DataLoader(dataset, batch_size=4, collate_fn=count)) == [4, 4, 2]
+
+    def test_graph_transforms(self, dataset):
+        from torchms.data.augmentation import Compose
+        from torchms.graph.transforms import AddQuadruplets, AddRadiusGraph, AddTriplets
+
+        chain = Compose(
+            [
+                AddRadiusGraph(3.0, geometry=True),
+                AddTriplets(geometry=True),
+                AddQuadruplets(2.0, geometry=True),
+            ]
+        )
+        plain = list(DataLoader(dataset, batch_size=4))
+        dataset.transform = chain
+        batches = list(DataLoader(dataset, batch_size=4))
+
+        for batch, structures in zip(batches, plain):
+            expected = chain(structures)
+            assert torch.equal(batch.graph.edge_index, expected.graph.edge_index)
+            assert torch.equal(batch.graph.edge_distance, expected.graph.edge_distance)
+            assert torch.equal(batch.triplets.index, expected.triplets.index)
+            assert torch.equal(batch.quadruplets.angle, expected.quadruplets.angle)
+            assert batch.graph.structures.x is batch.x
+
+    @pytest.mark.timeout(120)
+    def test_workers_started_by_spawn(self, dataset):
+        from torchms.graph.transforms import AddRadiusGraph, AddTriplets
+
+        dataset.transform = AddRadiusGraph(3.0, geometry=True)
+        loader = DataLoader(
+            dataset, batch_size=4, num_workers=1, multiprocessing_context="spawn"
+        )
+        batches = list(loader)
+        dataset.transform = None
+
+        assert [len(batch.num_atoms) for batch in batches] == [4, 4, 2]
+        for batch, structures in zip(batches, DataLoader(dataset, batch_size=4)):
+            assert torch.equal(batch.x, structures.x)
+            expected = AddRadiusGraph(3.0, geometry=True)(structures).graph
+            assert torch.equal(batch.graph.edge_index, expected.edge_index)
+            assert torch.equal(batch.graph.structures.x, batch.x)
+            # tuples of edges can still be added to a graph coming from a worker
+            assert AddTriplets()(batch).triplets.num_tuples.sum() > 0
+
+    def test_graph_is_not_written(self, tmp_path):
+        from torchms.graph.transforms import AddRadiusGraph, AddTriplets
+
+        structures = AddTriplets()(AddRadiusGraph(2.0)(Structures.diamond()))
+        hdf5_path = tmp_path / "graph.hdf5"
+        HDF5Dataset.from_structures(hdf5_path, structures)
+
+        dataset = HDF5Dataset(hdf5_path)
+        assert "graph" not in dataset.data_file
+        assert dataset[0].graph is None
+        assert torch.equal(dataset[0].x, structures.x)

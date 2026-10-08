@@ -24,6 +24,62 @@ wraps atoms in the cell to search neighbours, then expresses shifts for the give
 Graphs of `cutoff` and `atomic_radius` contain both directions of each pair. Edges are grouped
 by structure, in the order of the batch.
 
+## What is attached to the structures
+
+A graph built by a transform (`torchms.graph.transforms`) is a field of `Structures`, as the
+tuples of its edges: `graph`, `line_graph`, `triplets`, `quadruplets`. The fields are
+described in the [guide](../guide/graphs.md#fields-attached-to-the-structures).
+
+One object goes through the transforms, the loader and the model. The alternative, a graph
+holding its structures, was the convention of the functions (`cutoff` returns a `Graph` with a
+reference to its structures) and is kept for them. It does not chain: a line graph would hold
+a graph which holds structures, and every step would have another type.
+
+There is no reference cycle. `structures.graph.structures` is a `Structures` sharing the same
+tensors, with nothing attached: `graph.edges_vectors()` works on an attached graph as on any
+other one.
+
+### Batching
+
+Indices are global in the batch at each level, so `collate` shifts each level by the size of
+the level below.
+
+| Attached | Rule in `Structures.collate` |
+|---|---|
+| `graph.edge_index` | shifted by the number of **atoms** of the elements before |
+| `graph.edge_shift`, `graph.num_atoms`, `graph.num_edges`, `graph.edge_vector`, `graph.edge_distance` | concatenated |
+| `graph.edge_batch`, `graph.edge_ptr` | rebuilt from `num_edges` |
+| `graph.structures` | the new batch |
+| `index` of `line_graph`, `triplets`, `quadruplets` | shifted by the number of **edges** of the elements before |
+| their `num_edges`, `num_tuples`, `angle` | concatenated |
+| their `batch`, `ptr` | rebuilt from `num_tuples` |
+
+- An element of the list given to `collate` can be a batch itself. The shift of an element is
+  the total of the elements before it, atoms for the graph and edges for the tuples.
+- Tuples carry `num_edges`, the number of edges of the graph per structure, which is all
+  their collate needs: it does not look at the graph.
+- A field is in every element or in none. A mix raises a `ValueError`, for the graph, for each
+  kind of tuples and for their geometry: dropping the field silently would give a batch which
+  looks valid and trains a model on less than expected.
+- `separate` removes the same shifts, so `collate(separate(batch))` is the batch.
+
+There are two ways to a batch with graphs, which give the same graphs:
+
+- `HDF5Dataset` reads a batch and applies its transform to it: the graphs are built on the
+  batch, and the collate of the loader receives one element.
+- A dataset returning one structure per index (`CifDataset`) applies its transform to each
+  structure: the graphs are built one by one and really collated.
+
+The first one is faster, see [Loader and graph construction](loader.md).
+
+### Augmentations
+
+The five actions of `torchms.data.augmentation` return structures with nothing attached. A
+permutation changes the indices of the atoms, a supercell their number, a translation with
+wrapping and a change of basis the periodic images. Only the rotation would leave a graph
+valid, and its vectors would still be wrong. Removing everything in every case is one rule to
+remember: augmentations first, graphs last.
+
 ## Self images
 
 An atom is never its own neighbour at a distance of zero. Its periodic images are neighbours
@@ -84,5 +140,15 @@ Against the neighbour list of ASE, on triclinic cells, alone and in batches:
 a batch, same hashes after the augmentations of `torchms.data.augmentation`, on cubic and
 triclinic cells.
 
-Not tested on non orthogonal cells: `edges_distances` after `Graph.collate` or
-`Graph.separate`.
+Graph transforms and batching, on triclinic cells of different sizes, one of them smaller than
+the radius, for ten chains of transforms:
+
+- the chain applied to a batch gives the same graph and the same tuples as the batch of the
+  chain applied to each structure, and as a batch of batches;
+- after `collate`, `separate` and `to`, every index points to an atom or an edge of its
+  structure, and the distances, angles and dihedral angles recomputed from the indices are
+  the ones attached;
+- `collate(separate(batch))` is the batch;
+- the transforms give the indices and the geometry of `LineGraphNetwork.build_graph`;
+- a `DataLoader` on an HDF5 file and on CIF files gives the graphs of the chain applied
+  directly, with workers started by spawn.

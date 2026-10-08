@@ -18,6 +18,20 @@ flat tensors, one after the other, with index tensors to find the atoms of each 
 | `energy_above_hull` | (n_struct,) | energy above the convex hull in eV/atom |
 | `band_gap` | (n_struct,) | band gap in eV |
 
+Four more fields are `None` unless a [graph transform](graphs.md#graphs-as-transforms) sets
+them:
+
+| Field | Type | Content |
+|---|---|---|
+| `graph` | `Graph` | edges between the atoms |
+| `line_graph` | `EdgeTuples` | pairs of edges u→v, v→w |
+| `triplets` | `EdgeTuples` | pairs of edges i→j, i→k from the same atom |
+| `quadruplets` | `EdgeTuples` | chains of three edges u→v, v→w, w→x |
+
+Their own fields are listed in
+[Fields attached to the structures](graphs.md#fields-attached-to-the-structures). They are
+batched, separated and moved to a device with the structures.
+
 A label which is unknown is `NaN`. Cartesian positions are `x @ lattice`:
 
 ```python

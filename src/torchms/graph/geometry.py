@@ -3,7 +3,10 @@ import torch.nn.functional as F
 from jaxtyping import Float, Int
 
 from torchms.data.batching import Structures
-from torchms.graph.sparse import batched_cartesian_product_3
+from torchms.graph.sparse import (
+    batched_cartesian_product_2,
+    batched_cartesian_product_3,
+)
 
 
 def lattice_heights(
@@ -19,7 +22,8 @@ def lattice_heights(
     Returns:
         Heights in Ångströms with shape (n, 3).
     """
-    normal = torch.cross(lattice[:, [1, 0, 0]], lattice[:, [2, 2, 1]], dim=-1)
+    # b × c, c × a, a × b: the normals of the faces opposite to a, b and c
+    normal = torch.cross(lattice.roll(-1, dims=1), lattice.roll(-2, dims=1), dim=-1)
     unit = F.normalize(normal, dim=-1)
     heights = (lattice * unit).sum(-1).abs()
 
@@ -94,6 +98,145 @@ def centered_supercell(
     return supercell, atom_index
 
 
+def cartesian(
+    fractional: Float[torch.Tensor, "n 3"],
+    lattice: Float[torch.Tensor, "n_struct 3 3"],
+    batch: Int[torch.Tensor, "n"],
+) -> Float[torch.Tensor, "n 3"]:
+    """Cartesian vectors from fractional ones, each in the lattice of its structure.
+
+    The rows of a lattice are its vectors: cartesian = fractional @ lattice. It
+    is written with products and a sum. A batched product of matrices this
+    small is split on a GPU into many kernels, which took two thirds of the
+    time of a radius graph on large batches.
+
+    Args:
+        fractional: Vectors in fractional coordinates, shape (n, 3).
+        lattice: Lattice vectors as rows, shape (n_struct, 3, 3).
+        batch: Structure index of each vector, shape (n,).
+
+    Returns:
+        Vectors in Ångströms, shape (n, 3).
+
+    Examples:
+        >>> lattice = torch.tensor([[[2.0, 0.0, 0.0], [1.0, 3.0, 0.0], [0.0, 0.0, 4.0]]])
+        >>> fractional = torch.tensor([[1.0, 0.0, 0.0], [0.5, 1.0, 0.5]])
+        >>> cartesian(fractional, lattice, torch.tensor([0, 0]))
+        tensor([[2., 0., 0.],
+                [2., 3., 2.]])
+    """
+    return (fractional.unsqueeze(-1) * lattice[batch]).sum(dim=1)
+
+
+def periodic_pairs(
+    x: Float[torch.Tensor, "n_atoms 3"],
+    lattice: Float[torch.Tensor, "n_struct 3 3"],
+    ptr: Int[torch.Tensor, "n_struct+1"],
+    radius: float | Float[torch.Tensor, "n_atoms"],
+) -> tuple[
+    Int[torch.Tensor, "n_pairs"],
+    Int[torch.Tensor, "n_pairs"],
+    Int[torch.Tensor, "n_pairs 3"],
+    Int[torch.Tensor, "n_pairs"],
+]:
+    """Pairs of an atom and a periodic image of an atom which can be within a radius.
+
+    Two points whose fractional coordinates differ by d along a lattice vector
+    are at least d times the height of the cell apart. For each pair of atoms
+    of a structure, only the images of the second one closer than
+    radius / height along each of the three lattice vectors are listed: a box
+    around the first atom, which holds every image within the radius.
+
+    Args:
+        x: Fractional coordinates of the atoms, shape (n_atoms, 3).
+        lattice: Lattice vectors as rows, shape (n_struct, 3, 3).
+        ptr: Index of the first atom of each structure, shape (n_struct+1,).
+        radius: Radius in Ångströms. Or a radius per atom, shape (n_atoms,):
+            the radius of a pair is then the sum of the ones of its two atoms.
+
+    Returns:
+        Index of the first atom, index of the second atom, image of the second
+        atom in lattice vectors, shape (n_pairs, 3), and structure index, of
+        each pair. Sorted by first atom, then second atom, then image. Every
+        pair closer than the radius is listed, with others which are farther.
+
+    Examples:
+        One atom in a cubic cell of 3 Å: its images at most one cell away, in a
+        box of 3 × 3 × 3 cells.
+
+        >>> source, target, shift, batch = periodic_pairs(
+        ...     torch.zeros(1, 3), 3.0 * torch.eye(3)[None], torch.tensor([0, 1]), 3.5
+        ... )
+        >>> shift.shape, shift.min().item(), shift.max().item()
+        (torch.Size([27, 3]), -1, 1)
+    """
+    device = x.device
+
+    pairs, pair_batch, _ = batched_cartesian_product_2(ptr, ptr)
+    source, target = pairs[:, 0], pairs[:, 1]
+
+    # largest difference of fractional coordinates, with a margin for rounding
+    width = 1.0 / lattice_heights(lattice).clamp_min(1e-8)[pair_batch]
+    if isinstance(radius, torch.Tensor):
+        width = width * (radius[source] + radius[target]).unsqueeze(1) + 1e-4
+    else:
+        width = width * radius + 1e-4
+
+    # images s of the target with |x[target] + s - x[source]| <= width
+    delta = x[source] - x[target]
+    low = torch.ceil(delta - width).long()
+    count = (torch.floor(delta + width).long() - low + 1).clamp(min=0)
+
+    # all the images of each pair: a flat index is a mixed-radix number
+    num_images = count.prod(dim=1)
+    image_ptr = F.pad(torch.cumsum(num_images, dim=0), (1, 0), value=0)
+    pair = torch.arange(len(num_images), device=device).repeat_interleave(num_images)
+
+    local = torch.arange(len(pair), device=device) - image_ptr[pair]
+
+    count_y, count_z = count[pair, 1], count[pair, 2]
+    shift = low[pair] + torch.stack(
+        [local // (count_y * count_z), (local // count_z) % count_y, local % count_z],
+        dim=1,
+    )
+
+    return source[pair], target[pair], shift, pair_batch[pair]
+
+
+def image_order(
+    source: Int[torch.Tensor, "n_edges"], shift: Int[torch.Tensor, "n_edges 3"]
+) -> Int[torch.Tensor, "n_edges"]:
+    """Order of edges by sender, then by periodic image of the receiver.
+
+    Edges with the same sender and image stay in their order: pairs from
+    periodic_pairs are then sorted by sender, image and receiver.
+
+    Args:
+        source: Sender of each edge, shape (n_edges,).
+        shift: Periodic image of the receiver of each edge, shape (n_edges, 3).
+
+    Returns:
+        Indices sorting the edges, shape (n_edges,).
+
+    Examples:
+        >>> source = torch.tensor([0, 0, 1, 0])
+        >>> shift = torch.tensor([[0, 0, 1], [0, 0, 0], [0, 0, 0], [-1, 0, 0]])
+        >>> image_order(source, shift)
+        tensor([3, 1, 0, 2])
+    """
+    if len(source) == 0:
+        return source
+
+    # one integer per sender and image. It is far from 64 bits: the pairs of a
+    # cell with so many images cannot be held in memory.
+    largest = int(shift.abs().max())
+    base = 2 * largest + 1
+    image = shift + largest
+    key = ((source * base + image[:, 0]) * base + image[:, 1]) * base + image[:, 2]
+
+    return torch.argsort(key, stable=True)
+
+
 def triplet_cosines(
     vectors: Float[torch.Tensor, "n_edges 3"],
     triplet_index: Int[torch.Tensor, "2 n_triplets"],
@@ -166,5 +309,5 @@ def edges_distances(
     edges_index: Int[torch.Tensor, "2 n_edges"],
 ) -> Float[torch.Tensor, "n_edges"]:
     edges_frac = target_x[edges_index[1]] - source_x[edges_index[0]]
-    # rows of the lattice are the lattice vectors: cartesian = fractional @ lattice
-    return torch.bmm(edges_frac.unsqueeze(1), lattice[edges_batch]).norm(dim=(-2, -1))
+
+    return cartesian(edges_frac, lattice, edges_batch).norm(dim=-1)

@@ -2,7 +2,15 @@ import pytest
 import torch
 
 from torchms.data.batching import Structures
-from torchms.graph.atomic_radius import atomic_radius
+from torchms.graph.atomic_radius import (
+    _ATOMIC_RADII,
+    _first_shell_mask,
+    atomic_radius,
+)
+from torchms.graph.cutoff import cutoff
+from torchms.graph.geometry import centered_supercell
+from torchms.graph.graph import Graph
+from torchms.graph.sparse import batched_cartesian_product_2
 
 
 @pytest.fixture
@@ -367,3 +375,263 @@ def test_nearest_neighbors_triclinic_matches_ase(name, k):
     assert (source[:-1] <= source[1:]).all()
     same = source[:-1] == source[1:]
     assert (distances[:-1][same] <= distances[1:][same] + 1e-9).all()
+
+
+def edges_distances(source_x, target_x, lattice, edges_batch, edges_index):
+    """Lengths of edges with a batched matrix product, as they were computed before."""
+    edges_frac = target_x[edges_index[1]] - source_x[edges_index[0]]
+
+    return torch.bmm(edges_frac.unsqueeze(1), lattice[edges_batch]).norm(dim=(-2, -1))
+
+
+def brute_force_cutoff(
+    structures: Structures, radius: float, self_images: bool = False
+) -> Graph:
+    """The radius graph as it was built before: every atom of a supercell is tried."""
+    n_struct = len(structures.num_atoms)
+
+    # neighbours are searched from atoms wrapped in the cell: the supercell is
+    # centered on the cell. Edges are then expressed for the given coordinates.
+    cell = structures.x.floor()
+    wrapped = Structures(
+        lattice=structures.lattice,
+        x=structures.x - cell,
+        z=structures.z,
+        num_atoms=structures.num_atoms,
+        batch=structures.batch,
+        ptr=structures.ptr,
+        _validate=True,
+    )
+
+    supercell, atom_index = centered_supercell(wrapped, radius)
+
+    pair_idx, pair_batch, _ = batched_cartesian_product_2(wrapped.ptr, supercell.ptr)
+    pair_idx = pair_idx.t()
+
+    dists = edges_distances(
+        wrapped.x,
+        supercell.x,
+        wrapped.lattice,
+        pair_batch,
+        pair_idx,
+    )
+
+    real_target = atom_index[pair_idx[1]]
+    if self_images:
+        # only the atom itself, at a distance of zero, is not a neighbour
+        mask = ((pair_idx[0] != real_target) | (dists > 1e-6)) & (dists <= radius)
+    else:
+        mask = (pair_idx[0] != real_target) & (dists <= radius)
+
+    # image of the target: its coordinates in the supercell minus its wrapped
+    # coordinates, then moved from the wrapped to the given coordinates
+    source, target = pair_idx[0][mask], real_target[mask]
+    edge_shift = (
+        (supercell.x[pair_idx[1][mask]] - wrapped.x[target]).round()
+        + cell[source]
+        - cell[target]
+    ).long()
+
+    pair_idx[1] = real_target
+
+    pair_idx = pair_idx[:, mask]
+    edge_batch = structures.batch[pair_idx[0]]
+    num_edges = torch.bincount(edge_batch, minlength=n_struct)
+
+    return Graph(
+        structures=structures,
+        edge_index=pair_idx,
+        edge_shift=edge_shift,
+        num_atoms=structures.num_atoms,
+        num_edges=num_edges,
+        _validate=False,
+    )
+
+
+def random_triclinic(generator: torch.Generator, n_atoms: int, size: float):
+    lattice = size * torch.eye(3) + (torch.rand(3, 3, generator=generator) - 0.5) * size
+    # coordinates inside and outside the cell
+    x = 4.0 * torch.rand(n_atoms, 3, generator=generator) - 2.0
+
+    return Structures(lattice=lattice[None], x=x, z=torch.ones(n_atoms).long())
+
+
+@pytest.mark.parametrize("radius", [0.5, 2.0, 3.0, 4.5, 6.0])
+@pytest.mark.parametrize("self_images", [False, True])
+def test_cutoff_is_the_brute_force_search(radius, self_images):
+    """Same edges, in the same order, as the search through a supercell."""
+    generator = torch.Generator().manual_seed(int(10 * radius))
+    structures = Structures.collate(
+        [
+            random_triclinic(generator, n_atoms, size)
+            for n_atoms, size in [(1, 2.0), (7, 4.0), (2, 9.0), (12, 6.0), (30, 12.0)]
+        ]
+        + [Structures.diamond(), Structures.zincblende(), simple_cubic()]
+    )
+
+    graph = cutoff(structures, radius, self_images=self_images)
+    expected = brute_force_cutoff(structures, radius, self_images=self_images)
+
+    assert torch.equal(graph.num_edges, expected.num_edges)
+    assert torch.equal(graph.edge_index, expected.edge_index)
+    assert torch.equal(graph.edge_shift, expected.edge_shift)
+    assert torch.equal(graph.edge_batch, expected.edge_batch)
+    assert torch.equal(graph.edges_distances(), expected.edges_distances())
+
+
+def test_cutoff_edges_at_the_radius():
+    """An edge of exactly the radius is kept: 6 neighbours at 3 Å in a cubic cell."""
+    for radius, edges in [(2.999, 0), (3.0, 6), (4.2, 6), (4.25, 18), (5.2, 26)]:
+        graph = cutoff(simple_cubic(), radius, self_images=True)
+        assert graph.num_edges.tolist() == [edges], radius
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="no GPU")
+def test_cutoff_on_gpu_is_the_same():
+    generator = torch.Generator().manual_seed(0)
+    structures = Structures.collate(
+        [random_triclinic(generator, n, 5.0) for n in (3, 8, 1, 15)]
+    )
+    graph = cutoff(structures, 4.0, self_images=True)
+    on_gpu = cutoff(structures.to("cuda"), 4.0, self_images=True)
+
+    assert on_gpu.device().type == "cuda"
+    assert torch.equal(on_gpu.edge_index.cpu(), graph.edge_index)
+    assert torch.equal(on_gpu.edge_shift.cpu(), graph.edge_shift)
+
+
+def brute_force_atomic_radius(
+    structures: Structures, scaling: float = 2.0, ensure_gap: float = 0.5
+) -> Graph:
+    """The graph of the bonds as it was built before: every atom of a supercell
+    large enough for the two largest atoms of the batch is tried."""
+    device = structures.device()
+    n_struct = len(structures.num_atoms)
+
+    radii = _ATOMIC_RADII.to(device)[structures.z]  # (n_atoms,)
+    max_radius = float(radii.max()) * scaling * 2
+
+    supercell, atom_index = centered_supercell(structures, max_radius)
+
+    pair_idx, pair_batch, _ = batched_cartesian_product_2(structures.ptr, supercell.ptr)
+    pair_idx = pair_idx.t()
+
+    dists = edges_distances(
+        structures.x,
+        supercell.x,
+        structures.lattice,
+        pair_batch,
+        pair_idx,
+    )
+
+    real_target = atom_index[pair_idx[1]]
+    r_i = radii[pair_idx[0]]
+    r_j = radii[real_target]
+    threshold = scaling * (r_i + r_j)
+
+    mask = (pair_idx[0] != real_target) & (dists <= threshold)
+
+    # image of the target: its coordinates in the supercell minus the ones in
+    # the cell, also exact for coordinates outside [0, 1)
+    edge_shift = (
+        (supercell.x[pair_idx[1][mask]] - structures.x[real_target[mask]])
+        .round()
+        .long()
+    )
+    pair_idx[1] = real_target
+    pair_idx = pair_idx[:, mask]
+
+    filtered_dists = dists[mask]
+    edge_batch = structures.batch[pair_idx[0]]
+
+    if ensure_gap > 0.0:
+        gap_mask = _first_shell_mask(filtered_dists, edge_batch, n_struct, ensure_gap)
+        pair_idx = pair_idx[:, gap_mask]
+        edge_shift = edge_shift[gap_mask]
+        edge_batch = edge_batch[gap_mask]
+
+    # Keep only bidirectional edges so the sparse matrix is symmetric.
+    # An edge (i, j, s) is kept iff (j, i, -s) also exists in the edge list.
+    n_edges = pair_idx.shape[1]
+    fwd = torch.cat([pair_idx.t(), edge_shift], dim=1)
+    rev = torch.cat([pair_idx[[1, 0]].t(), -edge_shift], dim=1)
+    _, uid = torch.unique(torch.cat([fwd, rev], dim=0), dim=0, return_inverse=True)
+    bidi_mask = torch.isin(uid[:n_edges], uid[n_edges:])
+    pair_idx = pair_idx[:, bidi_mask]
+    edge_shift = edge_shift[bidi_mask]
+    edge_batch = edge_batch[bidi_mask]
+
+    num_edges = torch.bincount(edge_batch, minlength=n_struct)
+
+    return Graph(
+        structures=structures,
+        edge_index=pair_idx,
+        edge_shift=edge_shift,
+        num_atoms=structures.num_atoms,
+        num_edges=num_edges,
+        _validate=False,
+    )
+
+
+def random_elements(generator: torch.Generator, n_atoms: int, size: float):
+    lattice = size * torch.eye(3) + (torch.rand(3, 3, generator=generator) - 0.5) * size
+
+    return Structures(
+        lattice=lattice[None],
+        x=torch.rand(n_atoms, 3, generator=generator),
+        z=torch.randint(1, 90, (n_atoms,), generator=generator),
+    )
+
+
+@pytest.mark.parametrize("scaling", [0.7, 1.1, 2.0])
+@pytest.mark.parametrize("ensure_gap", [0.0, 0.3, 0.5])
+def test_atomic_radius_is_the_brute_force_search(scaling, ensure_gap):
+    """Same edges, in the same order, as the search through a supercell."""
+    generator = torch.Generator().manual_seed(int(10 * scaling + 100 * ensure_gap))
+    structures = Structures.collate(
+        [
+            random_elements(generator, n_atoms, size)
+            for n_atoms, size in [(1, 3.0), (7, 4.0), (2, 9.0), (12, 6.0), (30, 12.0)]
+        ]
+        + [Structures.diamond(), Structures.zincblende()]
+    )
+
+    graph = atomic_radius(structures, scaling, ensure_gap)
+    expected = brute_force_atomic_radius(structures, scaling, ensure_gap)
+
+    assert int(expected.num_edges.sum()) > 0
+    assert torch.equal(graph.num_edges, expected.num_edges)
+    assert torch.equal(graph.edge_index, expected.edge_index)
+    assert torch.equal(graph.edge_shift, expected.edge_shift)
+    assert torch.equal(graph.edges_distances(), expected.edges_distances())
+
+
+def test_atomic_radius_does_not_depend_on_the_other_structures():
+    """The largest atom of a batch does not change the graph of the others."""
+    generator = torch.Generator().manual_seed(0)
+    small = random_elements(generator, 6, 5.0)
+    small.z = torch.tensor([1, 6, 8, 1, 6, 8])
+    large = random_elements(generator, 4, 7.0)
+    large.z = torch.tensor([55, 55, 87, 37])
+
+    alone = atomic_radius(small, 1.3, ensure_gap=0.0)
+    batched = atomic_radius(Structures.collate([small, large]), 1.3, ensure_gap=0.0)
+
+    n_edges = int(alone.num_edges)
+    assert n_edges > 0
+    assert torch.equal(batched.edge_index[:, :n_edges], alone.edge_index)
+    assert torch.equal(batched.edge_shift[:n_edges], alone.edge_shift)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="no GPU")
+def test_atomic_radius_on_gpu_is_the_same():
+    generator = torch.Generator().manual_seed(0)
+    structures = Structures.collate(
+        [random_elements(generator, n, 5.0) for n in (3, 8, 1, 15)]
+    )
+    graph = atomic_radius(structures, 1.5)
+    on_gpu = atomic_radius(structures.to("cuda"), 1.5)
+
+    assert on_gpu.device().type == "cuda"
+    assert torch.equal(on_gpu.edge_index.cpu(), graph.edge_index)
+    assert torch.equal(on_gpu.edge_shift.cpu(), graph.edge_shift)

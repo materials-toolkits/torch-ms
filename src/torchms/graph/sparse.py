@@ -73,6 +73,28 @@ def scatter(
     return out.scatter_reduce_(0, idx, src, reduce=reduce, include_self=False)
 
 
+def count_by(index: Int[torch.Tensor, "n"], n_out: int) -> Int[torch.Tensor, "n_out"]:
+    """Number of elements of each slot of an index.
+
+    Same as torch.bincount with a minimum length, which reads the largest index
+    back from the device before counting: on a GPU, the CPU waits for it.
+
+    Args:
+        index: Slot of each element, in [0, n_out), shape (n,).
+        n_out: Number of slots.
+
+    Returns:
+        Number of elements per slot, shape (n_out,).
+
+    Examples:
+        >>> count_by(torch.tensor([0, 0, 2]), 4)
+        tensor([2, 0, 1, 0])
+    """
+    count = torch.zeros(n_out, dtype=torch.int64, device=index.device)
+
+    return count.scatter_add_(0, index, torch.ones_like(index))
+
+
 def batched_cartesian_product_2(
     ptr_a: Int[torch.Tensor, "n_struct+1"],
     ptr_b: Int[torch.Tensor, "n_struct+1"],
@@ -258,12 +280,14 @@ def batched_join(
         tensor([0, 1, 5, 5])
     """
     order_a = torch.argsort(key_a, stable=True)
-    order_b = torch.argsort(key_b, stable=True)
+    ptr_a = F.pad(torch.cumsum(count_by(key_a, num_keys), dim=0), (1, 0), value=0)
 
-    count_a = torch.bincount(key_a, minlength=num_keys)
-    count_b = torch.bincount(key_b, minlength=num_keys)
-    ptr_a = F.pad(torch.cumsum(count_a, dim=0), (1, 0), value=0)
-    ptr_b = F.pad(torch.cumsum(count_b, dim=0), (1, 0), value=0)
+    if key_b is key_a:
+        # a set joined with itself is sorted and counted once
+        order_b, ptr_b = order_a, ptr_a
+    else:
+        order_b = torch.argsort(key_b, stable=True)
+        ptr_b = F.pad(torch.cumsum(count_by(key_b, num_keys), dim=0), (1, 0), value=0)
 
     # pairs of positions in the sets sorted by key
     indices, key, ptr = batched_cartesian_product_2(ptr_a, ptr_b)
