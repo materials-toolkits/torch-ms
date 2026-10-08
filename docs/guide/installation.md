@@ -6,8 +6,8 @@ environment.
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh   # install uv, once
 
-git clone https://gitlab.univ-artois.fr/astrid.klipfel/pycrystalgen.git
-cd pycrystalgen
+git clone https://gitlab.univ-artois.fr/astrid.klipfel/torch-ms.git
+cd torch-ms
 uv sync
 ```
 
