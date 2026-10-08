@@ -143,3 +143,81 @@ def test_graphs_built_on_the_gpu(dataset, num_workers):
         assert result.quadruplets.angle.device.type == "cuda"
         assert result.graph.structures.x is result.x
         assert_same_graphs(result, expected)
+
+
+class TestBatchSize:
+    """Graphs built on the batches of the loader, given in smaller batches."""
+
+    def test_sizes(self, dataset):
+        loader = OnDevice(DataLoader(dataset, batch_size=8), "cpu", batch_size=3)
+        batches = list(loader)
+
+        # 10 structures: batches of 8 and 2, split in 3 + 3 + 2 and 2
+        assert [len(batch.num_atoms) for batch in batches] == [3, 3, 2, 2]
+        assert len(loader) == 4
+        energy = torch.cat([batch.total_energy for batch in batches])
+        assert energy.tolist() == list(range(10))
+
+    def test_same_graphs_as_on_the_small_batches(self, dataset):
+        large = OnDevice(DataLoader(dataset, batch_size=6), "cpu", chain(), 3)
+        small = OnDevice(DataLoader(dataset, batch_size=3), "cpu", chain())
+
+        large, small = list(large), list(small)
+
+        assert [len(batch.num_atoms) for batch in large] == [3, 3, 3, 1]
+        assert len(large) == len(small)
+        for result, expected in zip(large, small):
+            assert_same_graphs(result, expected)
+            assert torch.equal(result.graph.edge_ptr, expected.graph.edge_ptr)
+            assert torch.equal(result.triplets.ptr, expected.triplets.ptr)
+            assert torch.equal(result.quadruplets.batch, expected.quadruplets.batch)
+            assert result.graph.structures.graph is None
+
+    def test_shuffled_batches_are_the_same(self, dataset):
+        """The batches of a shuffled loader, with or without large batches."""
+        first = torch.Generator().manual_seed(0)
+        second = torch.Generator().manual_seed(0)
+        large = DataLoader(dataset, batch_size=8, shuffle=True, generator=first)
+        small = DataLoader(dataset, batch_size=2, shuffle=True, generator=second)
+
+        from_large = [b.total_energy.tolist() for b in OnDevice(large, "cpu", None, 2)]
+        from_small = [b.total_energy.tolist() for b in small]
+
+        assert from_large == from_small
+        assert sorted(sum(from_large, [])) == list(range(10))
+
+    @pytest.mark.parametrize(
+        "loader_size, batch_size, drop_last",
+        [(8, 3, False), (8, 3, True), (4, 2, False), (5, 5, False), (3, 7, False)],
+    )
+    def test_length(self, dataset, loader_size, batch_size, drop_last):
+        loader = DataLoader(dataset, batch_size=loader_size, drop_last=drop_last)
+        loader = OnDevice(loader, "cpu", batch_size=batch_size)
+
+        assert len(loader) == len(list(loader))
+
+    def test_length_of_another_iterable(self):
+        loader = OnDevice([Structures.diamond()], "cpu", batch_size=1)
+
+        assert len(list(loader)) == 1
+        with pytest.raises(TypeError, match="DataLoader"):
+            len(loader)
+
+    def test_invalid_size(self, dataset):
+        with pytest.raises(ValueError, match="positive"):
+            OnDevice(DataLoader(dataset, batch_size=4), "cpu", batch_size=0)
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="no GPU")
+    @pytest.mark.timeout(120)
+    def test_on_gpu_with_workers(self, dataset):
+        loader = DataLoader(dataset, batch_size=6, num_workers=2)
+        batches = list(OnDevice(loader, "cuda", chain(), batch_size=3))
+
+        dataset.transform = chain()
+        expected = list(DataLoader(dataset, batch_size=3))
+
+        assert len(batches) == len(expected) == 4
+        for result, reference in zip(batches, expected):
+            assert result.device().type == "cuda"
+            assert result.graph.device().type == "cuda"
+            assert_same_graphs(result, reference)

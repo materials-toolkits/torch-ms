@@ -640,6 +640,206 @@ class Structures:  # pylint: disable=too-many-instance-attributes
             for i, struct in enumerate(result)
         ]
 
+    def select(self, index: Int[torch.Tensor, "n"]) -> Structures:
+        """Batch of some of the structures, in any order.
+
+        Args:
+            index: Indices of the structures, on the device of the structures,
+                shape (n,). In any order, the same one can be given several
+                times.
+
+        Returns:
+            Structures in the order of the indices, with copies of their atoms.
+
+        Raises:
+            ValueError: If the structures have a graph: its edges are not
+                selected. Build the graphs of the batch selected.
+
+        Examples:
+            >>> structures = [Structures.diamond(), Structures.zincblende()]
+            >>> batch = Structures.collate(structures)
+            >>> selected = batch.select(torch.tensor([1, 1, 0]))
+            >>> selected.num_atoms, selected.ptr
+            (tensor([8, 8, 8]), tensor([ 0,  8, 16, 24]))
+            >>> selected.z[:8].unique(), selected.z[16:].unique()
+            (tensor([16, 30]), tensor([6]))
+        """
+        if self.without_graphs() is not self:
+            raise ValueError(
+                "structures with a graph cannot be selected: build the graphs "
+                "of the batch selected"
+            )
+
+        device = self.lattice.device
+        num_atoms = self.num_atoms[index]
+        ptr = F.pad(torch.cumsum(num_atoms, dim=0), (1, 0), value=0)
+        batch = torch.arange(len(index), device=device).repeat_interleave(num_atoms)
+
+        # atoms of the structures selected: the atom k of a structure is the
+        # atom k after the first one of this structure
+        atoms = (
+            torch.arange(len(batch), device=device)
+            + (self.ptr[index] - ptr[:-1])[batch]
+        )
+
+        return Structures(
+            lattice=self.lattice[index],
+            x=self.x[atoms],
+            z=self.z[atoms],
+            num_atoms=num_atoms,
+            batch=batch,
+            ptr=ptr,
+            total_energy=self.total_energy[index],
+            energy_above_hull=self.energy_above_hull[index],
+            band_gap=self.band_gap[index],
+            formation_energy_per_atom=self.formation_energy_per_atom[index],
+            _validate=True,
+        )
+
+    def split(self, batch_size: int) -> list[Structures]:
+        """Split a batch into smaller batches of consecutive structures.
+
+        The structures keep their order: the first batch_size ones, then the
+        next ones, and a last batch which can be smaller. The graph and the
+        tuples of edges attached are split with them, their indices starting
+        again at zero in each batch: the result is what collate gives on the
+        structures of each batch.
+
+        It is meant for batches on a GPU. Building the graphs of one large
+        batch then splitting it is faster than building the graphs of each
+        small batch. The batches share the memory of the tensors which are not
+        indices: the large batch is freed when all of them are.
+
+        Args:
+            batch_size: Number of structures per batch.
+
+        Returns:
+            List of Structures, in the order of the structures.
+
+        Raises:
+            ValueError: If batch_size is not positive.
+
+        Examples:
+            >>> from torchms.graph.transforms import AddRadiusGraph
+            >>> batch = Structures.collate([Structures.diamond()] * 5)
+            >>> batch = AddRadiusGraph(2.0)(batch)
+            >>> [len(part.num_atoms) for part in batch.split(2)]
+            [2, 2, 1]
+            >>> last = batch.split(2)[-1]
+            >>> last.ptr, last.graph.edge_ptr, int(last.graph.edge_index.max())
+            (tensor([0, 8]), tensor([ 0, 32]), 7)
+        """
+        if batch_size < 1:
+            raise ValueError("batch_size must be positive")
+
+        n_struct = len(self.num_atoms)
+        bounds = list(range(0, n_struct, batch_size)) + [n_struct]
+
+        # first atom, edge and tuple of each batch, read from the device once
+        # for all the batches
+        pointers = [self.ptr]
+        if self.graph is not None:
+            pointers.append(self.graph.edge_ptr)
+        names = [name for name in TUPLES_FIELDS if getattr(self, name) is not None]
+        pointers += [getattr(self, name).ptr for name in names]
+        firsts = torch.stack(pointers)[:, bounds].tolist()
+
+        result = []
+        for k, (i, j) in enumerate(zip(bounds[:-1], bounds[1:])):
+            a0, a1 = firsts[0][k], firsts[0][k + 1]
+
+            part = Structures(
+                lattice=self.lattice[i:j],
+                x=self.x[a0:a1],
+                z=self.z[a0:a1],
+                num_atoms=self.num_atoms[i:j],
+                batch=self.batch[a0:a1] - i,
+                ptr=self.ptr[i : j + 1] - a0,
+                total_energy=self.total_energy[i:j],
+                energy_above_hull=self.energy_above_hull[i:j],
+                band_gap=self.band_gap[i:j],
+                formation_energy_per_atom=self.formation_energy_per_atom[i:j],
+                _validate=True,
+            )
+
+            if self.graph is None:
+                result.append(part)
+                continue
+
+            e0, e1 = firsts[1][k], firsts[1][k + 1]
+            attached: dict[str, Any] = {
+                "graph": _graph_part(self.graph, part, (i, j), a0, (e0, e1))
+            }
+            for row, name in enumerate(names, start=2):
+                attached[name] = _tuples_part(
+                    getattr(self, name),
+                    (i, j),
+                    e0,
+                    (firsts[row][k], firsts[row][k + 1]),
+                )
+
+            result.append(replace(part, **attached))
+
+        return result
+
+
+def _graph_part(
+    graph: Graph,
+    structures: Structures,
+    span: tuple[int, int],
+    first_atom: int,
+    edges: tuple[int, int],
+) -> Graph:
+    """Graph of consecutive structures of a batch, see Structures.split.
+
+    Args:
+        graph: Graph of the batch.
+        structures: The structures of the part.
+        span: First structure of the part and the one after its last.
+        first_atom: First atom of the part.
+        edges: First edge of the part and the one after its last.
+    """
+    (i, j), (e0, e1) = span, edges
+
+    return type(graph)(
+        edge_index=graph.edge_index[:, e0:e1] - first_atom,
+        edge_shift=graph.edge_shift[e0:e1],
+        num_atoms=graph.num_atoms[i:j],
+        num_edges=graph.num_edges[i:j],
+        edge_batch=graph.edge_batch[e0:e1] - i,
+        edge_ptr=graph.edge_ptr[i : j + 1] - e0,
+        structures=structures,
+        edge_vector=None if graph.edge_vector is None else graph.edge_vector[e0:e1],
+        edge_distance=(
+            None if graph.edge_distance is None else graph.edge_distance[e0:e1]
+        ),
+        _validate=True,
+    )
+
+
+def _tuples_part(
+    tuples: EdgeTuples, span: tuple[int, int], first_edge: int, items: tuple[int, int]
+) -> EdgeTuples:
+    """Tuples of edges of consecutive structures of a batch, see Structures.split.
+
+    Args:
+        tuples: Tuples of the batch.
+        span: First structure of the part and the one after its last.
+        first_edge: First edge of the part.
+        items: First tuple of the part and the one after its last.
+    """
+    (i, j), (t0, t1) = span, items
+
+    return type(tuples)(
+        index=tuples.index[:, t0:t1] - first_edge,
+        num_edges=tuples.num_edges[i:j],
+        num_tuples=tuples.num_tuples[i:j],
+        batch=tuples.batch[t0:t1] - i,
+        ptr=tuples.ptr[i : j + 1] - t0,
+        angle=None if tuples.angle is None else tuples.angle[t0:t1],
+        _validate=True,
+    )
+
 
 def _collate_structures(batch: list[Structures], *, collate_fn_map=None) -> Structures:
     """Collate of Structures for the default collate of torch."""

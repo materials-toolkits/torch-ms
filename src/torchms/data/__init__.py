@@ -5,11 +5,13 @@ from .cif import CifDataset, parse_cif
 from .datasets import available_datasets, dataset_url, load_dataset
 from .hdf5 import HDF5Dataset
 from .loader import OnDevice
+from .memory import InMemoryDataset
 
 __all__ = [
     "Structures",
     "CifDataset",
     "HDF5Dataset",
+    "InMemoryDataset",
     "OnDevice",
     "available_datasets",
     "dataset_url",

@@ -655,3 +655,129 @@ class TestGraphAlone:
         assert graph.device().type == "cpu"
         assert graph.structures is not None
         assert graph.edge_vector is not None
+
+
+class TestSplit:
+    """A batch split into smaller batches, with what is attached."""
+
+    @staticmethod
+    def assert_equal(a: Structures, b: Structures):
+        """Same tensors, for the structures and for what is attached."""
+        for name in ("lattice", "x", "z", "num_atoms", "batch", "ptr"):
+            assert torch.equal(getattr(a, name), getattr(b, name)), name
+        # unknown labels are NaN
+        assert torch.allclose(a.total_energy, b.total_energy, equal_nan=True)
+
+        assert (a.graph is None) == (b.graph is None)
+        if a.graph is not None and b.graph is not None:
+            for name in ("edge_index", "edge_shift", "num_atoms", "num_edges"):
+                assert torch.equal(getattr(a.graph, name), getattr(b.graph, name)), name
+            for name in ("edge_batch", "edge_ptr"):
+                assert torch.equal(getattr(a.graph, name), getattr(b.graph, name)), name
+            for name in ("edge_vector", "edge_distance"):
+                first, second = getattr(a.graph, name), getattr(b.graph, name)
+                assert (first is None) == (second is None), name
+                if first is not None:
+                    assert torch.allclose(first, second, atol=1e-5), name
+
+        for field in TUPLES_FIELDS:
+            first, second = getattr(a, field), getattr(b, field)
+            assert (first is None) == (second is None), field
+            if first is None:
+                continue
+            for name in ("index", "num_edges", "num_tuples", "batch", "ptr"):
+                assert torch.equal(getattr(first, name), getattr(second, name)), name
+            assert (first.angle is None) == (second.angle is None)
+            if first.angle is not None:
+                assert torch.allclose(first.angle, second.angle, atol=1e-4)
+
+    @pytest.mark.parametrize("batch_size", [1, 2, 3, 5, 8])
+    def test_parts_are_the_graphs_of_the_small_batches(
+        self, structures, chain, batch_size
+    ):
+        parts = chain(Structures.collate(structures)).split(batch_size)
+
+        sizes = [len(part.num_atoms) for part in parts]
+        assert sum(sizes) == len(structures)
+        assert all(size == batch_size for size in sizes[:-1])
+        assert 0 < sizes[-1] <= batch_size
+
+        for k, part in enumerate(parts):
+            expected = chain(
+                Structures.collate(structures[k * batch_size : (k + 1) * batch_size])
+            )
+            assert_consistent(part)
+            self.assert_equal(part, expected)
+
+    @pytest.mark.parametrize("batch_size", [1, 2, 3])
+    def test_collate_of_the_parts_is_the_batch(self, structures, chain, batch_size):
+        batch = chain(Structures.collate(structures))
+        again = Structures.collate(batch.split(batch_size))
+
+        assert_consistent(again)
+        self.assert_equal(again, batch)
+
+    def test_without_graph(self, structures):
+        batch = Structures.collate(structures)
+        parts = batch.split(2)
+
+        assert [len(part.num_atoms) for part in parts] == [2, 2, 1]
+        assert all(part.graph is None for part in parts)
+        for k, part in enumerate(parts):
+            self.assert_equal(part, Structures.collate(structures[2 * k : 2 * k + 2]))
+
+    def test_split_in_one_is_separate(self, structures, chain):
+        batch = chain(Structures.collate(structures))
+
+        for part, single in zip(batch.split(1), Structures.separate(batch)):
+            self.assert_equal(part, single)
+
+    def test_size_larger_than_the_batch(self, structures, chain):
+        batch = chain(Structures.collate(structures))
+        (part,) = batch.split(100)
+
+        self.assert_equal(part, batch)
+
+    def test_structure_without_edge_between_batches(self):
+        chain = Compose([AddRadiusGraph(2.0), AddTriplets(geometry=True)])
+        lonely = Structures(
+            lattice=torch.eye(3).unsqueeze(0) * 9.0, x=torch.zeros(1, 3), z=[2]
+        )
+        structures = [Structures.diamond(), lonely, lonely, Structures.diamond()]
+        parts = chain(Structures.collate(structures)).split(2)
+
+        assert [part.graph.num_edges.tolist() for part in parts] == [[32, 0], [0, 32]]
+        assert [part.triplets.num_tuples.tolist() for part in parts] == [
+            [96, 0],
+            [0, 96],
+        ]
+        for part in parts:
+            assert_consistent(part)
+
+    def test_parts_refer_to_their_own_structures(self, structures):
+        batch = AddRadiusGraph(3.0, geometry=True)(Structures.collate(structures))
+
+        for part in batch.split(2):
+            assert part.graph.structures is not None
+            assert part.graph.structures.graph is None
+            assert torch.equal(part.graph.structures.x, part.x)
+            assert torch.allclose(
+                part.graph.edges_distances(), part.graph.edge_distance, atol=1e-5
+            )
+
+    def test_invalid_size(self, structures):
+        with pytest.raises(ValueError, match="positive"):
+            Structures.collate(structures).split(0)
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="no GPU")
+    def test_on_gpu(self, structures):
+        chain = Compose(CHAINS["all"])
+        batch = chain(Structures.collate(structures).to("cuda"))
+        expected = chain(Structures.collate(structures)).split(2)
+
+        for part, reference in zip(batch.split(2), expected):
+            assert part.device().type == "cuda"
+            assert part.graph.device().type == "cuda"
+            assert part.triplets.device().type == "cuda"
+            assert_consistent(part)
+            assert_same_attached(part.to("cpu"), reference)
