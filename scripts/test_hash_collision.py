@@ -21,27 +21,14 @@ from collections import Counter
 from torchms.data import load_dataset
 from torchms.graph.coloring import color_refinement
 from torchms.graph.atomic_radius import atomic_radius
-from torch.utils.data import BatchSampler, DataLoader, RandomSampler
+from torch.utils.data import DataLoader
 
 from torchms.data.batching import Structures
 from torchms.graph.atomic_radius import atomic_radius
 
 lematerial = load_dataset("lematerial", "unique")
 
-class SortedBatches:
-    """Random batches of indices, each one in ascending order."""
-
-    def __init__(self, dataset, batch_size):
-        self.batches = BatchSampler(RandomSampler(dataset), batch_size, drop_last=False)
-
-    def __iter__(self):
-        return (sorted(batch) for batch in self.batches)
-
-    def __len__(self):
-        return len(self.batches)
-
-
-loader = DataLoader(lematerial, sampler=SortedBatches(lematerial, 128), batch_size=None)
+loader = DataLoader(lematerial, batch_size=128, shuffle=True)
 
 total_hash = []
 
