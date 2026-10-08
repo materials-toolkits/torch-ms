@@ -12,9 +12,13 @@
 
 ::: torchms.data.hdf5
 
-## Loader on a device
+## Loaders
+
+::: torchms.data.auto
 
 ::: torchms.data.loader
+
+::: torchms.data.memory
 
 ## CIF files
 

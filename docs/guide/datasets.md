@@ -1,14 +1,27 @@
 # Loading datasets
 
 Every dataset is published on Hugging Face in the same HDF5 format and is loaded by name. The
-file is downloaded on the first call and cached by `huggingface_hub`.
+file is downloaded on the first call and cached by `huggingface_hub`. `auto_loader` gives the
+batches of a training:
 
 ```python
-from torchms.data import load_dataset
+from torchms.data import auto_loader
+from torchms.data.augmentation import LatticeRotation
+from torchms.graph.transforms import AddRadiusGraph
 
-dataset = load_dataset("mp-20", "train")
-dataset = load_dataset("mp-20/train")     # same thing
-dataset = load_dataset("lematerial")      # default split: "all"
+loader = auto_loader(
+    "mp-20", "train",
+    batch_size=128,
+    transform=AddRadiusGraph(5.0),   # optional: graphs, see the Graphs page
+    augment=LatticeRotation(),       # optional: augmentations, before the graphs
+    shuffle=True,
+    device="cuda",                   # optional: the GPU by default if there is one
+)
+
+for epoch in range(10):
+    for structures in loader:        # 128 crystals, already on the GPU
+        structures.graph.edge_index  # with their graph, built on the GPU
+        ...
 ```
 
 ## Names and splits
@@ -33,11 +46,69 @@ dataset_url("oqmd", "unique")
 # 'https://huggingface.co/datasets/materials-toolkits/oqmd/resolve/main/unique.hdf5'
 ```
 
-## Reading structures
+## Training: `auto_loader`
 
-A dataset returns batches of [`Structures`](structures.md), in the order of the indices asked.
+`auto_loader` looks at the CPU cores, the RAM and the GPU of the machine and loads the dataset
+the fastest way it can. How it chooses, how to change one of its choices, and the pieces to
+build a loader by hand (`DataLoader`, `OnDevice`, `InMemoryDataset`) are in the design note
+[Loader and graph construction](../design/loader.md).
+
+The batches are [`Structures`](structures.md), already on the device, with their graphs if a
+`transform` is given: there is nothing to move and nothing to build in the training loop. The
+loader is iterated once per epoch and has a length.
+
+Structures per second arriving on the GPU in batches of 128 with their graphs, on 300,000
+structures of LeMat-Bulk, on a desktop with an RTX 4060 and on a node with an H100:
+
+| | RTX 4060 | H100 |
+|---|---:|---:|
+| `auto_loader`, radius graph | 338,893 | 882,202 |
+| `auto_loader`, full chain | 179,125 | 387,454 |
+
+The radius graph is `AddRadiusGraph(5)`; the full chain adds triplets and quadruplets with
+their geometry.
+
+`print(loader.config)` says what was chosen and why:
+
+```text
+device cuda, dataset on the GPU, 0 workers
+batches of 128, built by 512 on the device
+- dataset on the GPU: 9 MB is at most 20% of the 7.1 GB free on it
+- no worker: the batches are taken from memory
+- graphs built on the GPU by batches of 512, split in batches of 128: the smallest within
+  10 % of the fastest measured
+```
+
+The source is the name of a dataset, the path of an HDF5 file, or a dataset:
 
 ```python
+auto_loader("mp-20/train", batch_size=128)             # name and split in one string
+auto_loader("my_structures.hdf5", batch_size=128)      # a local file
+auto_loader(HDF5Dataset.from_hub("user/repository", "file.hdf5"), batch_size=128)
+```
+
+| Argument | |
+|---|---|
+| `batch_size` | structures per batch |
+| `transform` | [graph transforms](graphs.md#graphs-as-transforms), chained with `Compose` |
+| `augment` | [augmentations](augmentation.md), applied before the graphs |
+| `shuffle`, `drop_last`, `generator` | as for a `DataLoader` |
+| `device` | device of the batches, the GPU by default if there is one |
+
+Setting up takes about a second.
+
+
+## Reading structures
+
+`load_dataset` gives the dataset itself, to read structures by their indices:
+
+```python
+from torchms.data import load_dataset
+
+dataset = load_dataset("mp-20", "train")
+dataset = load_dataset("mp-20/train")     # same thing
+dataset = load_dataset("lematerial")      # default split: "all"
+
 one = dataset[0]             # a batch of one structure
 last = dataset[-1]
 batch = dataset[10:42]       # a slice
@@ -46,119 +117,7 @@ batch = dataset[[20, 3, 8]]  # a list or a tensor of indices, in any order
 len(dataset)                 # number of structures
 ```
 
-## Training with a DataLoader
-
-A dataset goes to the `DataLoader` of PyTorch as it is, with no sampler and no collate
-function to write:
-
-```python
-from torch.utils.data import DataLoader
-
-loader = DataLoader(dataset, batch_size=64, shuffle=True)
-
-for structures in loader:   # a Structures batch of 64 crystals
-    structures = structures.to("cuda")
-    ...
-```
-
-Every argument of `DataLoader` works as usual (`drop_last`, `sampler`, `generator`, ...), and
-so do `torch.utils.data.random_split` and `Subset`:
-
-```python
-from torch.utils.data import random_split
-
-train, validation = random_split(dataset, [0.9, 0.1])
-loader = DataLoader(train, batch_size=64, shuffle=True)
-```
-
-The structures of a batch are read from the file in one call, and the `transform` of the
-dataset is applied once, to the whole batch.
-
-The dataset opens its HDF5 file once in each process, so it works with several workers:
-
-```python
-loader = DataLoader(
-    dataset, batch_size=64, shuffle=True, num_workers=4, persistent_workers=True
-)
-```
-
-Reading alone is fast: one process is enough for most trainings. Workers pay off when the
-`transform` of the dataset is the slow part, since it runs in the workers. This is the case
-of the graph transforms, see [Building graphs](#building-graphs) below. How many workers to
-use, for which transforms and on which hardware, is measured in
-[Loader and graph construction](../design/loader.md).
-
-!!! note "Collate function"
-    The loader batches `Structures` with `Structures.collate`, which torchms registers as the
-    default collate of PyTorch for this type. A `collate_fn` of your own receives a list of
-    `Structures` (one batch already read for an HDF5 dataset): start it with
-    `Structures.collate(batch)`. Graphs are not built there but by
-    [transforms](graphs.md#graphs-as-transforms).
-
-## Transforms
-
-A transform is a function from `Structures` to `Structures`, applied to each batch read:
-
-```python
-def translate(structures):
-    structures.x = (structures.x + 0.5) % 1.0
-    return structures
-
-dataset = load_dataset("mp-20", "train", transform=translate)
-```
-
-Ready-made random transforms are described in [Data augmentation](augmentation.md).
-
-## Building graphs
-
-Graphs are built by transforms too, which attach them to the structures of each batch:
-
-```python
-from torch.utils.data import DataLoader
-from torchms.data import load_dataset
-from torchms.graph.transforms import AddRadiusGraph
-
-dataset = load_dataset("mp-20", "train", transform=AddRadiusGraph(5.0))
-loader = DataLoader(dataset, batch_size=64, shuffle=True, num_workers=8)
-
-for structures in loader:
-    structures.graph.edge_index   # (2, n_edges): atoms closer than 5 Å
-    structures.graph.num_edges    # edges of each structure
-```
-
-Several steps are chained with `Compose`, after the augmentations:
-
-```python
-from torchms.data.augmentation import Compose, LatticeRotation
-from torchms.graph.transforms import AddTriplets
-
-transform = Compose([LatticeRotation(), AddRadiusGraph(5.0), AddTriplets(radius=3.0)])
-```
-
-Given to the dataset, the transforms build the graphs on the CPU, in the workers. To build
-them on the GPU, give them to `OnDevice` instead, which moves each batch of the loader to the
-device and transforms it there:
-
-```python
-from torchms.data import OnDevice
-
-dataset = load_dataset("mp-20", "train")
-loader = DataLoader(dataset, batch_size=64, shuffle=True, num_workers=4)
-loader = OnDevice(loader, "cuda", transform=AddRadiusGraph(5.0))
-
-for structures in loader:         # on the GPU, with its graph
-    ...
-```
-
-Which one to choose depends on the number of CPU cores, on the size of the batches and on
-what limits the training: see
-[Where to build the graphs](graphs.md#where-to-build-the-graphs) for the rule, and
-[Loader and graph construction](../design/loader.md) for the measures.
-
-[Graphs as transforms](graphs.md#graphs-as-transforms) lists the transforms (nearest
-neighbours, chemical bonds, line graph, triplets, quadruplets, geometry of the edges and
-angles), and [Fields attached to the structures](graphs.md#fields-attached-to-the-structures)
-describes every field they add.
+A dataset returns batches of [`Structures`](structures.md), in the order of the indices asked.
 
 ## Other files
 

@@ -3,141 +3,42 @@
 `torchms.graph` builds graphs of crystals under periodic boundary conditions. An edge
 goes from an atom of the cell to an atom of the cell or of one of its periodic images.
 
-## Radius graph
-
-```python
-from torchms.data import Structures
-from torchms.graph.cutoff import cutoff
-
-structures = Structures.zincblende()
-graph = cutoff(structures, 3.0)
-
-graph.edge_index          # (2, n_edges): source and target atoms
-graph.edge_shift          # (n_edges, 3): periodic image of the target
-graph.num_edges           # tensor([32])
-graph.edges_distances()   # (n_edges,) in Å
-```
-
-The vector of an edge, in fractional coordinates, is
-`x[target] + edge_shift - x[source]`.
-
-By default an atom is never connected to itself. In a cell smaller than the radius an atom has
-its own periodic images as neighbours; ask for them with `self_images=True`:
-
-```python
-import torch
-
-cubic = Structures(lattice=torch.eye(3).unsqueeze(0) * 3.0, x=torch.zeros(1, 3), z=torch.tensor([29]))
-cutoff(cubic, 3.5).num_edges                     # tensor([0])
-cutoff(cubic, 3.5, self_images=True).num_edges   # tensor([6])
-```
-
-Fractional coordinates can be inside or outside the cell.
-
-## Nearest neighbours
-
-```python
-from torchms.graph.cutoff import nearest_neighbors
-
-graph = nearest_neighbors(cutoff(Structures.diamond(), 4.0), 4)
-graph.num_edges   # tensor([32]): the 4 nearest neighbours of 8 atoms
-```
-
-Edges of the result are sorted by source atom, then by length.
-
-## Chemical bonds
-
-`atomic_radius` connects two atoms closer than a multiple of the sum of their atomic radii, and
-can keep only the first shell of distances:
-
-```python
-from torchms.graph.atomic_radius import atomic_radius
-
-graph = atomic_radius(structures, scaling=1.1)
-```
-
-The graph is undirected: every edge has its reverse.
-
-## Batches
-
-Graph functions work on batches. `graph.edge_batch` is the structure of each edge and
-`graph.edge_ptr` the index of the first edge of each structure, as `batch` and `ptr` for atoms.
-
-```python
-batch = Structures.collate([Structures.diamond(), Structures.zincblende()])
-graph = cutoff(batch, 3.0)
-graph.num_edges    # edges of each structure
-```
-
-## Aggregation
-
-```python
-energy_per_atom = graph.aggregate_edges_to_nodes(edge_values)       # sum over the edges of an atom
-per_structure = graph.aggregate_nodes_to_structures(atom_values)
-```
-
-`torchms.graph.sparse.scatter` is the underlying function (`sum`, `mean`, `amax`, ...).
-
-## Angles and dihedrals
-
-Models with terms on three or four atoms need the pairs and the chains of edges of a graph.
-`triplets` gives the pairs of edges starting from the same atom, `quadruplets` the chains of
-three edges:
-
-```python
-from torchms.graph.geometry import dihedral_angles, triplet_cosines
-from torchms.graph.line_graph import quadruplets, triplets
-
-graph = cutoff(structures, 5.0)
-vectors = graph.edges_vectors()                      # (n_edges, 3), in Å
-
-triplet_index, triplet_batch, triplet_ptr = triplets(graph)
-cosines = triplet_cosines(vectors, triplet_index)    # angle at the shared atom
-
-short = graph.edges_distances() <= 3.0               # a shorter cutoff for the chains
-quadruplet_index, quadruplet_batch, quadruplet_ptr = quadruplets(graph, short)
-angles = dihedral_angles(vectors, quadruplet_index)  # around the middle edge
-```
-
-`triplet_index` (2, n_triplets) and `quadruplet_index` (3, n_quadruplets) hold indices of
-edges. An atom with d edges has d (d - 1) triplets, and the number of chains grows with the
-cube of the number of neighbours: both functions take a mask of the edges to keep, for a
-shorter cutoff than the one of the graph.
-
-`line_graph` is the function behind them, the pairs of edges head to tail (u→v, v→w): its
-result is the edge index of the graph whose nodes are the edges, and it applies to its own
-result. `reverse_edges` gives the reverse of each edge, `batched_join` the pairs of elements
-with the same key.
+1. [Graphs as transforms](#graphs-as-transforms): build graphs while a dataset is loaded.
+2. [Fields attached to the structures](#fields-attached-to-the-structures): what the
+   transforms add, field by field.
+3. [Building graphs by hand](#building-graphs-by-hand): the functions behind the transforms.
+4. [Hash of a structure](#hash-of-a-structure): a hash which does not depend on the order of
+   the atoms.
 
 ## Graphs as transforms
 
-The functions above return a graph. To build graphs while loading a dataset, each of them
-also exists as a **transform**, a step from `Structures` to `Structures` which attaches what
-it builds to the structures. Transforms are chained with `Compose`, after the
-[augmentations](augmentation.md), and given to a dataset (see
-[Loading datasets](datasets.md#building-graphs) for the dataset and its loader):
+A **transform** is a step from `Structures` to `Structures` which builds a graph, or something
+on a graph, and attaches it to the structures. Transforms are chained with `Compose` and given
+to [`auto_loader`](datasets.md#training-auto_loader), which builds the graphs of each batch
+while it loads the dataset:
 
 ```python
-from torch.utils.data import DataLoader
-from torchms.data import load_dataset
+from torchms.data import auto_loader
 from torchms.data.augmentation import Compose, LatticeRotation
 from torchms.graph.transforms import AddQuadruplets, AddRadiusGraph, AddTriplets
 
-transform = Compose(
+graphs = Compose(
     [
-        LatticeRotation(),                           # augmentations first
         AddRadiusGraph(5.0, geometry=True),          # the graph
         AddTriplets(radius=3.0, geometry=True),      # then what is built on it
         AddQuadruplets(radius=2.5, geometry=True),
     ]
 )
 
-dataset = load_dataset("mp-20", "train", transform=transform)
-loader = DataLoader(dataset, batch_size=64, shuffle=True, num_workers=8)
+loader = auto_loader(
+    "mp-20", "train",
+    batch_size=128,
+    transform=graphs,
+    augment=LatticeRotation(),          # augmentations come before the graphs
+    shuffle=True,
+)
 
-for structures in loader:               # always a Structures batch
-    structures = structures.to("cuda")  # moves the graph and the tuples too
-
+for structures in loader:               # a Structures batch, on the GPU if there is one
     structures.graph.edge_index         # (2, n_edges)
     structures.graph.edge_distance      # (n_edges,) in Å
     structures.triplets.index           # (2, n_triplets): edges of the graph
@@ -145,10 +46,21 @@ for structures in loader:               # always a Structures batch
     structures.quadruplets.angle        # (n_quadruplets,) dihedral angles
 ```
 
-Given to the dataset, the transforms run on the CPU, in the workers of the loader, on the
-whole batch at once. The same transforms can run on the GPU instead, see
-[Where to build the graphs](#where-to-build-the-graphs). The collate of the loader only
-batches: it never builds a graph.
+`auto_loader` runs the transforms where they are the fastest on the machine: on the GPU when
+there is one, in worker processes otherwise. The batches arrive on the device with everything
+attached. To set a loader up by hand (a `DataLoader`, graphs built in its workers or on the
+GPU, a dataset held in memory), see the design note
+[Loader and graph construction](../design/loader.md#setting-a-loader-up-by-hand).
+
+A transform is also a function, to call on any batch, for an evaluation without loader for
+instance:
+
+```python
+structures = graphs(structures.to("cuda"))
+```
+
+The transforms, with the function each one calls, described in
+[Building graphs by hand](#building-graphs-by-hand):
 
 | Transform | Arguments | Needs | Sets | Removes | Function |
 |---|---|---|---|---|---|
@@ -168,8 +80,8 @@ batches: it never builds a graph.
   chain (the ones not longer than it). The graph keeps all its edges, and the indices still
   point to them: a model can use 5 Å for its bonds and 3 Å for its angles.
 - `geometry=True` also attaches the geometry of what is built: vectors and lengths of the
-  edges, angles of the pairs, dihedral angles of the chains. It is computed once, in the
-  workers. Without it these fields are `None`.
+  edges, angles of the pairs, dihedral angles of the chains. It is computed once, when the
+  graphs are built. Without it these fields are `None`.
 - The transforms do not modify the structures they are given, they return new ones sharing
   the same tensors.
 
@@ -183,65 +95,8 @@ Compose([AddRadiusGraph(5.0), AddTriplets(3.0), AddQuadruplets(2.5)])
 ```
 
 Augmentations change the atoms or the cell, which a graph already built does not follow:
-they return structures with **nothing attached**. Build the graphs last.
-
-### Where to build the graphs
-
-A transform does not depend on where it runs: it builds its graph on the device of the
-structures it is given. There are two places to call it.
-
-**In the workers, on the CPU.** The transform is given to the dataset. Each worker reads a
-batch, builds its graphs on one thread, and sends the batch to the training process. The GPU
-does nothing for the loading.
-
-```python
-dataset = load_dataset("mp-20", "train", transform=Compose([augment, graphs]))
-loader = DataLoader(dataset, batch_size=64, shuffle=True, num_workers=8)
-
-for structures in loader:
-    structures = structures.to("cuda")
-```
-
-**On the GPU.** The dataset keeps the augmentations only, and `OnDevice` wraps the loader: it
-moves each batch to the device as it comes out of the loader, then applies its transform
-there, in the training process.
-
-```python
-from torchms.data import OnDevice
-
-dataset = load_dataset("mp-20", "train", transform=augment)   # CPU, in the workers
-loader = DataLoader(dataset, batch_size=64, shuffle=True, num_workers=4)
-loader = OnDevice(loader, "cuda", transform=graphs)           # GPU, on each batch
-
-for structures in loader:               # already on the GPU, with its graphs
-    ...
-```
-
-`OnDevice` is iterated like the loader, once per epoch, and has its length. Without transform
-it only moves the batches. The two ways give the same graphs.
-
-| Your case | Build the graphs | Why |
-|---|---|---|
-| A GPU, batches of about 128, and no reason below to do otherwise | on the GPU, with 4 workers reading | the fastest way, or within 10 % of it, with few CPU cores |
-| Few CPU cores (4 workers or less) | on the GPU | 1.3 to 5 times faster than the workers can be |
-| Large batches (512 and more) | on the GPU, with a worker reading per core | 1.5 to 5 times faster than the workers; with 4 readers the reading holds the GPU back |
-| A GPU much faster than its CPU, an H100 for instance | on the GPU, with large batches | it is no faster than a small GPU on batches of 128, 4 times faster on batches of 8,192 |
-| The loading limits the training: the GPU waits for batches | on the GPU | see the first line |
-| The model keeps the GPU busy, and 8 to 16 CPU cores are free | in the workers | two thirds to all of the rate of the GPU way, and the GPU is left to the model |
-| No GPU | in the workers, 8 to 16 | — |
-| Small batches, down to one structure | in the workers | a GPU is slower than a CPU thread on one structure |
-| Evaluation or inference without loader | on the device of the model | call the transform on the batch |
-| Graphs needed by the transform of the dataset itself (filter, statistics) | in the workers | they must exist before the batch leaves the dataset |
-
-This comes from measures on two machines, a desktop with an RTX 4060 and a node of a cluster
-with an H100. Building a graph is about 470 small operations whatever the size of the batch,
-started one by one by a CPU thread: a GPU only shows its power when the batches are large.
-For batches of 128 structures the H100 builds graphs no faster than the RTX 4060. Compiling
-the transforms with `torch.compile` changes nothing.
-
-The numbers behind this table, for both machines, two datasets, each transform, 0 to 16
-workers and both ways, are in [Loader and graph construction: measures](../design/loader.md), with the script
-to measure your own machine and dataset.
+they return structures with **nothing attached**. Build the graphs last: `auto_loader` applies
+`augment` before `transform`.
 
 ## Fields attached to the structures
 
@@ -430,6 +285,118 @@ on the tuples with `triplets.index`, and summed back with `scatter`:
 messages = edge_features[triplets.index[1]]                     # (n_triplets, F)
 edge_update = scatter(messages, triplets.index[0], graph.edge_index.shape[1])
 ```
+
+## Building graphs by hand
+
+Each transform calls a function which takes structures and returns a `Graph`, or indices of
+its edges. They are used directly in a model which builds its own graph, or to write another
+transform.
+
+### Radius graph
+
+```python
+from torchms.data import Structures
+from torchms.graph.cutoff import cutoff
+
+structures = Structures.zincblende()
+graph = cutoff(structures, 3.0)
+
+graph.edge_index          # (2, n_edges): source and target atoms
+graph.edge_shift          # (n_edges, 3): periodic image of the target
+graph.num_edges           # tensor([32])
+graph.edges_distances()   # (n_edges,) in Å
+```
+
+The vector of an edge, in fractional coordinates, is
+`x[target] + edge_shift - x[source]`.
+
+By default an atom is never connected to itself. In a cell smaller than the radius an atom has
+its own periodic images as neighbours; ask for them with `self_images=True`:
+
+```python
+import torch
+
+cubic = Structures(lattice=torch.eye(3).unsqueeze(0) * 3.0, x=torch.zeros(1, 3), z=torch.tensor([29]))
+cutoff(cubic, 3.5).num_edges                     # tensor([0])
+cutoff(cubic, 3.5, self_images=True).num_edges   # tensor([6])
+```
+
+Fractional coordinates can be inside or outside the cell.
+
+### Nearest neighbours
+
+```python
+from torchms.graph.cutoff import nearest_neighbors
+
+graph = nearest_neighbors(cutoff(Structures.diamond(), 4.0), 4)
+graph.num_edges   # tensor([32]): the 4 nearest neighbours of 8 atoms
+```
+
+Edges of the result are sorted by source atom, then by length.
+
+### Chemical bonds
+
+`atomic_radius` connects two atoms closer than a multiple of the sum of their atomic radii, and
+can keep only the first shell of distances:
+
+```python
+from torchms.graph.atomic_radius import atomic_radius
+
+graph = atomic_radius(structures, scaling=1.1)
+```
+
+The graph is undirected: every edge has its reverse.
+
+### Batches
+
+Graph functions work on batches. `graph.edge_batch` is the structure of each edge and
+`graph.edge_ptr` the index of the first edge of each structure, as `batch` and `ptr` for atoms.
+
+```python
+batch = Structures.collate([Structures.diamond(), Structures.zincblende()])
+graph = cutoff(batch, 3.0)
+graph.num_edges    # edges of each structure
+```
+
+### Aggregation
+
+```python
+energy_per_atom = graph.aggregate_edges_to_nodes(edge_values)       # sum over the edges of an atom
+per_structure = graph.aggregate_nodes_to_structures(atom_values)
+```
+
+`torchms.graph.sparse.scatter` is the underlying function (`sum`, `mean`, `amax`, ...).
+
+### Angles and dihedrals
+
+Models with terms on three or four atoms need the pairs and the chains of edges of a graph.
+`triplets` gives the pairs of edges starting from the same atom, `quadruplets` the chains of
+three edges:
+
+```python
+from torchms.graph.geometry import dihedral_angles, triplet_cosines
+from torchms.graph.line_graph import quadruplets, triplets
+
+graph = cutoff(structures, 5.0)
+vectors = graph.edges_vectors()                      # (n_edges, 3), in Å
+
+triplet_index, triplet_batch, triplet_ptr = triplets(graph)
+cosines = triplet_cosines(vectors, triplet_index)    # angle at the shared atom
+
+short = graph.edges_distances() <= 3.0               # a shorter cutoff for the chains
+quadruplet_index, quadruplet_batch, quadruplet_ptr = quadruplets(graph, short)
+angles = dihedral_angles(vectors, quadruplet_index)  # around the middle edge
+```
+
+`triplet_index` (2, n_triplets) and `quadruplet_index` (3, n_quadruplets) hold indices of
+edges. An atom with d edges has d (d - 1) triplets, and the number of chains grows with the
+cube of the number of neighbours: both functions take a mask of the edges to keep, for a
+shorter cutoff than the one of the graph.
+
+`line_graph` is the function behind them, the pairs of edges head to tail (u→v, v→w): its
+result is the edge index of the graph whose nodes are the edges, and it applies to its own
+result. `reverse_edges` gives the reverse of each edge, `batched_join` the pairs of elements
+with the same key.
 
 ## Hash of a structure
 
