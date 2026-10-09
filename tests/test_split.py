@@ -224,6 +224,99 @@ class TestFilter:
             auto_loader([hdf5, hdf5], batch_size=4, filter=[None], device="cpu")
 
 
+STORAGES = [
+    "file",
+    "cpu",
+    pytest.param(
+        "cuda",
+        marks=pytest.mark.skipif(
+            not torch.cuda.is_available(), reason="CUDA not available"
+        ),
+    ),
+]
+
+
+def stored(hdf5: HDF5Dataset, storage: str):
+    """The dataset in its file, or in memory on a device."""
+    return hdf5 if storage == "file" else InMemoryDataset.from_hdf5(hdf5, storage)
+
+
+def place(dataset) -> tuple[type, str]:
+    """What a dataset is and where: it must not change when it is filtered."""
+    if isinstance(dataset, HDF5Dataset):
+        return HDF5Dataset, dataset.hdf5_file
+
+    return type(dataset), str(dataset.device())
+
+
+CONDITIONS = {
+    "atoms": Filter(min_atoms=2, max_atoms=5),
+    "elements": Filter(elements=tuple(range(1, 15))),
+    "exclude": Filter(exclude_elements=(3, 7, 11)),
+    "crystals": Filter(periodic=True),
+    "molecules": Filter(periodic=False),
+    "labels": Filter(maximum={"total_energy": -10.0}, known=("total_energy",)),
+    "properties": Filter(equal={"odd": 1}, minimum={"number": 7}),
+    "nothing kept": Filter(max_energy_above_hull=0.0),
+    "function": lambda structures: structures.lattice.det().abs() > 60.0,
+    "mask on the cpu": lambda structures: (structures.num_atoms > 3).cpu(),
+    # the answer depends on the batch the function is given
+    "depends on the batch": lambda structures: structures.num_atoms
+    > structures.num_atoms.float().mean(),
+}
+
+
+class TestSameEverywhere:
+    """A filter keeps the same structures of a dataset wherever it is, and leaves it there."""
+
+    @pytest.mark.parametrize("storage", STORAGES)
+    @pytest.mark.parametrize("name", list(CONDITIONS))
+    def test_filter(self, hdf5, structures, storage, name):
+        condition = CONDITIONS[name]
+        dataset = stored(hdf5, storage)
+
+        kept = dataset.filter(condition, chunk_size=9)
+
+        # the structures the filter of the file keeps
+        expected = numbers(hdf5.filter(condition, chunk_size=9)[:])
+        assert numbers(kept[:]) == expected
+        assert 0 < len(expected) < N or name == "nothing kept"
+        # where it was, and what it was
+        assert place(kept) == place(dataset)
+        assert kept[:].device() == dataset[:].device()
+        assert_same(kept[:].to("cpu"), hdf5.subset(expected)[:])
+
+    @pytest.mark.parametrize("storage", STORAGES)
+    def test_subset_and_split(self, hdf5, storage):
+        dataset = stored(hdf5, storage)
+
+        subset = dataset.subset([5, 1, 30])
+        parts = random_split(dataset.filter(Filter(periodic=True)), [0.6, 0.4], seed=1)
+        expected = random_split(hdf5.filter(Filter(periodic=True)), [0.6, 0.4], seed=1)
+
+        assert place(subset) == place(dataset) and numbers(subset[:]) == [5, 1, 30]
+        for part, same in zip(parts, expected):
+            assert place(part) == place(dataset)
+            assert numbers(part[:]) == numbers(same[:])
+
+    @pytest.mark.parametrize("storage", STORAGES)
+    def test_auto_loader(self, hdf5, storage):
+        """The loader gives the structures the filter keeps, on the device asked."""
+        dataset = stored(hdf5, storage)
+        device = "cuda" if storage == "cuda" else "cpu"
+        condition = Filter(equal={"odd": 0}, max_atoms=5)
+
+        loader = auto_loader(dataset, batch_size=4, filter=condition, device=device)
+        batches = list(loader)
+
+        assert sorted(n for batch in batches for n in numbers(batch)) == numbers(
+            hdf5.filter(condition)[:]
+        )
+        assert all(batch.device().type == device for batch in batches)
+        # the dataset given is not moved by the loader either
+        assert place(dataset) == place(stored(hdf5, storage))
+
+
 class TestSplit:
     @pytest.mark.parametrize(
         "fractions", [[0.8, 0.1, 0.1], [0.5, 0.5], [1.0], [0.3] * 3 + [0.1]]

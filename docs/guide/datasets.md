@@ -145,7 +145,11 @@ organic = dataset.filter(Filter(elements=(1, 6, 7, 8)))   # a dataset already lo
 - A structure without value for a label (`NaN`) does not pass a condition on it.
 
 The result is a dataset of the structures kept, in their order. It is read, split and given to
-`auto_loader` like any other, and nothing is copied for a dataset read from a file.
+`auto_loader` like any other.
+
+A filter keeps the same structures wherever the dataset is, and leaves it there: a dataset
+read from its file stays one (nothing is copied), a dataset in memory stays in memory, on its
+CPU or its GPU.
 
 For a condition a `Filter` cannot express, `dataset.filter` takes any function from
 `Structures` to a mask of the structures to keep, and `dataset.subset` the indices themselves:

@@ -190,17 +190,25 @@ class InMemoryDataset(Dataset):
         return InMemoryDataset(self.structures.select(index), self.transform)
 
     def filter(
-        self, condition: Callable[[Structures], torch.Tensor]
+        self,
+        condition: Callable[[Structures], torch.Tensor],
+        chunk_size: int = 65536,
     ) -> "InMemoryDataset":
         """Dataset of the structures which pass a condition.
+
+        The same structures are kept, in the same order, as by the filter of
+        the dataset read from its file: the condition is given the same
+        batches. The dataset stays where it is, in memory on its device.
 
         Args:
             condition: Gives the mask of the structures of a batch to keep,
                 shape (n_struct,): a torchms.data.filters.Filter, or any
-                function. It is given the structures without the transform.
+                function. It is given the structures without the transform,
+                on the device of the dataset.
+            chunk_size: Number of structures given to the condition at once.
 
         Returns:
-            A subset of the dataset, in the same order.
+            A subset of the dataset on the same device, in the same order.
 
         Examples:
             >>> from torchms.data.filters import Filter
@@ -209,7 +217,12 @@ class InMemoryDataset(Dataset):
             >>> dataset.filter(Filter(max_atoms=4)).structures.num_atoms
             tensor([3, 3])
         """
-        return self.subset(condition(self.structures).nonzero().squeeze(1))
+        device = self.device()
+        masks = [
+            condition(part).to(device) for part in self.structures.split(chunk_size)
+        ]
+
+        return self.subset(torch.cat(masks).nonzero().squeeze(1))
 
     def epoch_size(self) -> int:
         """Number of structures given in an epoch: each one once."""

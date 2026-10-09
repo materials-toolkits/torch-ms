@@ -203,14 +203,20 @@ class HDF5Dataset(Dataset):
     ) -> "HDF5Dataset":
         """Dataset of the structures which pass a condition.
 
+        The same structures are kept, in the same order, as by the filter of
+        the dataset held in memory, on a CPU or a GPU: the condition is given
+        the same batches. The dataset stays a dataset read from its file.
+
         Args:
             condition: Gives the mask of the structures of a batch to keep,
                 shape (n_struct,): a torchms.data.filters.Filter, or any
-                function. It is given the structures without the transform.
-            chunk_size: Number of structures read at once.
+                function. It is given the structures without the transform,
+                on the CPU.
+            chunk_size: Number of structures read and given to the condition
+                at once.
 
         Returns:
-            A subset of the dataset, in the same order.
+            A subset of the dataset, in the same order, reading the same file.
 
         Examples:
             >>> import tempfile
