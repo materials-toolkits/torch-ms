@@ -1,8 +1,12 @@
-"""Group actions on batched crystal structures.
+"""Group actions on batched structures.
 
 Every function takes the element of the group to apply, one per structure, and
 returns new structures describing the same crystals. They are deterministic:
 the elements are drawn in torchms.data.augmentation.sampling.
+
+Rotations, permutations and translations apply to molecules as to crystals.
+The actions on the cell, its basis and its repetition, leave a structure which
+is not periodic unchanged.
 """
 
 import dataclasses
@@ -26,6 +30,25 @@ def wrap(x: Float[torch.Tensor, "n 3"]) -> Float[torch.Tensor, "n 3"]:
         tensor([[0.2500, 0.7500, 0.0000]])
     """
     return torch.remainder(torch.remainder(x, 1.0), 1.0)
+
+
+def wrap_periodic(
+    structures: Structures, x: Float[torch.Tensor, "n_atoms 3"]
+) -> Float[torch.Tensor, "n_atoms 3"]:
+    """Wrap coordinates to [0, 1) along the periodic lattice vectors only.
+
+    Args:
+        structures: Structures of the atoms, for their periodicity.
+        x: Coordinates of their atoms, shape (n_atoms, 3).
+
+    Examples:
+        >>> crystal, molecule = Structures.diamond(), Structures.water()
+        >>> wrap_periodic(crystal, crystal.x + 0.75)[0]
+        tensor([0.7500, 0.7500, 0.7500])
+        >>> wrap_periodic(molecule, molecule.x + 1.5)[0]
+        tensor([1.5000, 1.5000, 1.5000])
+    """
+    return torch.where(structures.pbc[structures.batch], wrap(x), x)
 
 
 def permute_atoms(
@@ -103,14 +126,15 @@ def translate_atoms(
         translation: Translation in fractional coordinates, shape (n_struct, 3).
 
     Returns:
-        Structures with translated x, wrapped to [0, 1).
+        Structures with translated x, wrapped to [0, 1) along the periodic
+        lattice vectors.
 
     Examples:
         >>> structures = Structures.diamond()
         >>> translate_atoms(structures, torch.tensor([[0.5, 0.75, 1.0]])).x[0]
         tensor([0.5000, 0.7500, 0.0000])
     """
-    x = wrap(structures.x + translation[structures.batch])
+    x = wrap_periodic(structures, structures.x + translation[structures.batch])
 
     return dataclasses.replace(structures.without_graphs(), x=x)
 
@@ -148,6 +172,9 @@ def change_lattice_basis(
     they generate the same lattice: the cell changes, not the crystal. The
     cartesian positions are unchanged, up to a vector of the lattice.
 
+    A structure which is not periodic along its three lattice vectors has no
+    such lattice: it is left unchanged.
+
     Args:
         structures: Batched Structures object.
         basis: Integer matrices of determinant 1 with shape (n_struct, 3, 3).
@@ -170,13 +197,18 @@ def change_lattice_basis(
         >>> sheared.x[1]  # (0.5, 0.5, 0) in the previous cell
         tensor([0.5000, 0.0000, 0.0000])
     """
+    identity = torch.eye(3, dtype=basis.dtype, device=basis.device)
+    basis = torch.where(structures.pbc.all(dim=1)[:, None, None], basis, identity)
+
     inverse = unimodular_inverse(basis).to(structures.x.dtype)
 
     # cartesian = x @ lattice = (x @ basis^-1) @ (basis @ lattice)
     lattice = torch.bmm(basis.to(structures.lattice.dtype), structures.lattice)
     x = torch.bmm(structures.x.unsqueeze(1), inverse[structures.batch]).squeeze(1)
 
-    return dataclasses.replace(structures.without_graphs(), lattice=lattice, x=wrap(x))
+    return dataclasses.replace(
+        structures.without_graphs(), lattice=lattice, x=wrap_periodic(structures, x)
+    )
 
 
 def make_supercell(
@@ -186,7 +218,7 @@ def make_supercell(
 
     The atoms are ordered by cell, the atoms of a cell keep their order. The
     total energy is the one of the supercell, the other properties are
-    intensive and unchanged.
+    intensive and unchanged, the ones of Structures.properties included.
 
     With a change of basis before and after, every supercell is reached (Smith
     normal form of its integer matrix).
@@ -200,7 +232,8 @@ def make_supercell(
         Structures with prod(repeat) times the atoms of each structure.
 
     Raises:
-        ValueError: If a number of cells is lower than 1.
+        ValueError: If a number of cells is lower than 1, or greater than 1
+            along a lattice vector along which the structure is not periodic.
 
     Examples:
         >>> structures = Structures.collate(
@@ -214,6 +247,12 @@ def make_supercell(
     """
     if (repeat < 1).any():
         raise ValueError("a supercell must repeat the cell at least once")
+
+    if ((repeat > 1) & ~structures.pbc).any():
+        raise ValueError(
+            "a structure cannot be repeated along a lattice vector along which "
+            "it is not periodic"
+        )
 
     device = structures.device()
 

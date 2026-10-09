@@ -90,3 +90,6 @@ The elements are drawn with `random_permutation`, `random_orthogonal`, `random_t
   intensive and unchanged. `max_atoms` leaves a structure unchanged when its supercell would be
   larger. A supercell which is not aligned with the lattice vectors is a change of basis,
   a supercell, then another change of basis.
+- **Molecules**: a structure which is not periodic is permuted, rotated and translated as a
+  crystal, without wrapping. A change of basis and a supercell leave it unchanged. See
+  [Periodicity](../design/periodicity.md).

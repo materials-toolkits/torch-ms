@@ -1,4 +1,4 @@
-"""Random augmentations of batched crystal structures.
+"""Random augmentations of batched structures, crystals or molecules.
 
 Each transform draws one element of a group per structure and applies it. They
 are callables from Structures to Structures, to give as the transform of a
@@ -126,6 +126,9 @@ class AtomTranslation:
 class LatticeBasisChange:
     """Apply a random element of SL(3, Z) to each lattice.
 
+    A structure which is not periodic along its three lattice vectors is left
+    unchanged.
+
     Args:
         num_shears: Number of random elementary matrices multiplied to get the
             change of basis. The cells get more skewed as it grows.
@@ -157,6 +160,9 @@ class LatticeBasisChange:
 class Supercell:
     """Repeat the cell of each structure a random number of times.
 
+    A molecule is left unchanged: a structure is repeated only along the
+    lattice vectors along which it is periodic.
+
     Args:
         max_repeat: Maximum number of cells along a lattice vector, drawn
             uniformly from 1 to max_repeat for each lattice vector.
@@ -175,7 +181,11 @@ class Supercell:
 
     def __call__(self, structures: Structures) -> Structures:
         repeat = sampling.random_repeat(
-            structures.num_atoms, self.max_repeat, self.max_atoms, self.generator
+            structures.num_atoms,
+            self.max_repeat,
+            self.max_atoms,
+            self.generator,
+            structures.pbc,
         )
 
         return actions.make_supercell(structures, repeat)

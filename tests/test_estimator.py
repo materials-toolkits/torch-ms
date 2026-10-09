@@ -653,6 +653,16 @@ def test_estimator_predict(tmp_path, float_model):
     with pytest.raises(ValueError, match="ascending"):
         estimator.predict(dataset, np.array([2, 1]))
 
+    # a subset of the file: its structures, not the first rows of the file.
+    # They are in other batches than above, hence the wider tolerance.
+    subset = dataset.subset([3, 1, 2])
+    np.testing.assert_allclose(
+        estimator.predict(subset, max_atoms=10), expected[[3, 1, 2]], rtol=1e-4
+    )
+    np.testing.assert_allclose(
+        estimator.predict(subset, np.array([0, 2])), expected[[3, 2]], rtol=1e-4
+    )
+
 
 def test_estimator_correction_of_another_model(tmp_path):
     path = tmp_path / "correction.hdf5"

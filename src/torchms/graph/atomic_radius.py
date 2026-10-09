@@ -124,7 +124,11 @@ def atomic_radius(
     # the images of each pair which can be within the sum of its two radii,
     # exact for coordinates inside and outside the cell
     source, target, shift, pair_batch = periodic_pairs(
-        structures.x, structures.lattice, structures.ptr, scaling * radii
+        structures.x,
+        structures.lattice,
+        structures.ptr,
+        scaling * radii,
+        structures.pbc,
     )
 
     fractional = (structures.x[target] + shift.to(structures.x.dtype)) - (

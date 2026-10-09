@@ -1,8 +1,8 @@
-"""HDF5 dataset implementation for loading and saving crystal structures."""
+"""HDF5 dataset implementation for loading and saving structures."""
 
 import dataclasses
 import os
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any, Union
 import logging
 
@@ -16,9 +16,49 @@ from .batching import Structures
 
 logger = logging.getLogger(__name__)
 
+# group of the file holding the properties of Structures.properties
+PROPERTIES_GROUP = "properties"
+
+# rows are read as one block of the file when the block is at most this many
+# times larger than what is asked
+DENSE_BLOCK = 8
+
+# indices of structures of a dataset
+Indices = torch.Tensor | np.ndarray | Sequence[int]
+
+
+def as_indices(indices: Indices, length: int) -> np.ndarray:
+    """Indices of structures of a dataset as an array, checked.
+
+    Args:
+        indices: Indices of structures, in any order, from the end if they are
+            negative.
+        length: Number of structures of the dataset.
+
+    Returns:
+        Indices between 0 and length, shape (n,), int64.
+
+    Raises:
+        IndexError: If an index is not a structure of the dataset.
+
+    Examples:
+        >>> as_indices(torch.tensor([2, -1]), 4)
+        array([2, 3])
+    """
+    if isinstance(indices, torch.Tensor):
+        indices = indices.cpu().numpy()
+
+    array = np.asarray(indices, dtype=np.int64).reshape(-1)
+    array = np.where(array < 0, array + length, array)
+
+    if len(array) > 0 and (array.min() < 0 or array.max() >= length):
+        raise IndexError(f"indices must be structures of a dataset of {length}")
+
+    return array
+
 
 class HDF5Dataset(Dataset):
-    """HDF5 dataset for loading crystal structures from HDF5 files.
+    """HDF5 dataset for loading structures, crystals or molecules, from HDF5 files.
 
     The file is opened once in each process which reads the dataset: the
     dataset can be given to a DataLoader with several workers, and pickled.
@@ -27,10 +67,15 @@ class HDF5Dataset(Dataset):
     structures of a batch are read in one call and the transform is applied
     once, to the whole batch.
 
+    A dataset can be some of the structures of its file only: the part of a
+    split, or the structures kept by a filter. See subset and filter.
+
     Args:
         hdf5_file: Path of the HDF5 file.
         transform: Optional transform applied to each batch of structures read:
             augmentations, graph construction (torchms.graph.transforms).
+        indices: Rows of the file which are the structures of the dataset, in
+            their order, shape (n,). Every structure of the file by default.
 
     Examples:
         >>> import tempfile
@@ -48,15 +93,20 @@ class HDF5Dataset(Dataset):
         self,
         hdf5_file: str | os.PathLike,
         transform: Callable[[Structures], Structures] | None = None,
+        indices: Indices | None = None,
     ):
         self.hdf5_file = os.fspath(hdf5_file)
         self.transform = transform
+        self.indices: np.ndarray | None = None
 
         self._data_file: h5py.File | None = None
         self._pid: int | None = None
 
         # opened now, to fail here if the file cannot be read
-        _ = self.data_file
+        num_rows = self.dataset("num_atoms").shape[0]
+
+        if indices is not None:
+            self.indices = as_indices(indices, num_rows)
 
     @property
     def data_file(self) -> h5py.File:
@@ -93,13 +143,125 @@ class HDF5Dataset(Dataset):
 
     def __len__(self) -> int:
         """Return the number of structures in the dataset."""
+        if self.indices is not None:
+            return len(self.indices)
+
         return self.dataset("num_atoms").shape[0]
+
+    def rows(self, indices: np.ndarray) -> np.ndarray:
+        """Rows of the file of structures of the dataset.
+
+        The arrays of the file (see dataset) have a row per structure of the
+        file, which are not the structures of a subset.
+
+        Args:
+            indices: Indices of structures of the dataset, shape (n,).
+
+        Returns:
+            Their rows in the arrays of the file, shape (n,).
+        """
+        if self.indices is None:
+            return indices
+
+        return self.indices[indices]
+
+    def subset(self, indices: Indices) -> "HDF5Dataset":
+        """Dataset of some of the structures, reading the same file.
+
+        Args:
+            indices: Indices of the structures kept, in the order they will
+                have, shape (n,).
+
+        Returns:
+            A dataset of these structures, with the same transform. Nothing
+            is copied.
+
+        Examples:
+            >>> import tempfile
+            >>> batch = Structures.collate([Structures.diamond(), Structures.water()])
+            >>> with tempfile.TemporaryDirectory() as directory:
+            ...     file = os.path.join(directory, "structures.hdf5")
+            ...     HDF5Dataset.from_structures(file, [batch, batch])
+            ...     subset = HDF5Dataset(file).subset([3, 0])
+            ...     len(subset), subset[:].num_atoms, subset.subset([1])[0].num_atoms
+            (2, tensor([3, 8]), tensor([8]))
+        """
+        rows = self.rows(as_indices(indices, len(self)))
+
+        return HDF5Dataset(self.hdf5_file, self.transform, rows)
+
+    def with_transform(
+        self, transform: Callable[[Structures], Structures] | None
+    ) -> "HDF5Dataset":
+        """The same dataset with another transform."""
+        return HDF5Dataset(self.hdf5_file, transform, self.indices)
+
+    def filter(
+        self,
+        condition: Callable[[Structures], torch.Tensor],
+        chunk_size: int = 65536,
+    ) -> "HDF5Dataset":
+        """Dataset of the structures which pass a condition.
+
+        The same structures are kept, in the same order, as by the filter of
+        the dataset held in memory, on a CPU or a GPU: the condition is given
+        the same batches. The dataset stays a dataset read from its file.
+
+        Args:
+            condition: Gives the mask of the structures of a batch to keep,
+                shape (n_struct,): a torchms.data.filters.Filter, or any
+                function. It is given the structures without the transform,
+                on the CPU.
+            chunk_size: Number of structures read and given to the condition
+                at once.
+
+        Returns:
+            A subset of the dataset, in the same order, reading the same file.
+
+        Examples:
+            >>> import tempfile
+            >>> from torchms.data.filters import Filter
+            >>> batch = Structures.collate([Structures.diamond(), Structures.water()])
+            >>> with tempfile.TemporaryDirectory() as directory:
+            ...     file = os.path.join(directory, "structures.hdf5")
+            ...     HDF5Dataset.from_structures(file, [batch, batch])
+            ...     molecules = HDF5Dataset(file).filter(Filter(periodic=False))
+            ...     len(molecules), molecules[:].num_atoms
+            (2, tensor([3, 3]))
+        """
+        plain = self.with_transform(None)
+
+        # the structures are read by chunks: a file can be larger than memory
+        masks = [
+            condition(plain[start : start + chunk_size]).cpu()
+            for start in range(0, len(self), chunk_size)
+        ]
+        kept = torch.cat(masks).nonzero().squeeze(1)
+
+        return self.subset(kept)
+
+    def has_pbc(self) -> bool:
+        """Whether the file says which structures are periodic.
+
+        A file without it holds crystals only: every structure is periodic.
+        """
+        return "pbc" in self.data_file
+
+    def property_names(self) -> list[str]:
+        """Names of the properties of the file read in Structures.properties."""
+        group = self.data_file.get(PROPERTIES_GROUP)
+
+        if not isinstance(group, h5py.Group):
+            return []
+
+        return list(group.keys())
 
     def read(self, name: str, indices: np.ndarray) -> torch.Tensor:
         """Read rows of a dataset of the file, in any order.
 
         HDF5 reads rows in ascending order without duplicates: other indices
-        are read sorted, then put back in the order asked.
+        are read sorted, then put back in the order asked. Rows close to each
+        other are read as one block.
 
         Args:
             name: Name of the dataset.
@@ -110,6 +272,21 @@ class HDF5Dataset(Dataset):
             Rows in the order of indices, shape (n, ...).
         """
         dataset = self.dataset(name)
+
+        if len(indices) > 0:
+            first, last = int(indices.min()), int(indices.max())
+
+            # rows close to each other are read as one block of the file, and
+            # taken from it: reading rows one by one is much slower
+            if last - first + 1 <= DENSE_BLOCK * len(indices):
+                block = dataset[first : last + 1]
+
+                if len(block) == len(indices) and bool(
+                    (indices[1:] > indices[:-1]).all()
+                ):
+                    return torch.from_numpy(block)
+
+                return torch.from_numpy(block[indices - first])
 
         if len(indices) < 2 or bool((indices[1:] > indices[:-1]).all()):
             return torch.from_numpy(dataset[indices])
@@ -127,12 +304,15 @@ class HDF5Dataset(Dataset):
         if isinstance(idx, slice):
             indices = np.arange(*idx.indices(len(self)), dtype=np.int64)
         elif isinstance(idx, torch.Tensor):
-            indices = idx.type(torch.int64).flatten().numpy()
+            indices = idx.type(torch.int64).flatten().cpu().numpy()
         else:
             indices = np.array(idx, dtype=np.int64).reshape(-1)
 
         # indices from the end, as for a list
         indices = np.where(indices < 0, indices + len(self), indices)
+
+        # the rows of the file of the structures asked
+        indices = self.rows(indices)
 
         # Load structure data from indices
         lattice = self.read("lattice", indices)
@@ -142,6 +322,11 @@ class HDF5Dataset(Dataset):
         energy_above_hull = self.read("energy_above_hull", indices)
         band_gap = self.read("band_gap", indices)
         formation_energy_per_atom = self.read("formation_energy_per_atom", indices)
+        pbc = self.read("pbc", indices) if self.has_pbc() else None
+        properties = {
+            name: self.read(f"{PROPERTIES_GROUP}/{name}", indices)
+            for name in self.property_names()
+        }
 
         # Computing indices of atoms in the dataset
         batch = torch.arange(num_atoms.shape[0], dtype=torch.int64).repeat_interleave(
@@ -167,6 +352,8 @@ class HDF5Dataset(Dataset):
             energy_above_hull=energy_above_hull,
             band_gap=band_gap,
             formation_energy_per_atom=formation_energy_per_atom,
+            pbc=pbc,
+            properties=properties,
             _validate=True,
         )
 
@@ -195,6 +382,9 @@ class HDF5Dataset(Dataset):
         repo_id: str,
         filename: str,
         transform: Callable[[Structures], Structures] | None = None,
+        filter: (  # pylint: disable=redefined-builtin
+            Callable[[Structures], torch.Tensor] | None
+        ) = None,
         **kwargs: Any,
     ) -> "HDF5Dataset":
         """Load a preprocessed dataset from a Hugging Face dataset repository.
@@ -205,6 +395,7 @@ class HDF5Dataset(Dataset):
             repo_id: Repository name, e.g. "user/dataset".
             filename: Path of the HDF5 file inside the repository.
             transform: Optional transform to apply to structures.
+            filter: Optional condition on the structures kept, see filter.
             **kwargs: Forwarded to huggingface_hub.hf_hub_download
                 (revision, token, cache_dir, ...).
         """
@@ -213,8 +404,12 @@ class HDF5Dataset(Dataset):
         )
 
         hdf5_file = hf_hub_download(repo_id, filename, repo_type="dataset", **kwargs)
+        dataset = cls(hdf5_file, transform=transform)
 
-        return cls(hdf5_file, transform=transform)
+        if filter is not None:
+            dataset = dataset.filter(filter)
+
+        return dataset
 
     @classmethod
     def get_tensor_type(cls, annotated_type: str) -> Union[torch.dtype, None]:
@@ -222,9 +417,14 @@ class HDF5Dataset(Dataset):
         types = {
             "LongTensor": np.int64,
             "FloatTensor": np.float32,
+            "Bool[": np.bool_,
             "Int[": np.int64,
             "Float[": np.float32,
         }
+
+        # a dictionary of tensors is not a tensor
+        if annotated_type.startswith("dict["):
+            return None
 
         for annot, dtype in types.items():
             if annot in annotated_type:
@@ -241,6 +441,11 @@ class HDF5Dataset(Dataset):
         "ptr" is stored as the global index of the first atom of each structure,
         so batches can be appended one after the other.
         """
+        if name.startswith(f"{PROPERTIES_GROUP}/"):
+            name = name.split("/", maxsplit=1)[1]
+            # pylint: disable-next=protected-access
+            return structures._properties_of([name])[name].cpu()
+
         tensor = getattr(structures, name).cpu()
 
         if name == "ptr":
@@ -252,7 +457,14 @@ class HDF5Dataset(Dataset):
     def from_structures(
         cls, hdf5_file: str | os.PathLike, structures: Structures | Iterable[Structures]
     ):
-        """Save structures to HDF5 file."""
+        """Save structures to HDF5 file.
+
+        The properties of Structures.properties saved are the ones of the
+        first structures. They are NaN for the next ones without them.
+
+        Raises:
+            ValueError: If structures have a property the first ones do not.
+        """
         if isinstance(structures, Structures):
             iterator = iter((structures,))
         else:
@@ -289,9 +501,29 @@ class HDF5Dataset(Dataset):
             offset = tensor.shape[0]
             datasets[field.name] = (dataset, offset)
 
+        names = list(first.properties)
+        for name in names:
+            tensor = first.properties[name].cpu()
+            dataset = data_file.create_dataset(
+                f"{PROPERTIES_GROUP}/{name}",
+                tensor.shape,
+                maxshape=(None,),
+                dtype=np.float32,
+            )
+            dataset[...] = tensor
+            datasets[f"{PROPERTIES_GROUP}/{name}"] = (dataset, tensor.shape[0])
+
         atoms_offset = int(first.num_atoms.sum())
 
         for struct in iterator:
+            unknown = sorted(set(struct.properties) - set(names))
+            if len(unknown) > 0:
+                data_file.close()
+                raise ValueError(
+                    f"properties {unknown} are not properties of the first "
+                    f'structures saved in "{hdf5_file}"'
+                )
+
             for name, (dataset, offset) in datasets.items():
                 tensor = cls._field_tensor(struct, name, atoms_offset)
 

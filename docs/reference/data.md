@@ -8,6 +8,12 @@
 
 ::: torchms.data.datasets
 
+## Filters and splits
+
+::: torchms.data.filters
+
+::: torchms.data.split
+
 ## HDF5 files
 
 ::: torchms.data.hdf5
@@ -27,8 +33,6 @@
 ## Preprocessing
 
 ::: torchms.data.preprocessing
-
-::: torchms.data.filters
 
 ## Data augmentation
 

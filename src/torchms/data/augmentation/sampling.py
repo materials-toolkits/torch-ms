@@ -6,7 +6,8 @@ DataLoader.
 """
 
 import torch
-from jaxtyping import Float, Int
+import torch.nn.functional as F
+from jaxtyping import Bool, Float, Int
 
 
 def random_permutation(
@@ -64,10 +65,26 @@ def random_orthogonal(
         tensor([1., 1., 1., 1.])
     """
     gaussian = torch.randn(n, 3, 3, generator=generator, device=device)
-    q, r = torch.linalg.qr(gaussian)  # pylint: disable=not-callable
 
-    # the QR decomposition is unique, and Q uniform, when diag(R) is positive
-    q = q * torch.diagonal(r, dim1=1, dim2=2).sign().unsqueeze(1)
+    # Q of the QR decomposition with a positive diagonal of R, which is
+    # uniform: the columns orthonormalised one after the other (Gram-Schmidt).
+    # torch.linalg.qr gives it too, forty times slower on a GPU for matrices
+    # this small.
+    a, b, c = gaussian.unbind(dim=2)
+    first = F.normalize(a, dim=1)
+
+    # subtracted twice: once leaves a part along the first column when the
+    # two columns are almost parallel
+    b = b - (first * b).sum(dim=1, keepdim=True) * first
+    b = b - (first * b).sum(dim=1, keepdim=True) * first
+    second = F.normalize(b, dim=1)
+
+    # the third column is normal to the two others, on the side of c
+    normal = torch.cross(first, second, dim=1)
+    side = (normal * c).sum(dim=1, keepdim=True)
+    third = F.normalize(normal, dim=1) * torch.where(side < 0, -1.0, 1.0)
+
+    q = torch.stack([first, second, third], dim=2)
 
     if proper:
         # in odd dimension -Q is the rotation of a rotoreflection Q
@@ -135,6 +152,7 @@ def random_repeat(
     max_repeat: int,
     max_atoms: int | None = None,
     generator: torch.Generator | None = None,
+    pbc: Bool[torch.Tensor, "n_struct 3"] | None = None,
 ) -> Int[torch.Tensor, "n_struct 3"]:
     """Draw the number of cells of a supercell along each lattice vector.
 
@@ -145,6 +163,10 @@ def random_repeat(
         max_atoms: Maximum number of atoms of a supercell. A structure whose
             supercell is larger is not repeated.
         generator: Random number generator.
+        pbc: Whether each structure is periodic along each lattice vector,
+            shape (n_struct, 3). A structure is not repeated along a lattice
+            vector along which it is not periodic. Every structure is periodic
+            by default.
 
     Returns:
         Number of cells with shape (n_struct, 3).
@@ -161,6 +183,9 @@ def random_repeat(
         generator=generator,
         device=num_atoms.device,
     )
+
+    if pbc is not None:
+        repeat = torch.where(pbc, repeat, 1)
 
     if max_atoms is not None:
         repeat[num_atoms * repeat.prod(dim=1) > max_atoms] = 1

@@ -38,6 +38,30 @@ a file, and `HDF5Dataset.from_hub(repo_id, filename)` loads a file of any reposi
 | `materials-project` | Materials Project (2026.09.28) | [materials-toolkits/materials-project](https://huggingface.co/datasets/materials-toolkits/materials-project) | `all` | 271,325 | total energy, formation energy, energy above hull, band gap |
 | `oqmd` | OQMD (v1.8) | [materials-toolkits/oqmd](https://huggingface.co/datasets/materials-toolkits/oqmd) | `all`, `unique` | 1,407,269 / 1,259,553 | total energy, formation energy, stability, band gap |
 | `lematerial` | LeMat-Bulk (PBE) | [materials-toolkits/lematerial](https://huggingface.co/datasets/materials-toolkits/lematerial) | `all`, `unique` | 5,335,299 / 4,927,038 | total energy, energy above hull |
+| `qmof` | QMOF Database (v18), MOFs | [materials-toolkits/qmof](https://huggingface.co/datasets/materials-toolkits/qmof) | `all` | 20,372 | total energy, band gap, 9 properties |
+| `core-mof` | CoRE MOF 2019, experimental MOFs | [materials-toolkits/core-mof](https://huggingface.co/datasets/materials-toolkits/core-mof) | `asr`, `fsr` | 12,020 / 7,061 | 13 properties, no energy |
+| `core-mof-2024` | CoRE MOF 2024, public part | [materials-toolkits/core-mof-2024](https://huggingface.co/datasets/materials-toolkits/core-mof-2024) | `asr`, `fsr`, `ion`, `ncr` | 1,371 / 1,191 / 100 / 1,826 | 16 properties, no energy |
+| `qm9` | QM9, molecules | [materials-toolkits/qm9](https://huggingface.co/datasets/materials-toolkits/qm9) | `all` | 133,885 | total energy, HOMO-LUMO gap, 17 properties |
+| `zinc250k` | ZINC250k, molecules, positions from RDKit | [materials-toolkits/zinc250k](https://huggingface.co/datasets/materials-toolkits/zinc250k) | `all` | 249,427 | 4 properties, no energy |
+
+Molecules are structures which are not periodic (`structures.pbc`). Crystals and molecules have
+the same format and are loaded together: `auto_loader(["mp-20/train", "qm9"], batch_size=128)`.
+The labels of a dataset beyond the four common ones are in `structures.properties`. ZINC20 in
+3D and the MOFs of the Cambridge Structural Database are built locally by a script, see the
+documentation.
+
+A dataset is filtered when it is loaded, split at random from a seed, and mixed with others in
+fixed shares per batch:
+
+```python
+from torchms.data import Filter, auto_loader, load_dataset, random_split
+
+qm9 = load_dataset("qm9", filter=Filter(equal={"uncharacterized": 0}))
+train, val, test = random_split(qm9, [0.8, 0.1, 0.1], seed=0)
+
+# 64 crystals and 64 molecules in every batch
+loader = auto_loader(["mp-20/train", train], batch_size=128, counts=[64, 64], shuffle=True)
+```
 
 Datasets are complete and unfiltered: unphysical labels of the sources are kept, filter
 them when loading or preprocessing. Missing labels are NaN. `unique` files drop the

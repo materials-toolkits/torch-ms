@@ -78,9 +78,16 @@ nav:
       - Materials Project: datasets/materials-project.md
       - OQMD: datasets/oqmd.md
       - LeMat-Bulk: datasets/lematerial.md
+      - QMOF: datasets/qmof.md
+      - CoRE MOF 2019: datasets/core-mof.md
+      - CoRE MOF 2024: datasets/core-mof-2024.md
+      - QM9: datasets/qm9.md
+      - ZINC250k: datasets/zinc250k.md
+      - To build yourself: datasets/local.md
   - Design notes:
       - Batching convention: design/batching.md
       - Graph conventions: design/graphs.md
+      - Periodicity: design/periodicity.md
       - Convex hull: design/hull.md
       - Energy estimator: design/estimator.md
       - Loader and graph construction: design/loader.md

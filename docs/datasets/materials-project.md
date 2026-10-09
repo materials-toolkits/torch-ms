@@ -23,7 +23,8 @@ dataset = load_dataset("materials-project")
 | `energy_above_hull` | `energy_above_hull` | eV/atom |
 | `band_gap` | `band_gap` | eV |
 
-Four materials have no label in the source and are kept with `NaN`.
+Eight materials miss labels in the source and are kept with `NaN`: each of the four labels is
+missing for four of them.
 
 ## Things to know
 
@@ -36,6 +37,31 @@ Four materials have no label in the source and are kept with `NaN`.
 - **Identifiers** are the new ones of the Materials Project (`mp-aaahgjou`), and are not in
   the file. Structures are in the order of the collection, deprecated materials removed.
 - No structure with partial occupancy was found in the collection.
+
+## Filters
+
+**Recommended**: the stable and meta-stable structures, at most 0.1 eV/atom above the hull. It
+also drops the four structures without energy above the hull.
+
+```python
+from torchms.data import Filter, load_dataset
+
+dataset = load_dataset("materials-project", filter=Filter(max_energy_above_hull=0.1))
+```
+
+| Filter | Keeps, of 271,325 |
+|---|---|
+| `Filter(max_energy_above_hull=0.1)`, **recommended** | 216,917 |
+| `Filter(max_energy_above_hull=0.0)`, on the hull | 141,128 |
+| `Filter(max_energy_above_hull=0.1, max_atoms=64)`, and cells which batch well | 203,780 |
+| `Filter(max_energy_above_hull=0.1, max_atoms=20)`, the selection of MP-20 on today's database | 123,240 |
+| `Filter(known=("total_energy", "formation_energy_per_atom", "energy_above_hull", "band_gap"))`, every label known | 271,317 |
+| `Filter(exclude_elements=(2, 10, 18, 36, 54, 86))`, without noble gases | 271,141 |
+
+No structure has a positive total energy: there is no failed calculation to remove, unlike in
+OQMD and LeMat-Bulk.
+
+See [Filtering a dataset](../guide/datasets.md#filtering-a-dataset) for every setting.
 
 ## Source and checks
 

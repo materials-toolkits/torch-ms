@@ -3,6 +3,10 @@
 `torchms.graph` builds graphs of crystals under periodic boundary conditions. An edge
 goes from an atom of the cell to an atom of the cell or of one of its periodic images.
 
+The same transforms and functions take molecules, alone or in a batch with crystals: the edges
+of a molecule are between its atoms, and their `edge_shift` is zero. See
+[Periodicity](../design/periodicity.md).
+
 1. [Graphs as transforms](#graphs-as-transforms): build graphs while a dataset is loaded.
 2. [Fields attached to the structures](#fields-attached-to-the-structures): what the
    transforms add, field by field.

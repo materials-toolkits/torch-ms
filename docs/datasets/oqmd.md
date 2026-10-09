@@ -53,6 +53,35 @@ entries are removed. Duplicates which OQMD does not mark are not removed.
 - `all_index.parquet` and `unique_index.parquet` give the `entry_id`, `calculation_id` and
   `structure_id` of each row.
 
+## Filters
+
+**Recommended**: remove the failed calculations, a positive total energy or a stability above
+5 eV/atom. Use it on `unique`, without the duplicates marked by OQMD.
+
+```python
+from torchms.data import Filter, load_dataset
+
+clean = Filter(maximum={"total_energy": 0.0, "energy_above_hull": 5.0})
+dataset = load_dataset("oqmd/unique", filter=clean)
+```
+
+| Filter | Keeps, of `all` / `unique` |
+|---|---|
+| none | 1,407,269 / 1,259,553 |
+| `Filter(maximum={"total_energy": 0.0, "energy_above_hull": 5.0})`, **recommended** | 1,406,469 / 1,258,843 |
+| the same with `minimum={"band_gap": 0.0}`, a band gap known and not negative | 1,403,318 / 1,255,869 |
+| `Filter(maximum={"total_energy": 0.0}, max_energy_above_hull=0.1)`, stable and meta-stable | 458,832 / 402,039 |
+| the same with `minimum={"energy_above_hull": -0.5}` | 458,675 / 401,887 |
+| the same as the fourth with `max_atoms=64` | 454,421 / 397,692 |
+
+- The stability of OQMD is negative for the phases below the hull of the others, which is
+  expected: `max_energy_above_hull` keeps them. 157 structures of `all` (152 of `unique`) are
+  more than 0.5 eV/atom below it, which is suspicious: the fifth filter drops them.
+- `total_energy` is the energy of the cell: `maximum={"total_energy": 0.0}` drops the
+  structures with a positive energy per atom whatever their size.
+
+See [Filtering a dataset](../guide/datasets.md#filtering-a-dataset) for every setting.
+
 ## Source and checks
 
 - SQL dump `qmdb__v1_8__022026.sql.gz` (21 GB), read as a stream without MySQL server.

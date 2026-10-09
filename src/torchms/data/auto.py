@@ -18,26 +18,26 @@ import math
 import os
 import statistics
 import time
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Sampler
 
 from .batching import Structures
 from .datasets import load_dataset
 from .hdf5 import HDF5Dataset
 from .loader import OnDevice
-from .memory import InMemoryDataset
+from .memory import Epoch, InMemoryDataset, MixedDataset, mix
 
 Transform = Callable[[Structures], Structures]
 Storage = Literal["gpu", "ram", "file"]
 
-# bytes of a dataset in memory, as Structures
-BYTES_PER_STRUCTURE = 68
+# bytes of a dataset in memory, as Structures, without its named properties
+BYTES_PER_STRUCTURE = 71
 BYTES_PER_ATOM = 28
 
 # share of the free memory a dataset can take, and the graphs of a large batch
@@ -453,9 +453,18 @@ def probe_batch_size(
     return chosen, lines
 
 
+# a published dataset by its name, a file or a dataset
+Source = str | os.PathLike | HDF5Dataset | InMemoryDataset
+
+
+# condition on the structures of a dataset which are kept
+Condition = Callable[[Structures], torch.Tensor]
+
+
 def resolve_source(
-    source: str | os.PathLike | HDF5Dataset | InMemoryDataset,
+    source: Source,
     split: str | None = None,
+    filter: Condition | None = None,  # pylint: disable=redefined-builtin
     **hub: Any,
 ) -> HDF5Dataset | InMemoryDataset:
     """Dataset of a source: a published dataset, a file or a dataset.
@@ -464,18 +473,21 @@ def resolve_source(
         source: Name of a published dataset ("mp-20", or "mp-20/train"), path
             of an HDF5 file, or a dataset without transform.
         split: Split of a published dataset, its first one by default.
+        filter: Condition on the structures kept, a Filter for instance.
         **hub: Forwarded to huggingface_hub.hf_hub_download for a published
             dataset (revision, token, cache_dir, ...).
 
     Returns:
-        The dataset of the source. A published dataset is downloaded on the
-        first call.
+        The dataset of the source, a subset of it with a filter. A published
+        dataset is downloaded on the first call.
 
     Raises:
         KeyError: If the source is neither a file nor a published dataset.
         ValueError: If the dataset has a transform, or a split is given for a
             source which is not a published dataset.
     """
+    dataset: HDF5Dataset | InMemoryDataset
+
     if isinstance(source, (HDF5Dataset, InMemoryDataset)):
         if split is not None:
             raise ValueError("a split is only given with the name of a dataset")
@@ -486,25 +498,147 @@ def resolve_source(
                 "augment or transform, which runs it where it is fastest"
             )
 
-        return source
-
-    if os.path.isfile(source):
+        dataset = source
+    elif os.path.isfile(source):
         if split is not None:
             raise ValueError("a split is only given with the name of a dataset")
 
-        return HDF5Dataset(source)
+        dataset = HDF5Dataset(source)
+    else:
+        dataset = load_dataset(os.fspath(source), split, **hub)
 
-    return load_dataset(os.fspath(source), split, **hub)
+    if filter is not None:
+        dataset = dataset.filter(filter)
+
+    return dataset
 
 
 def dataset_size(dataset: HDF5Dataset | InMemoryDataset) -> int:
     """Bytes of a dataset in memory, without reading it."""
     if isinstance(dataset, HDF5Dataset):
-        n_atoms = dataset.dataset("x").shape[0]
+        if dataset.indices is None:
+            n_atoms = dataset.dataset("x").shape[0]
+        else:
+            n_atoms = int(dataset.dataset("num_atoms")[...][dataset.indices].sum())
+        n_properties = len(dataset.property_names())
     else:
         n_atoms = len(dataset.structures.z)
+        n_properties = len(dataset.structures.properties)
 
-    return BYTES_PER_STRUCTURE * len(dataset) + BYTES_PER_ATOM * n_atoms
+    per_structure = BYTES_PER_STRUCTURE + 4 * n_properties
+
+    return per_structure * len(dataset) + BYTES_PER_ATOM * n_atoms
+
+
+def resolve_sources(
+    sources: Sequence[Source],
+    batch_size: int,
+    hardware: Hardware,
+    storage: Storage | None = None,
+    filter: (  # pylint: disable=redefined-builtin
+        Condition | Sequence[Condition | None] | None
+    ) = None,
+    counts: Sequence[int] | None = None,
+    epoch: Epoch = "shortest",
+    **hub: Any,
+) -> InMemoryDataset:
+    """One dataset in memory from several sources, see resolve_source.
+
+    Args:
+        sources: Published datasets ("mp-20/train"), files or datasets.
+        batch_size: Number of structures of the batches given.
+        hardware: What the loader can use: the dataset is put on the GPU if
+            it fits there, in RAM otherwise.
+        storage: Where the dataset lives, if it is already decided.
+        filter: Condition on the structures kept, for every source, or one
+            per source (None for a source which is not filtered).
+        counts: Number of structures of each source in a batch, see mix.
+            Without it, the structures of the sources are one dataset, each
+            one given once per epoch.
+        epoch: When an epoch of sources mixed with counts ends, see mix.
+        **hub: Forwarded to huggingface_hub.hf_hub_download.
+
+    Raises:
+        ValueError: If there is no source, if the datasets do not fit
+            together in memory, if there is not one filter or one count per
+            source, or if the counts do not sum to batch_size.
+    """
+    if len(sources) == 0:
+        raise ValueError("there must be at least one source")
+
+    filters: Sequence[Condition | None]
+    if filter is None or callable(filter):
+        filters = [filter] * len(sources)
+    else:
+        filters = filter
+
+    if len(filters) != len(sources):
+        raise ValueError("there must be one filter per source, or one for all")
+
+    if counts is not None:
+        if len(counts) != len(sources):
+            raise ValueError("there must be one count per source")
+
+        if sum(counts) != batch_size:
+            raise ValueError(
+                f"the counts {list(counts)} must sum to the batch size, {batch_size}"
+            )
+
+    datasets = [
+        resolve_source(source, filter=condition, **hub)
+        for source, condition in zip(sources, filters)
+    ]
+
+    if storage is None:
+        n_structures = sum(len(dataset) for dataset in datasets)
+        size = sum(dataset_size(dataset) for dataset in datasets)
+        storage = auto_config(n_structures, size, batch_size, hardware).storage
+
+    if storage == "file":
+        raise ValueError(
+            "several datasets are loaded together in memory, where these ones "
+            "do not fit"
+        )
+
+    device = hardware.device if storage == "gpu" else torch.device("cpu")
+    in_memory = [
+        (
+            InMemoryDataset.from_hdf5(dataset, device)
+            if isinstance(dataset, HDF5Dataset)
+            else dataset.to(device)
+        )
+        for dataset in datasets
+    ]
+
+    if counts is not None:
+        return mix(in_memory, counts, epoch)
+
+    return InMemoryDataset.concat(in_memory)
+
+
+class EpochOrder(Sampler[int]):
+    """Order of the structures of an epoch of a dataset in memory, for a DataLoader.
+
+    A DataLoader draws its own order. A dataset mixing several ones in fixed
+    shares has an order of its own, see MixedDataset.order: its batches are
+    cut in it.
+    """
+
+    def __init__(
+        self,
+        dataset: InMemoryDataset,
+        shuffle: bool,
+        generator: torch.Generator | None,
+    ):
+        self.dataset = dataset
+        self.shuffle = shuffle
+        self.generator = generator
+
+    def __iter__(self) -> Iterator[int]:
+        return iter(self.dataset.order(self.shuffle, self.generator).tolist())
+
+    def __len__(self) -> int:
+        return self.dataset.epoch_size()
 
 
 def chain(*transforms: Transform | None) -> Transform | None:
@@ -558,7 +692,9 @@ class AutoLoader:
         self.shuffle = shuffle
         self.drop_last = drop_last
         self.generator = generator
-        self.length = len(source)
+        self.length = (
+            source.epoch_size() if isinstance(source, InMemoryDataset) else len(source)
+        )
 
         self.dataset: HDF5Dataset | InMemoryDataset
         self.loader: DataLoader | None = None
@@ -576,20 +712,26 @@ class AutoLoader:
         if config.storage == "file":
             if not isinstance(source, HDF5Dataset):
                 raise ValueError("a dataset in memory has no file to read")
-            self.dataset = HDF5Dataset(source.hdf5_file, transform=in_workers)
+            self.dataset = source.with_transform(in_workers)
         else:
             device = config.device if config.storage == "gpu" else torch.device("cpu")
             if isinstance(source, HDF5Dataset):
                 source = InMemoryDataset.from_hdf5(source, device)
             elif source.device() != device:
                 source = source.to(device)
-            self.dataset = InMemoryDataset(source.structures, transform=in_workers)
+            self.dataset = source.with_transform(in_workers)
 
         if config.storage == "file" or config.graphs_on == "workers":
+            # datasets mixed in fixed shares are read in their own order
+            sampler = None
+            if isinstance(self.dataset, MixedDataset):
+                sampler = EpochOrder(self.dataset, shuffle, generator)
+
             self.loader = DataLoader(
                 self.dataset,
                 batch_size=config.loader_batch_size,
-                shuffle=shuffle,
+                shuffle=shuffle if sampler is None else None,
+                sampler=sampler,
                 num_workers=config.num_workers,
                 persistent_workers=config.num_workers > 0,
                 generator=generator,
@@ -676,7 +818,7 @@ def detect_config(
 
 
 def auto_loader(  # pylint: disable=too-many-arguments
-    source: str | os.PathLike | HDF5Dataset | InMemoryDataset,
+    source: Source | list[Source] | tuple[Source, ...],
     split: str | None = None,
     *,
     batch_size: int,
@@ -688,6 +830,11 @@ def auto_loader(  # pylint: disable=too-many-arguments
     probe: bool = True,
     config: LoaderConfig | None = None,
     generator: torch.Generator | None = None,
+    filter: (  # pylint: disable=redefined-builtin
+        Condition | Sequence[Condition | None] | None
+    ) = None,
+    counts: Sequence[int] | None = None,
+    epoch: Epoch = "shortest",
     **hub: Any,
 ) -> AutoLoader:
     """Loader of a dataset configured for the hardware at hand.
@@ -698,7 +845,10 @@ def auto_loader(  # pylint: disable=too-many-arguments
 
     Args:
         source: Name of a published dataset ("mp-20", or "mp-20/train"), path
-            of an HDF5 file, or a dataset without transform.
+            of an HDF5 file, or a dataset without transform. Or a list of
+            them, ["mp-20/train", "qm9"] for instance: the datasets are loaded
+            together in memory, and shuffled batches mix their structures,
+            crystals and molecules.
         split: Split of a published dataset, its first one by default.
         batch_size: Number of structures of the batches given.
         transform: Transform building the graphs (torchms.graph.transforms),
@@ -716,6 +866,18 @@ def auto_loader(  # pylint: disable=too-many-arguments
         config: Configuration to use, instead of detecting one. For instance
             the one of another loader, modified with dataclasses.replace.
         generator: Random number generator of the order of the structures.
+        filter: Condition on the structures kept, a Filter for instance:
+            Filter(max_atoms=64). For a list of sources, one filter for all
+            of them or a list with one per source, None for a source which is
+            not filtered.
+        counts: For a list of sources, number of structures of each one in
+            every batch: [64, 64] for two sources and batches of 128. They
+            must sum to batch_size. A small dataset is then not drowned by a
+            large one. In a batch, the structures are grouped by source.
+        epoch: When an epoch ends with counts. "shortest": when a source
+            cannot fill its share of a batch, no structure is given twice.
+            "longest": when every structure has been given, the smaller
+            sources are gone through several times.
         **hub: Forwarded to huggingface_hub.hf_hub_download for a published
             dataset (revision, token, cache_dir, ...).
 
@@ -725,7 +887,9 @@ def auto_loader(  # pylint: disable=too-many-arguments
 
     Raises:
         KeyError: If the source is neither a file nor a published dataset.
-        ValueError: If the dataset has a transform.
+        ValueError: If the dataset has a transform, if the datasets of a
+            list do not fit together in memory, or if counts are given
+            without a list of sources or do not sum to batch_size.
 
     Examples:
         >>> import tempfile
@@ -743,8 +907,31 @@ def auto_loader(  # pylint: disable=too-many-arguments
     if batch_size < 1:
         raise ValueError("batch_size must be positive")
 
-    dataset = resolve_source(source, split, **hub)
     hardware = detect_hardware(device if config is None else config.device)
+
+    dataset: HDF5Dataset | InMemoryDataset
+    if isinstance(source, (list, tuple)):
+        if split is not None:
+            raise ValueError("the split of each dataset of a list is given in its name")
+
+        dataset = resolve_sources(
+            source,
+            batch_size,
+            hardware,
+            None if config is None else config.storage,
+            filter=filter,
+            counts=counts,
+            epoch=epoch,
+            **hub,
+        )
+    else:
+        if counts is not None:
+            raise ValueError("counts are given with a list of sources")
+
+        if filter is not None and not callable(filter):
+            raise ValueError("one source takes one filter")
+
+        dataset = resolve_source(source, split, filter=filter, **hub)
 
     if config is None:
         config = detect_config(

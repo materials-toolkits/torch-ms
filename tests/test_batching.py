@@ -321,7 +321,7 @@ class TestStructuresDevice:
 
         assert moved is not struct
         assert moved.device() == torch.device("meta")
-        assert len(self.tensors(moved)) == 10
+        assert len(self.tensors(moved)) == 11
         for name, tensor in self.tensors(moved).items():
             original = getattr(struct, name)
             assert tensor.device == torch.device("meta"), name
@@ -372,7 +372,7 @@ class TestStructuresBatching:
 class TestStructuresEdgeCases:
     def test_zero_atoms_single_structure(self):
         with pytest.raises(
-            InvalidStructure, match="must contain at least one atom per crystal"
+            InvalidStructure, match="must contain at least one atom per structure"
         ):
             Structures(
                 lattice=torch.randn(1, 3, 3),
@@ -382,7 +382,7 @@ class TestStructuresEdgeCases:
 
     def test_mixed_zero_nonzero_atoms(self):
         with pytest.raises(
-            InvalidStructure, match="must contain at least one atom per crystal"
+            InvalidStructure, match="must contain at least one atom per structure"
         ):
             Structures(
                 lattice=torch.randn(2, 3, 3),
@@ -392,7 +392,7 @@ class TestStructuresEdgeCases:
             )
 
     def test_zero_structures(self):
-        with pytest.raises(InvalidStructure, match="must contain at least one crystal"):
+        with pytest.raises(InvalidStructure, match="must contain at least one structure"):
             Structures(
                 lattice=torch.empty(0, 3, 3),
                 x=torch.empty(0, 3),

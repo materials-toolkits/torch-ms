@@ -1,6 +1,6 @@
 # Structures
 
-`Structures` is the container of a batch of crystals. All the atoms of the batch are stored in
+`Structures` is the container of a batch of structures: crystals, molecules, or both. All the atoms of the batch are stored in
 flat tensors, one after the other, with index tensors to find the atoms of each structure.
 
 ## Fields
@@ -8,7 +8,7 @@ flat tensors, one after the other, with index tensors to find the atoms of each 
 | Field | Shape | Content |
 |---|---|---|
 | `lattice` | (n_struct, 3, 3) | lattice vectors as **rows**, in Å |
-| `x` | (n_atoms, 3) | fractional coordinates |
+| `x` | (n_atoms, 3) | fractional coordinates; positions in Å for a molecule |
 | `z` | (n_atoms,) | atomic numbers |
 | `num_atoms` | (n_struct,) | number of atoms of each structure |
 | `batch` | (n_atoms,) | index of the structure of each atom |
@@ -17,6 +17,8 @@ flat tensors, one after the other, with index tensors to find the atoms of each 
 | `formation_energy_per_atom` | (n_struct,) | formation energy in eV/atom |
 | `energy_above_hull` | (n_struct,) | energy above the convex hull in eV/atom |
 | `band_gap` | (n_struct,) | band gap in eV |
+| `pbc` | (n_struct, 3) | whether the structure is periodic along each lattice vector |
+| `properties` | dict of (n_struct,) | the other labels of a dataset, by name |
 
 Four more fields are `None` unless a [graph transform](graphs.md#graphs-as-transforms) sets
 them:
@@ -32,10 +34,11 @@ Their own fields are listed in
 [Fields attached to the structures](graphs.md#fields-attached-to-the-structures). They are
 batched, separated and moved to a device with the structures.
 
-A label which is unknown is `NaN`. Cartesian positions are `x @ lattice`:
+A label which is unknown is `NaN`. Cartesian positions are `x @ lattice`, for a crystal and for
+a molecule:
 
 ```python
-positions = torch.bmm(structures.x.unsqueeze(1), structures.lattice[structures.batch]).squeeze(1)
+positions = structures.positions()   # (n_atoms, 3), in Å
 ```
 
 ## Creating structures
@@ -58,6 +61,45 @@ structure.ptr         # tensor([0, 2])
 Structures.diamond()      # 8 carbon atoms
 Structures.zincblende()   # 4 Zn and 4 S
 ```
+
+## Molecules
+
+A molecule is a structure which is not periodic. It is created from its positions in Å:
+
+```python
+molecule = Structures.molecule([[0.0, 0.0, 0.0], [0.74, 0.0, 0.0]], z=[1, 1])
+molecule.pbc          # tensor([[False, False, False]])
+molecule.lattice      # the identity: x is the positions
+
+Structures.water()    # O, H, H
+```
+
+Crystals and molecules are batched together, and every transform takes such a batch:
+
+```python
+batch = Structures.collate([Structures.diamond(), Structures.water()])
+batch.pbc.all(dim=1)  # tensor([ True, False])
+```
+
+The graph of a molecule has no periodic image, and the augmentations do not wrap nor repeat
+it: see [Periodicity](../design/periodicity.md).
+
+## Named properties
+
+`properties` holds the labels of a dataset which are not one of the four fields, each one a
+tensor with one value per structure:
+
+```python
+structures = load_dataset("qm9")[:4]
+structures.properties["homo"]          # tensor of 4 values, in eV
+
+import dataclasses
+structures = dataclasses.replace(structures, properties={"score": torch.zeros(4)})
+```
+
+They follow the structures through `collate`, `separate`, `select`, `split` and `to`. A batch
+of structures with different properties has all of them, `NaN` where a structure has none.
+They are not changed by the augmentations: a supercell keeps the values of its cell.
 
 For several structures in one call, give `num_atoms`.
 
