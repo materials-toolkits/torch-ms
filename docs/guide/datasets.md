@@ -9,13 +9,13 @@ From a name to the batches of a training, in the order of this page:
 from torchms.data import Filter, auto_loader, load_dataset, random_split
 from torchms.graph.transforms import AddRadiusGraph
 
-# 1. load a dataset, 2. keep the structures you want
-dataset = load_dataset("qm9", filter=Filter(equal={"uncharacterized": 0}))
+# 1. load a dataset, 2. keep the structures you want: here without the failed calculations
+dataset = load_dataset("lematerial/unique", filter=Filter(maximum={"total_energy": 0.0}))
 
 # 3. split it
 train, val, test = random_split(dataset, [0.8, 0.1, 0.1], seed=0)
 
-# 4. batches of 128 molecules with their graph, on the GPU
+# 4. batches of 128 crystals with their graph, on the GPU
 loader = auto_loader(train, batch_size=128, transform=AddRadiusGraph(5.0), shuffle=True)
 
 for epoch in range(10):
@@ -23,6 +23,9 @@ for epoch in range(10):
         structures.graph.edge_index
         ...
 ```
+
+On LeMat-Bulk, 4.9 million structures, the filter takes 3 seconds and setting up the loader 8,
+on a desktop with an RTX 4060; the training set is then 3.9 million structures held on the GPU.
 
 | Step | With | Section |
 |---|---|---|
