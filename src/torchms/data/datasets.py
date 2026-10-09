@@ -10,6 +10,15 @@ Each dataset has a name and one HDF5 file per split:
 | materials-project | materials-toolkits/materials-project | all |
 | oqmd | materials-toolkits/oqmd | all, unique |
 | lematerial | materials-toolkits/lematerial | all, unique |
+| qmof | materials-toolkits/qmof | all |
+| core-mof | materials-toolkits/core-mof | asr, fsr |
+| core-mof-2024 | materials-toolkits/core-mof-2024 | asr, fsr, ion, ncr |
+| qm9 | materials-toolkits/qm9 | all |
+| zinc250k | materials-toolkits/zinc250k | all |
+
+The first six are inorganic crystals, qmof, core-mof and core-mof-2024 hold
+metal-organic frameworks, qm9 and zinc250k organic molecules, which are not periodic. They
+all have the same format and can be loaded together, see auto_loader.
 
 The default split of a dataset is its first one. A split can be given with the
 name, as "mp-20/test".
@@ -42,11 +51,14 @@ class DatasetAlias:
         splits: Name of its splits, the first one is the default. The file of
             a split is "<split>.hdf5".
         description: Content of the dataset.
+        license: License of the data, None when it is the one of its source,
+            given on the page of the dataset.
     """
 
     repo_id: str
     splits: tuple[str, ...]
     description: str
+    license: str | None = None
 
 
 _CDVAE_SPLITS = ("train", "val", "test")
@@ -85,6 +97,48 @@ DATASETS: dict[str, DatasetAlias] = {
         ("all", "unique"),
         "LeMat-Bulk compatible_pbe, 5,335,299 structures (all) or 4,927,038 with one "
         "structure per fingerprint (unique): total energy, energy above hull",
+    ),
+    "qmof": DatasetAlias(
+        "materials-toolkits/qmof",
+        ("all",),
+        "QMOF Database v18, 20,372 metal-organic frameworks relaxed with "
+        "PBE-D3(BJ), 17 to 500 atoms: total energy, band gap; properties: band "
+        "gap with HLE17, HSE06* and HSE06, pore diameters, density",
+        "CC BY 4.0",
+    ),
+    "core-mof": DatasetAlias(
+        "materials-toolkits/core-mof",
+        ("asr", "fsr"),
+        "CoRE MOF 2019, experimental metal-organic frameworks, 12,020 with all "
+        "solvent removed (asr) or 7,061 with free solvent removed (fsr), up to "
+        "10,560 atoms, no energy; properties: pore diameters, surface areas, "
+        "void fraction, density",
+        "CC BY 4.0",
+    ),
+    "core-mof-2024": DatasetAlias(
+        "materials-toolkits/core-mof-2024",
+        ("asr", "fsr", "ion", "ncr"),
+        "CoRE MOF 2024, public part: experimental metal-organic frameworks, "
+        "computation-ready with all solvent removed (asr, 1,371), free solvent "
+        "removed (fsr, 1,191) or their ions (ion, 100), and 1,826 which are not "
+        "computation-ready (ncr), no energy; properties: pore diameters, surface "
+        "areas, void fraction, predicted stabilities",
+        "CC BY 4.0",
+    ),
+    "qm9": DatasetAlias(
+        "materials-toolkits/qm9",
+        ("all",),
+        "QM9, 133,885 organic molecules with at most 9 heavy atoms (C, N, O, F), "
+        "not periodic: total energy (U0), HOMO-LUMO gap as band gap; properties: "
+        "the other targets of QM9 and the atomization energies",
+        "CC0",
+    ),
+    "zinc250k": DatasetAlias(
+        "materials-toolkits/zinc250k",
+        ("all",),
+        "ZINC250k, 249,427 drug-like organic molecules, not periodic, with one "
+        "conformer generated with RDKit (not from the source), no energy; "
+        "properties: logP, QED, SAS",
     ),
 }
 

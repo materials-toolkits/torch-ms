@@ -18,11 +18,16 @@ from torchms.data.datasets import (
 def test_available_datasets():
     assert available_datasets() == {
         "carbon-24": ("train", "val", "test"),
+        "core-mof": ("asr", "fsr"),
+        "core-mof-2024": ("asr", "fsr", "ion", "ncr"),
         "lematerial": ("all", "unique"),
         "materials-project": ("all",),
         "mp-20": ("train", "val", "test"),
         "oqmd": ("all", "unique"),
         "perov-5": ("train", "val", "test"),
+        "qm9": ("all",),
+        "qmof": ("all",),
+        "zinc250k": ("all",),
     }
     assert set(DATASETS) == set(available_datasets())
 
@@ -44,6 +49,12 @@ def test_available_datasets():
         ("oqmd", None, ("materials-toolkits/oqmd", "all.hdf5")),
         ("oqmd/unique", None, ("materials-toolkits/oqmd", "unique.hdf5")),
         ("lematerial", "unique", ("materials-toolkits/lematerial", "unique.hdf5")),
+        ("qm9", None, ("materials-toolkits/qm9", "all.hdf5")),
+        ("QMOF/all", None, ("materials-toolkits/qmof", "all.hdf5")),
+        ("core_mof", None, ("materials-toolkits/core-mof", "asr.hdf5")),
+        ("core-mof/fsr", None, ("materials-toolkits/core-mof", "fsr.hdf5")),
+        ("zinc250k", None, ("materials-toolkits/zinc250k", "all.hdf5")),
+        ("core-mof-2024/ncr", None, ("materials-toolkits/core-mof-2024", "ncr.hdf5")),
     ],
 )
 def test_resolve(name, split, expected):
