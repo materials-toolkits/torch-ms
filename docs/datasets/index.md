@@ -31,7 +31,7 @@ See [Loading datasets](../guide/datasets.md) to load them.
 Nothing is removed from the files. A good default for each dataset, with what it keeps; the
 page of each dataset has the others and what they keep.
 
-```python
+```{.python notest}
 from torchms.data import Filter, load_dataset
 
 dataset = load_dataset("qm9", filter=Filter(equal={"uncharacterized": 0}))

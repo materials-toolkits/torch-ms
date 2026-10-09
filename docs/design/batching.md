@@ -10,7 +10,7 @@ Geometric does:
 "Elements" are atoms for `Structures` (`batch`, `ptr`) and edges for `Graph` (`edge_batch`,
 `edge_ptr`).
 
-```python
+```{.python notest}
 ptr = F.pad(torch.cumsum(counts, dim=0), (1, 0), value=0)   # ptr from counts
 batch = torch.arange(len(counts), device=device).repeat_interleave(counts)
 ```
@@ -19,7 +19,7 @@ batch = torch.arange(len(counts), device=device).repeat_interleave(counts)
 
 Operations are written on the whole batch. Sums per structure use `scatter`:
 
-```python
+```{.python notest}
 from torchms.graph.sparse import scatter
 
 energy = scatter(atom_energies, structures.batch, n_struct)          # sum over atoms
@@ -30,7 +30,7 @@ Combinations inside each structure (pairs of atoms, atoms × periodic images) us
 decomposed like a number in a mixed base. `batched_cartesian_product_2` and
 `batched_cartesian_product_3` implement it:
 
-```python
+```{.python notest}
 from torchms.graph.sparse import batched_cartesian_product_2
 
 indices, batch, ptr = batched_cartesian_product_2(ptr_a, ptr_b)

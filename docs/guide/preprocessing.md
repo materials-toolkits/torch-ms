@@ -64,7 +64,7 @@ rows of the source.
 
 `scripts/_cif_writer.py` writes blocks in the expected format:
 
-```python
+```{.python notest}
 from _cif_writer import write_block
 
 with open("structures.cif", "w") as fp:

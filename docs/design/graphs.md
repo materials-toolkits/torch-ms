@@ -5,7 +5,7 @@
 The **rows** of `lattice` are the lattice vectors. A fractional vector `f` is the cartesian
 vector `f @ lattice`:
 
-```python
+```{.python notest}
 cartesian = torch.bmm(fractional.unsqueeze(1), lattice[batch]).squeeze(1)
 ```
 
@@ -14,7 +14,7 @@ cartesian = torch.bmm(fractional.unsqueeze(1), lattice[batch]).squeeze(1)
 An edge goes from `edge_index[0]` (source, in the cell) to `edge_index[1]` (target).
 `edge_shift` is the periodic image of the target: its vector is
 
-```python
+```{.python notest}
 fractional = x[target] + edge_shift - x[source]
 ```
 

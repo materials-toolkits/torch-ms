@@ -20,7 +20,7 @@ invariant features, with coupling tensors stored with the weights: they depend
 on three and four atoms. The energy is a sum over the atoms of a read-out of
 each layer, and of a reference energy per element.
 
-Weights are the ones published with mace, see weights.py. They are a pickled
+Weights are the ones published with mace, see config.yaml. They are a pickled
 model, read without mace by reader.py.
 """
 
@@ -34,35 +34,55 @@ import torch
 from jaxtyping import Float, Int
 from torch import nn
 
+from torchms.data.augmentation.transforms import Compose, Transform
 from torchms.data.batching import Structures
+from torchms.estimator.config import load_config
 from torchms.estimator.mace.reader import read_model
-from torchms.estimator.mace.weights import download
-from torchms.estimator.orb.model import polynomial_cutoff, spherical_harmonics
-from torchms.graph.cutoff import cutoff
+from torchms.estimator.pretrained import (
+    InvalidWeights,
+    PretrainedModel,
+    element_index,
+    element_table,
+)
+from torchms.estimator.weights import download
+from torchms.graph.geometry import cartesian
 from torchms.graph.graph import Graph
-from torchms.graph.sparse import scatter
+from torchms.graph.transforms import AddRadiusGraph, attached_graph
+from torchms.models.basis import (
+    DEGREES,
+    NUM_HARMONICS,
+    polynomial_cutoff,
+    sine_bessel,
+    spherical_harmonics,
+)
 
-RADIUS = 6.0
-NUM_CHANNELS = 128
-NUM_ELEMENTS = 89
-NUM_BESSEL = 10
-CUTOFF_POWER = 5
-NUM_LAYERS = 2
-MAX_L = 3
-NUM_HARMONICS = (MAX_L + 1) ** 2
-READOUT_DIM = 16
+# every value of the model is in config.yaml, next to this module
+CONFIG = load_config(__file__)
 
-# degree l of each of the 16 spherical harmonics
-DEGREES = tuple(degree for degree in range(MAX_L + 1) for _ in range(2 * degree + 1))
+RADIUS: float = CONFIG["graph"]["radius"]
 
-
-class InvalidWeights(Exception):
-    """Raised when weights do not match the parameters of the model."""
+NUM_CHANNELS: int = CONFIG["model"]["num_channels"]
+NUM_ELEMENTS: int = CONFIG["model"]["num_elements"]
+NUM_BESSEL: int = CONFIG["model"]["num_bessel"]
+CUTOFF_POWER: int = CONFIG["model"]["cutoff_power"]
+NUM_LAYERS: int = CONFIG["model"]["num_layers"]
+MAX_L: int = CONFIG["model"]["max_l"]
+RADIAL_HIDDEN: int = CONFIG["model"]["radial_hidden"]
+READOUT_DIM: int = CONFIG["model"]["readout_dim"]
+NUM_COUPLINGS: tuple[int, int, int] = tuple(CONFIG["model"]["num_couplings"])
+ACTIVATION: float = CONFIG["model"]["activation"]
 
 
 def weight(*shape: int) -> nn.Parameter:
     """Parameter of a layer, drawn from a normal distribution as in e3nn."""
     return nn.Parameter(torch.randn(*shape, dtype=torch.float64))
+
+
+def linear(
+    features: Float[torch.Tensor, "n f"], matrix: Float[torch.Tensor, "f d"]
+) -> Float[torch.Tensor, "n d"]:
+    """Linear layer of e3nn, normalized by the square root of the size of its input."""
+    return features @ matrix / math.sqrt(matrix.shape[0])
 
 
 class Interaction(nn.Module):
@@ -77,10 +97,10 @@ class Interaction(nn.Module):
         self.linear_up = weight(NUM_CHANNELS, NUM_CHANNELS)
         self.radial = nn.ParameterList(
             [
-                weight(NUM_BESSEL, 64),
-                weight(64, 64),
-                weight(64, 64),
-                weight(64, (MAX_L + 1) * NUM_CHANNELS),
+                weight(NUM_BESSEL, RADIAL_HIDDEN),
+                weight(RADIAL_HIDDEN, RADIAL_HIDDEN),
+                weight(RADIAL_HIDDEN, RADIAL_HIDDEN),
+                weight(RADIAL_HIDDEN, (MAX_L + 1) * NUM_CHANNELS),
             ]
         )
         self.linear = weight(MAX_L + 1, NUM_CHANNELS, NUM_CHANNELS)
@@ -91,7 +111,7 @@ class Interaction(nn.Module):
     ) -> Float[torch.Tensor, "n_edges 4 c"]:
         """Weight of each edge for each degree l and each channel."""
         for i, matrix in enumerate(self.radial):
-            radial = radial @ matrix / math.sqrt(matrix.shape[0])
+            radial = linear(radial, matrix)
             if i < len(self.radial) - 1:
                 radial = activation * nn.functional.silu(radial)
 
@@ -101,13 +121,12 @@ class Interaction(nn.Module):
         self,
         features: Float[torch.Tensor, "n_atoms c"],
         element: Int[torch.Tensor, "n_atoms"],
-        edge_index: Int[torch.Tensor, "2 n_edges"],
+        graph: Graph,
         radial: Float[torch.Tensor, "n_edges b"],
         harmonics: Float[torch.Tensor, "n_edges 16"],
         constants: tuple[float, float],
     ) -> tuple[Float[torch.Tensor, "n_atoms c 16"], Float[torch.Tensor, "n_atoms c"]]:
         activation, avg_num_neighbors = constants
-        sender, receiver = edge_index
         degrees = torch.tensor(DEGREES, device=features.device)
 
         # features of the atom itself, mixed with weights of its element
@@ -115,12 +134,13 @@ class Interaction(nn.Module):
             NUM_CHANNELS * NUM_ELEMENTS
         )
 
-        features = features @ self.linear_up / math.sqrt(NUM_CHANNELS)
+        features = linear(features, self.linear_up)
 
         # (n_edges, c, 16): one weight per degree, repeated on its harmonics
         weights = self.radial_weights(radial, activation)[:, degrees].transpose(1, 2)
-        messages = weights * features[sender].unsqueeze(-1) * harmonics.unsqueeze(1)
-        received = scatter(messages, receiver, features.shape[0])
+        neighbors = graph.unpool_senders(features)
+        messages = weights * neighbors.unsqueeze(-1) * harmonics.unsqueeze(1)
+        received = graph.aggregate_edges_to_nodes(messages)
 
         # channels are mixed with one matrix per degree
         mixed = torch.einsum("bum,muv->bvm", received, self.linear[degrees])
@@ -140,7 +160,7 @@ class Product(nn.Module):
     U_matrix_2: torch.Tensor
     U_matrix_3: torch.Tensor
 
-    def __init__(self, num_couplings: tuple[int, int, int] = (1, 4, 23)):
+    def __init__(self, num_couplings: tuple[int, int, int] = NUM_COUPLINGS):
         super().__init__()
         shape = (NUM_HARMONICS,)
         for order, num in enumerate(num_couplings, start=1):
@@ -186,36 +206,37 @@ class Product(nn.Module):
     ) -> Float[torch.Tensor, "n_atoms c"]:
         contracted = self.contract(environment, element)
 
-        return contracted @ self.linear / math.sqrt(NUM_CHANNELS) + skip
+        return linear(contracted, self.linear) + skip
 
 
 # parameters of mace → parameters of the rewrite, with their shape
 def _parameters(layer: int) -> dict[str, tuple[str, tuple[int, ...]]]:
     interaction, product = f"interactions.{layer}.", f"products.{layer}."
     contraction = product + "symmetric_contractions.contractions.0."
-    c, e = NUM_CHANNELS, NUM_ELEMENTS
+    c, e, h, hidden = NUM_CHANNELS, NUM_ELEMENTS, NUM_HARMONICS, RADIAL_HIDDEN
+    one, two, three = NUM_COUPLINGS
 
     return {
         interaction + "linear_up.weight": (f"interactions.{layer}.linear_up", (c, c)),
         interaction
         + "conv_tp_weights.layer0.weight": (
             f"interactions.{layer}.radial.0",
-            (NUM_BESSEL, 64),
+            (NUM_BESSEL, hidden),
         ),
         interaction
         + "conv_tp_weights.layer1.weight": (
             f"interactions.{layer}.radial.1",
-            (64, 64),
+            (hidden, hidden),
         ),
         interaction
         + "conv_tp_weights.layer2.weight": (
             f"interactions.{layer}.radial.2",
-            (64, 64),
+            (hidden, hidden),
         ),
         interaction
         + "conv_tp_weights.layer3.weight": (
             f"interactions.{layer}.radial.3",
-            (64, (MAX_L + 1) * c),
+            (hidden, (MAX_L + 1) * c),
         ),
         interaction
         + "linear.weight": (
@@ -223,12 +244,12 @@ def _parameters(layer: int) -> dict[str, tuple[str, tuple[int, ...]]]:
             (MAX_L + 1, c, c),
         ),
         interaction + "skip_tp.weight": (f"interactions.{layer}.skip", (c, e, c)),
-        contraction + "U_matrix_1": (f"products.{layer}.U_matrix_1", (16, 1)),
-        contraction + "U_matrix_2": (f"products.{layer}.U_matrix_2", (16, 16, 4)),
-        contraction + "U_matrix_3": (f"products.{layer}.U_matrix_3", (16, 16, 16, 23)),
-        contraction + "weights.1": (f"products.{layer}.weights_1", (e, 1, c)),
-        contraction + "weights.0": (f"products.{layer}.weights_2", (e, 4, c)),
-        contraction + "weights_max": (f"products.{layer}.weights_3", (e, 23, c)),
+        contraction + "U_matrix_1": (f"products.{layer}.U_matrix_1", (h, one)),
+        contraction + "U_matrix_2": (f"products.{layer}.U_matrix_2", (h, h, two)),
+        contraction + "U_matrix_3": (f"products.{layer}.U_matrix_3", (h, h, h, three)),
+        contraction + "weights.1": (f"products.{layer}.weights_1", (e, one, c)),
+        contraction + "weights.0": (f"products.{layer}.weights_2", (e, two, c)),
+        contraction + "weights_max": (f"products.{layer}.weights_3", (e, three, c)),
         product + "linear.weight": (f"products.{layer}.linear", (c, c)),
     }
 
@@ -243,13 +264,16 @@ PARAMETERS: dict[str, tuple[str, tuple[int, ...]]] = {
     "readouts.1.linear_2.weight": ("readout_1.1", (READOUT_DIM, 1)),
     "scale_shift.scale": ("scale", ()),
     "scale_shift.shift": ("shift", ()),
-    **_parameters(0),
-    **_parameters(1),
+    **{
+        name: target
+        for layer in range(NUM_LAYERS)
+        for name, target in _parameters(layer).items()
+    },
 }
 
 # classes of the model of mace the rewrite is written for
-MODEL_CLASS = "mace.modules.models.ScaleShiftMACE"
-INTERACTION_CLASS = "mace.modules.blocks.RealAgnosticResidualInteractionBlock"
+MODEL_CLASS: str = CONFIG["upstream"]["model_class"]
+INTERACTION_CLASS: str = CONFIG["upstream"]["interaction_class"]
 
 # values the rewrite relies on, checked in the weights of mace
 EXPECTED = {
@@ -263,7 +287,7 @@ EXPECTED = {
 
 # one tensor per group of weights of mace
 # pylint: disable-next=too-many-instance-attributes
-class MaceEnergyModel(nn.Module):
+class MaceEnergyModel(PretrainedModel):
     """Total energy of crystal structures predicted by MACE-MP-0 small.
 
     The model computes in double precision, as mace.
@@ -271,11 +295,14 @@ class MaceEnergyModel(nn.Module):
     Examples:
         >>> model = MaceEnergyModel()
         >>> structures = Structures.collate([Structures.diamond(), Structures.zincblende()])
+        >>> structures = model.transform()(structures)
         >>> with torch.no_grad():
         ...     energy = model(structures)
         >>> energy.shape, energy.dtype
         (torch.Size([2]), torch.float64)
     """
+
+    DEFAULT_WEIGHTS = CONFIG["default_weights"]
 
     atomic_numbers: torch.Tensor
     atomic_energies: torch.Tensor
@@ -306,27 +333,19 @@ class MaceEnergyModel(nn.Module):
 
         # constant of the normalized activation of e3nn, and mean number of
         # neighbours of an atom in the training of the model
-        self.activation = 1.6791767923989418
+        self.activation = ACTIVATION
         self.avg_num_neighbors = 1.0
 
-    @classmethod
-    def from_pretrained(
-        cls,
-        name: str = "mace-mp-0-small",
-        device: torch.device | str | None = None,
-        cache: str | os.PathLike | None = None,
-    ) -> MaceEnergyModel:
-        """Load a model with pretrained weights, downloaded on the first call.
-
-        Args:
-            name: Name of the weights, see torchms.estimator.mace.weights.
-            device: Device of the model.
-            cache: Directory of the downloaded weights.
+    def load_checkpoint(
+        self, name: str, cache: str | os.PathLike | None = None
+    ) -> None:
+        """Download weights listed in config.yaml and load them.
 
         Raises:
             InvalidWeights: If the file is not a MACE-MP-0 small model.
         """
-        state_dict, modules = read_model(download(name, cache))
+        (path,) = download("mace", name, cache)
+        state_dict, modules = read_model(path)
 
         interactions = [
             module
@@ -345,14 +364,11 @@ class MaceEnergyModel(nn.Module):
             if "cst" in module.attributes()
         }
 
-        model = cls()
-        model.load_pretrained(
+        self.load_pretrained(
             state_dict,
             float(interactions[0].attributes()["avg_num_neighbors"]),
             constants,
         )
-
-        return model.to(device).eval().requires_grad_(False)
 
     def load_pretrained(
         self,
@@ -389,10 +405,7 @@ class MaceEnergyModel(nn.Module):
 
         own["atomic_energies"] = own["atomic_energies"].double()
 
-        try:
-            self.load_state_dict(own, strict=True)
-        except RuntimeError as e:
-            raise InvalidWeights(str(e)) from e
+        self.load_parameters(own)
 
         if activation_constants:
             constants = set(activation_constants.values())
@@ -402,25 +415,34 @@ class MaceEnergyModel(nn.Module):
 
         self.avg_num_neighbors = float(avg_num_neighbors)
 
+    @classmethod
+    def transform(cls) -> Transform:
+        """Transform attaching the graph of the model.
+
+        Atoms closer than 6 Å are connected, periodic images of the atom itself
+        included.
+        """
+        return Compose([AddRadiusGraph(RADIUS, self_images=True)])
+
     def edges(
         self, structures: Structures
     ) -> tuple[Graph, Float[torch.Tensor, "n_edges 3"]]:
-        """Graph of the model and vector of each edge in Å, in double precision.
+        """Graph of the structures and vector of each edge in Å, in double precision.
 
-        Atoms closer than 6 Å are connected, periodic images of the atom itself
-        included. The vector of an edge goes from its sender to its receiver.
+        The graph is the one attached to the structures by transform. The
+        vector of an edge goes from its sender to its receiver.
+
+        Raises:
+            ValueError: If the structures have no graph.
         """
-        graph = cutoff(structures, RADIUS, self_images=True)
-        sender, receiver = graph.edge_index
+        self.check_graphs(structures)
+        graph = attached_graph(structures, self)
+        x = structures.x.double()
 
         fractional = (
-            structures.x.double()[receiver]
-            + graph.edge_shift
-            - structures.x.double()[sender]
+            graph.unpool_receivers(x) + graph.edge_shift - graph.unpool_senders(x)
         )
-        vectors = torch.bmm(
-            fractional.unsqueeze(1), structures.lattice.double()[graph.edge_batch]
-        ).squeeze(1)
+        vectors = cartesian(fractional, structures.lattice.double(), graph.edge_batch)
 
         return graph, vectors
 
@@ -430,22 +452,16 @@ class MaceEnergyModel(nn.Module):
         Raises:
             ValueError: If a structure has an element the model does not know.
         """
-        known = structures.z.unsqueeze(-1) == self.atomic_numbers
-        if not known.any(dim=-1).all():
-            unknown = structures.z[~known.any(dim=-1)].unique().tolist()
-            raise ValueError(f"elements {unknown} are not supported by the model")
-        element = known.long().argmax(dim=-1)
+        element = element_index(structures.z, element_table(self.atomic_numbers))
 
         graph, vectors = self.edges(structures)
-        distance = vectors.norm(dim=-1, keepdim=True)
+        distance = vectors.norm(dim=-1)
 
         harmonics = spherical_harmonics(vectors)
-        radial = (
-            math.sqrt(2.0 / RADIUS)
-            * torch.sin(self.bessel_weights * distance)
-            / distance
-            * polynomial_cutoff(distance, RADIUS, p=CUTOFF_POWER)
-        )
+        envelope = polynomial_cutoff(distance, RADIUS, p=CUTOFF_POWER)
+        radial = sine_bessel(
+            distance, self.bessel_weights, math.sqrt(2.0 / RADIUS)
+        ) * envelope.unsqueeze(-1)
 
         features = self.embedding[element] / math.sqrt(NUM_ELEMENTS)
         constants = (self.activation, self.avg_num_neighbors)
@@ -453,18 +469,19 @@ class MaceEnergyModel(nn.Module):
         per_layer = []
         for interaction, product in zip(self.interactions, self.products):
             environment, skip = interaction(
-                features, element, graph.edge_index, radial, harmonics, constants
+                features, element, graph, radial, harmonics, constants
             )
             features = product(environment, skip, element)
             per_layer.append(features)
 
         # read-out of each layer: linear for the first one, a network for the last
-        per_atom = per_layer[0] @ self.readout_0 / math.sqrt(NUM_CHANNELS)
-        hidden = per_layer[1] @ self.readout_1[0] / math.sqrt(NUM_CHANNELS)
-        hidden = self.activation * nn.functional.silu(hidden)
-        per_atom = per_atom + hidden @ self.readout_1[1] / math.sqrt(READOUT_DIM)
+        per_atom = linear(per_layer[0], self.readout_0)
+        hidden = self.activation * nn.functional.silu(
+            linear(per_layer[1], self.readout_1[0])
+        )
+        per_atom = per_atom + linear(hidden, self.readout_1[1])
 
         per_atom = self.scale * per_atom.squeeze(-1) + self.shift
         per_atom = per_atom + self.atomic_energies[element]
 
-        return scatter(per_atom, structures.batch, len(structures.num_atoms))
+        return graph.aggregate_nodes_to_structures(per_atom)

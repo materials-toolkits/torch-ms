@@ -1,0 +1,34 @@
+# MACE-MP-0 small of mace: weights, graph and hyperparameters, read by model.py.
+
+default_weights: mace-mp-0-small
+
+# pickled models of the releases of mace, read by reader.py without mace
+# files of the pretrained weights, by name: where a file is downloaded, its
+# expected SHA-256 and its name in the cache, the last part of the URL by default
+checkpoints:
+  mace-mp-0-small:
+    - url: https://github.com/ACEsuit/mace-mp/releases/download/mace_mp_0/2023-12-10-mace-128-L0_energy_epoch-249.model
+      sha256: 2ddb079cee0e131eaaf6912ba581b394551ead283e95c99cfe78c605d10b5736
+
+# atoms closer than the radius are connected
+graph:
+  radius: 6.0             # Å
+
+model:
+  num_channels: 128       # features of the atoms
+  num_elements: 89
+  num_bessel: 10          # functions of the radial basis
+  cutoff_power: 5         # power of the smooth cutoff of the edges
+  num_layers: 2
+  max_l: 3                # degree of the spherical harmonics
+  radial_hidden: 64       # hidden layers of the network of the radial functions
+  readout_dim: 16         # hidden layer of the read-out of the last layer
+  num_couplings: [1, 4, 23]   # invariants of one, two and three environments
+  # constant of the normalized activation of e3nn, replaced by the one stored
+  # with the weights
+  activation: 1.6791767923989418
+
+# classes of the model of mace the rewrite is written for
+upstream:
+  model_class: mace.modules.models.ScaleShiftMACE
+  interaction_class: mace.modules.blocks.RealAgnosticResidualInteractionBlock

@@ -92,6 +92,10 @@ class EnergyEstimator:
             repr(estimator).
 
     Attributes:
+        transform: Transform attaching to structures the graph the model
+            reads, the one of the class of the model. The estimator applies it
+            to the structures it is given without a graph; give it to a
+            dataset to build the graphs when the structures are loaded.
         hull_source: Where the hull comes from: the file it was loaded from
             and, for from_lematerial, the structures it was built with.
 
@@ -117,6 +121,7 @@ class EnergyEstimator:
         hull_source: str | None = None,
     ):
         self.model = model
+        self.transform = model.transform()
         self.device = next(model.parameters()).device
         self.correction: torch.Tensor | None = None
         self.hull = hull
@@ -239,8 +244,14 @@ class EnergyEstimator:
     def __call__(self, structures: Structures) -> Float[torch.Tensor, "n_struct"]:
         """Estimate the total energy of each structure of a batch, in eV.
 
-        Structures must be on the device of the model.
+        Structures must be on the device of the model. The model reads their
+        graph: structures without a graph are given to the transform of the
+        estimator first, structures with a graph are expected to have the one
+        of this transform.
         """
+        if structures.graph is None:
+            structures = self.transform(structures)
+
         energy = self.model(structures)
 
         if self.correction is not None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from typing import Literal
 
 import torch
 import torch.nn.functional as F
@@ -378,21 +379,76 @@ class Graph:
         """Length of each edge in Å."""
         return self.edges_vectors().norm(dim=-1)
 
+    @property
+    def senders(self) -> Int[torch.Tensor, "n_edges"]:
+        """Atom each edge starts from, the first row of edge_index."""
+        return self.edge_index[0]
+
+    @property
+    def receivers(self) -> Int[torch.Tensor, "n_edges"]:
+        """Atom each edge arrives at, the second row of edge_index."""
+        return self.edge_index[1]
+
+    def unpool_senders(
+        self, src: Float[torch.Tensor, "n_atoms ..."]
+    ) -> Float[torch.Tensor, "n_edges ..."]:
+        """Per-node features on the edges: the ones of the sender of each edge.
+
+        The opposite of aggregate_edges_to_nodes(to="sender").
+
+        Args:
+            src: Per-node features, shape (n_atoms, *).
+
+        Returns:
+            Features of the sender of each edge, shape (n_edges, *).
+
+        Examples:
+            >>> graph = Graph(
+            ...     edge_index=[[0, 1, 0], [1, 2, 2]],
+            ...     edge_shift=torch.zeros(3, 3, dtype=torch.int64),
+            ...     num_atoms=[3],
+            ...     num_edges=[3],
+            ... )
+            >>> atoms = torch.tensor([10.0, 20.0, 30.0])
+            >>> graph.unpool_senders(atoms), graph.unpool_receivers(atoms)
+            (tensor([10., 20., 10.]), tensor([20., 30., 30.]))
+        """
+        return src[self.senders]
+
+    def unpool_receivers(
+        self, src: Float[torch.Tensor, "n_atoms ..."]
+    ) -> Float[torch.Tensor, "n_edges ..."]:
+        """Per-node features on the edges: the ones of the receiver of each edge.
+
+        The opposite of aggregate_edges_to_nodes. See unpool_senders.
+        """
+        return src[self.receivers]
+
     def aggregate_edges_to_nodes(
         self,
         src: Float[torch.Tensor, "n_edges ..."],
         reduce: Reduce = "sum",
+        to: Literal["receiver", "sender"] = "receiver",
     ) -> Float[torch.Tensor, "n_atoms ..."]:
-        """Aggregate per-edge features to receiver nodes (message passing).
+        """Aggregate per-edge features to nodes (message passing).
 
         Args:
             src: Per-edge features, shape (n_edges, *).
             reduce: Reduction passed to scatter — 'sum', 'mean', 'amax', etc.
+            to: Atom of each edge which gets its features: its receiver, or
+                its sender.
 
         Returns:
             Per-node aggregated features, shape (n_atoms, *).
+
+        Raises:
+            ValueError: If to is not "receiver" or "sender".
         """
-        return scatter(src, self.edge_index[1], int(self.num_atoms.sum()), reduce)
+        if to not in ("receiver", "sender"):
+            raise ValueError(f'unknown end {to!r}, expected "receiver" or "sender"')
+
+        node = self.edge_index[1 if to == "receiver" else 0]
+        return scatter(src, node, int(self.num_atoms.sum()), reduce)
 
     def aggregate_nodes_to_structures(
         self,
@@ -408,9 +464,12 @@ class Graph:
         Returns:
             Per-structure aggregated features, shape (n_struct, *).
         """
-        node_batch = torch.arange(
-            len(self.num_atoms), device=self.device()
-        ).repeat_interleave(self.num_atoms)
+        if self.structures is not None:
+            node_batch = self.structures.batch
+        else:
+            node_batch = torch.arange(
+                len(self.num_atoms), device=self.device()
+            ).repeat_interleave(self.num_atoms)
         return scatter(src, node_batch, len(self.num_atoms), reduce)
 
     def aggregate_edges_to_structures(
@@ -751,6 +810,90 @@ class EdgeTuples:
     def device(self) -> torch.device:
         """Device on which the tensors are placed."""
         return self.index.device
+
+    def unpool_edges(
+        self, src: Float[torch.Tensor, "n_edges ..."], position: int
+    ) -> Float[torch.Tensor, "n_tuples ..."]:
+        """Per-edge features on the tuples: the ones of one edge of each tuple.
+
+        The opposite of aggregate_to_edges.
+
+        Args:
+            src: Per-edge features, shape (n_edges, *).
+            position: Row of index of the edge whose features are taken: 0 for
+                the first edge of each tuple, -1 for the last one.
+
+        Returns:
+            Features of this edge of each tuple, shape (n_tuples, *).
+
+        Examples:
+            >>> pairs = EdgeTuples(
+            ...     index=[[0, 0], [1, 2]], num_edges=[3], num_tuples=[2]
+            ... )
+            >>> edges = torch.tensor([10.0, 20.0, 30.0])
+            >>> pairs.unpool_edges(edges, 0), pairs.unpool_edges(edges, 1)
+            (tensor([10., 10.]), tensor([20., 30.]))
+        """
+        return src[self.index[position]]
+
+    def as_graph(self) -> Graph:
+        """Pairs of edges as a graph: the line graph.
+
+        Its nodes are the edges of the graph of the atoms and its edges are the
+        pairs: a pair is sent by its first edge and received by its second one.
+        It has no structures, so no geometry.
+
+        Raises:
+            ValueError: If the tuples are not pairs of edges.
+
+        Examples:
+            >>> pairs = EdgeTuples(
+            ...     index=[[0, 0], [1, 2]], num_edges=[3], num_tuples=[2]
+            ... )
+            >>> pairs.as_graph().aggregate_edges_to_nodes(torch.tensor([1.0, 2.0]))
+            tensor([0., 1., 2.])
+        """
+        if self.index.shape[0] != 2:
+            raise ValueError("only pairs of edges are the edges of a graph")
+
+        return Graph.from_edges(
+            None,
+            self.num_edges,
+            self.index,
+            self.index.new_zeros(self.index.shape[1], 3),
+            edge_batch=self.batch,
+        )
+
+    def aggregate_to_edges(
+        self,
+        src: Float[torch.Tensor, "n_tuples ..."],
+        reduce: Reduce = "sum",
+        position: int = -1,
+    ) -> Float[torch.Tensor, "n_edges ..."]:
+        """Aggregate per-tuple features to one of the edges of each tuple.
+
+        With the default position, a pair of a line graph u→v, v→w gives its
+        features to v→w, as an edge of a graph to its receiver.
+
+        Args:
+            src: Per-tuple features, shape (n_tuples, *).
+            reduce: Reduction passed to scatter — 'sum', 'mean', 'amax', etc.
+            position: Row of index of the edge which gets the features of a
+                tuple, the last one by default.
+
+        Returns:
+            Per-edge aggregated features, shape (n_edges, *).
+
+        Examples:
+            >>> pairs = EdgeTuples(
+            ...     index=[[0, 0], [1, 2]], num_edges=[3], num_tuples=[2]
+            ... )
+            >>> pairs.aggregate_to_edges(torch.tensor([1.0, 2.0]))
+            tensor([0., 1., 2.])
+            >>> pairs.aggregate_to_edges(torch.tensor([1.0, 2.0]), position=0)
+            tensor([3., 0., 0.])
+        """
+        return scatter(src, self.index[position], int(self.num_edges.sum()), reduce)
 
     def to(self, device: torch.device | str) -> EdgeTuples:
         """Copy of the tuples with all their tensors on a device.

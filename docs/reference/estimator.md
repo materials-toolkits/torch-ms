@@ -12,35 +12,31 @@
 
 ::: torchms.estimator.orb.model
 
-## Pretrained weights
-
-::: torchms.estimator.orb.weights
-
 ## CHGNet
 
 ::: torchms.estimator.chgnet.model
-
-::: torchms.estimator.chgnet.weights
 
 ## M3GNet
 
 ::: torchms.estimator.m3gnet.model
 
-::: torchms.estimator.m3gnet.weights
-
 ## ALIGNN
 
 ::: torchms.estimator.alignn.model
-
-::: torchms.estimator.alignn.weights
 
 ## MACE
 
 ::: torchms.estimator.mace.model
 
-::: torchms.estimator.mace.weights
-
 ::: torchms.estimator.mace.reader
+
+## Configuration of the models
+
+::: torchms.estimator.config
+
+## Loading of pretrained weights
+
+::: torchms.estimator.pretrained
 
 ## Download of weights
 

@@ -17,7 +17,7 @@ cell, the basis of the lattice and the size of the cell are arbitrary choices.
 A transform draws one element per structure of the batch and applies it. Transforms are chained
 with `Compose` and given to a dataset:
 
-```python
+```{.python notest}
 from torchms.data import load_dataset
 from torchms.data.augmentation import (
     AtomPermutation,
@@ -48,7 +48,7 @@ Augmentations come **before** the [graph transforms](graphs.md#graphs-as-transfo
 chain. They change the atoms or the cell, which a graph does not follow: structures with a
 graph, a line graph, triplets or quadruplets come out of an augmentation without them.
 
-```python
+```{.python notest}
 from torchms.graph.transforms import AddRadiusGraph, AddTriplets
 
 transform = Compose([augment, AddRadiusGraph(5.0), AddTriplets(3.0)])

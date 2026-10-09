@@ -40,6 +40,40 @@ def reverse_edges(graph: Graph) -> Int[torch.Tensor, "n_edges"]:
     return reverse_index(graph.edge_index, graph.edge_shift, int(graph.num_atoms.sum()))
 
 
+def undirected_edges(
+    graph: Graph,
+) -> tuple[Int[torch.Tensor, "n_bonds"], Int[torch.Tensor, "n_edges"]]:
+    """Bonds of a graph: an edge and its reverse are the same bond.
+
+    Args:
+        graph: Graph without duplicated edges. An edge whose reverse is not in
+            the graph is a bond alone.
+
+    Returns:
+        Index of one edge of each bond, the first of the two, in ascending
+        order, shape (n_bonds,), and index of the bond of each edge, shape
+        (n_edges,). Bonds are ordered by structure, as the edges.
+
+    Examples:
+        >>> from torchms.data.batching import Structures
+        >>> from torchms.graph.cutoff import cutoff
+        >>> graph = cutoff(Structures.diamond(), 2.0)
+        >>> first, edge_bond = undirected_edges(graph)
+        >>> len(first), edge_bond.shape
+        (16, torch.Size([32]))
+        >>> bool((edge_bond[reverse_edges(graph)] == edge_bond).all())
+        True
+    """
+    edge = torch.arange(graph.edge_index.shape[1], device=graph.device())
+    reverse = reverse_edges(graph)
+
+    # an edge and its reverse share the smallest of their two indices
+    first = torch.where(reverse < 0, edge, torch.minimum(edge, reverse))
+    first, edge_bond = torch.unique(first, return_inverse=True)
+
+    return first, edge_bond
+
+
 def reverse_index(
     edge_index: Int[torch.Tensor, "2 n_edges"],
     edge_shift: Int[torch.Tensor, "n_edges 3"],

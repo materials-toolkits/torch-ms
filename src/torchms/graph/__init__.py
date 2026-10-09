@@ -5,6 +5,7 @@ from torchms.graph.geometry import (
     centered_supercell,
     dihedral_angles,
     lattice_heights,
+    pair_cosines,
     triplet_cosines,
 )
 from torchms.graph.graph import EdgeTuples, Graph, InvalidGraph
@@ -15,6 +16,7 @@ from torchms.graph.line_graph import (
     quadruplets,
     reverse_edges,
     triplets,
+    undirected_edges,
 )
 from torchms.graph.sparse import (
     batched_cartesian_product_2,
@@ -56,6 +58,8 @@ __all__ = [
     "quadruplets",
     "reverse_edges",
     "scatter",
+    "pair_cosines",
     "triplet_cosines",
     "triplets",
+    "undirected_edges",
 ]

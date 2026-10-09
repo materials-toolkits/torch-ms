@@ -13,7 +13,7 @@ computed with the PBE functional.
 
 Structures have 1 to 444 atoms (median 6).
 
-```python
+```{.python notest}
 dataset = load_dataset("lematerial", "unique")
 ```
 
@@ -64,7 +64,7 @@ computed from the total energies of the dataset.
 **Recommended**: remove the failed calculations, which have a positive total energy. Use it on
 `unique`, with one structure per fingerprint.
 
-```python
+```{.python notest}
 from torchms.data import Filter, load_dataset
 
 dataset = load_dataset("lematerial/unique", filter=Filter(maximum={"total_energy": 0.0}))

@@ -7,12 +7,11 @@ from jaxtyping import Float
 from torch import nn
 
 from torchms.data.batching import Structures
-from torchms.estimator.orb.model import BesselBasis, polynomial_cutoff
 from torchms.graph.cutoff import cutoff
 from torchms.graph.geometry import dihedral_angles, triplet_cosines
 from torchms.graph.line_graph import quadruplets, triplets
 from torchms.graph.sparse import scatter
-from torchms.models.basis import AngleBasis, mlp
+from torchms.models.basis import AngleBasis, BesselBasis, mlp, polynomial_cutoff
 
 NUM_ELEMENTS = 118
 CUTOFF_POWER = 4

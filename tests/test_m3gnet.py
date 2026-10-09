@@ -16,7 +16,8 @@ from torchms.data.augmentation import (
     LatticeRotation,
     make_supercell,
 )
-from torchms.estimator.m3gnet import InvalidWeights, M3gnetEnergyModel, weights
+from torchms.estimator import weights
+from torchms.estimator.m3gnet import InvalidWeights, M3gnetEnergyModel
 from torchms.estimator.m3gnet.model import (
     ELEMENTS,
     MAX_L,
@@ -24,11 +25,19 @@ from torchms.estimator.m3gnet.model import (
     MODEL_ARGS,
     RADIUS,
     THREE_BODY_RADIUS,
-    SphericalBesselFunction,
+)
+from torchms.models.basis import (
+    SphericalBesselBasis,
     legendre,
     spherical_bessel,
     spherical_bessel_roots,
 )
+
+
+def predict(model, structures: Structures) -> torch.Tensor:
+    """Prediction of a model for structures without graph."""
+    return model(model.transform()(structures))
+
 
 DATA = Path(__file__).parent / "data"
 NAME = "m3gnet-matpes-pbe-2025.2"
@@ -60,17 +69,17 @@ def model() -> M3gnetEnergyModel:
 
 
 def test_pinned_checkpoints(tmp_path):
-    assert set(weights.CHECKPOINTS) == {NAME}
-    for checkpoint in weights.CHECKPOINTS[NAME]:
+    assert set(weights.CHECKPOINTS["m3gnet"]) == {NAME}
+    for checkpoint in weights.CHECKPOINTS["m3gnet"][NAME]:
         assert checkpoint.url.startswith("https://")
         assert len(checkpoint.sha256) == 64
 
-    state, args = weights.checkpoint_path(NAME, tmp_path)
+    state, args = weights.checkpoint_paths("m3gnet", NAME, tmp_path)
     assert state == tmp_path / "m3gnet" / NAME / "state.pt"
     assert args == tmp_path / "m3gnet" / NAME / "model.pt"
 
     with pytest.raises(KeyError, match="unknown model"):
-        weights.checkpoint_path("m3gnet-9")
+        weights.checkpoint_paths("m3gnet", "m3gnet-9")
 
 
 # bases
@@ -113,7 +122,7 @@ def test_legendre():
 
 
 def test_radial_basis_is_orthonormal():
-    basis = SphericalBesselFunction().double()
+    basis = SphericalBesselBasis(MAX_L, MAX_N, RADIUS).double()
     distance = torch.linspace(1e-4, RADIUS, 20001, dtype=torch.float64)
     values = basis(distance)
 
@@ -131,7 +140,7 @@ def test_radial_basis_is_orthonormal():
 
 
 def test_model_output(model):
-    energy = model(make_batch())
+    energy = predict(model, make_batch())
 
     assert energy.shape == (2,)
     assert energy.dtype == torch.float64
@@ -140,7 +149,8 @@ def test_model_output(model):
 
 def test_model_graphs(model):
     batch = make_batch()
-    graph, distance, triplet_index, cosine = model.graphs(batch)
+    graph, distance, angles, cosine = model.graphs(model.transform()(batch))
+    triplet_index = angles.index
 
     assert (distance <= RADIUS).all()
     assert torch.allclose(distance, graph.edges_distances())
@@ -155,9 +165,9 @@ def test_model_graphs(model):
 
 
 def test_model_batch_equals_single(model):
-    alone = torch.cat([model(structure) for structure in make_structures()])
+    alone = torch.cat([predict(model, structure) for structure in make_structures()])
 
-    assert torch.allclose(model(make_batch()), alone, rtol=1e-5)
+    assert torch.allclose(predict(model, make_batch()), alone, rtol=1e-5)
 
 
 @pytest.mark.parametrize(
@@ -168,7 +178,7 @@ def test_model_invariances(model, transform):
     batch = make_batch()
     augmented = transform(generator=generator())(batch)
 
-    assert torch.allclose(model(augmented), model(batch), rtol=1e-4)
+    assert torch.allclose(predict(model, augmented), predict(model, batch), rtol=1e-4)
 
 
 def test_model_energy_of_a_supercell(model):
@@ -177,7 +187,7 @@ def test_model_energy_of_a_supercell(model):
     supercell = make_supercell(batch, repeat)
 
     assert torch.allclose(
-        model(supercell), model(batch) * repeat.prod(dim=1), rtol=1e-4
+        predict(model, supercell), predict(model, batch) * repeat.prod(dim=1), rtol=1e-4
     )
 
 
@@ -188,7 +198,7 @@ def test_model_unknown_element(model):
     )
 
     with pytest.raises(ValueError, match="not supported"):
-        model(structures)
+        predict(model, structures)
 
     assert len(ELEMENTS) == 89 and 84 not in ELEMENTS and 94 in ELEMENTS
 
@@ -200,7 +210,9 @@ def test_load_pretrained_checks_the_parameters(model):
     other.load_pretrained(state_dict, MODEL_ARGS)
     other.eval()
     with torch.no_grad():
-        assert torch.allclose(other(make_batch()), model(make_batch()))
+        assert torch.allclose(
+            predict(other, make_batch()), predict(model, make_batch())
+        )
 
     with pytest.raises(InvalidWeights, match="other arguments"):
         other.load_pretrained(state_dict, {**MODEL_ARGS, "threebody_cutoff": 3.0})
@@ -238,7 +250,7 @@ def test_bessel_roots_match_matgl():
 
 @pytest.fixture(scope="module")
 def pretrained() -> M3gnetEnergyModel:
-    if not all(path.exists() for path in weights.checkpoint_path(NAME)):
+    if not all(path.exists() for path in weights.checkpoint_paths("m3gnet", NAME)):
         pytest.skip(f"weights of {NAME} are not in the cache")
 
     return M3gnetEnergyModel.from_pretrained(NAME, device="cpu")
@@ -248,7 +260,8 @@ def pretrained() -> M3gnetEnergyModel:
 def test_pretrained_graphs_match_matgl(pretrained):
     """Graphs of matgl 4.1.0, computed once outside of the project."""
     structures, data = reference_structures()
-    graph, _, triplet_index, cosine = pretrained.graphs(structures)
+    graph, _, angles, cosine = pretrained.graphs(pretrained.transform()(structures))
+    triplet_index = angles.index
     n_struct = len(structures.num_atoms)
 
     assert graph.num_edges.tolist() == data["num_edges"].tolist()
@@ -268,7 +281,7 @@ def test_pretrained_matches_matgl(pretrained):
     """Energies of matgl 4.1.0, computed once outside of the project."""
     structures, data = reference_structures()
 
-    energy = pretrained(structures).numpy()
+    energy = predict(pretrained, structures).numpy()
     error = np.abs(energy - data["energy"]) / structures.num_atoms.numpy()
 
     assert error.max() < 1e-4

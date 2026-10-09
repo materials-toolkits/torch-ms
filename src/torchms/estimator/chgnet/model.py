@@ -17,7 +17,7 @@ layers updates the atoms from their bonds, the bonds from their angles, then
 the angles; a last layer updates the atoms. The energy is a sum of an energy
 per atom and of a reference energy per element.
 
-Weights are the ones published with chgnet, see weights.py.
+Weights are the ones published with chgnet, see config.yaml.
 """
 
 # attributes are named as in chgnet, to load its weights
@@ -27,62 +27,103 @@ from __future__ import annotations
 
 import math
 import os
+from dataclasses import dataclass, replace
 from typing import Mapping
 
 import torch
 from jaxtyping import Float, Int
 from torch import nn
 
+from torchms.data.augmentation.transforms import Compose, Transform
 from torchms.data.batching import Structures
-from torchms.estimator.chgnet.weights import download
-from torchms.estimator.orb.model import polynomial_cutoff
-from torchms.graph.cutoff import cutoff
+from torchms.estimator.config import load_config
+from torchms.estimator.pretrained import (
+    InvalidWeights,
+    PretrainedModel,
+    different_arguments,
+    element_index,
+    element_table,
+)
+from torchms.estimator.weights import download
 from torchms.graph.geometry import triplet_cosines
-from torchms.graph.graph import Graph
-from torchms.graph.line_graph import reverse_edges, triplets
-from torchms.graph.sparse import scatter
+from torchms.graph.graph import EdgeTuples, Graph
+from torchms.graph.transforms import (
+    AddBonds,
+    AddRadiusGraph,
+    AddTriplets,
+    attached_graph,
+    attached_tuples,
+    edges_vectors,
+)
+from torchms.models.basis import polynomial_cutoff
 
-RADIUS = 6.0
-BOND_RADIUS = 3.0
-LATENT_DIM = 64
-NUM_ELEMENTS = 94
-NUM_RADIAL = 31
-NUM_ANGULAR = 31
-CUTOFF_POWER = 8
+# every value of the model is in config.yaml, next to this module
+CONFIG = load_config(__file__)
+
+RADIUS: float = CONFIG["graph"]["radius"]
+BOND_RADIUS: float = CONFIG["graph"]["bond_radius"]
+
+LATENT_DIM: int = CONFIG["model"]["latent_dim"]
+NUM_ELEMENTS: int = CONFIG["model"]["num_elements"]
+NUM_RADIAL: int = CONFIG["model"]["num_radial"]
+NUM_ANGULAR: int = CONFIG["model"]["num_angular"]
+CUTOFF_POWER: int = CONFIG["model"]["cutoff_power"]
+NUM_LAYERS: int = CONFIG["model"]["num_layers"]
+READOUT_LAYERS: int = CONFIG["model"]["readout_layers"]
+COSINE_SHRINK: float = CONFIG["model"]["cosine_shrink"]
 
 # parameters of the pretrained weights which are not used to predict the energy
-UNUSED_PARAMETERS = ("site_wise.",)
+UNUSED_PARAMETERS: tuple[str, ...] = tuple(CONFIG["unused_parameters"])
 
 # arguments of the model the rewrite is written for, as stored with the weights
-MODEL_ARGS = {
-    "atom_fea_dim": LATENT_DIM,
-    "bond_fea_dim": LATENT_DIM,
-    "angle_fea_dim": LATENT_DIM,
-    "composition_model": "MPtrj",
-    "num_radial": NUM_RADIAL,
-    "num_angular": NUM_ANGULAR,
-    "n_conv": 4,
-    "atom_conv_hidden_dim": 64,
-    "update_bond": True,
-    "bond_conv_hidden_dim": 64,
-    "update_angle": True,
-    "angle_layer_hidden_dim": 0,
-    "read_out": "ave",
-    "mlp_hidden_dims": [64, 64, 64],
-    "mlp_first": True,
-    "is_intensive": True,
-    "non_linearity": "silu",
-    "atom_graph_cutoff": 6,
-    "bond_graph_cutoff": 3,
-    "cutoff_coeff": CUTOFF_POWER,
-    "learnable_rbf": True,
-    "gMLP_norm": "layer",
-    "readout_norm": "layer",
-}
+MODEL_ARGS: dict[str, object] = CONFIG["upstream"]["model_args"]
 
 
-class InvalidWeights(Exception):
-    """Raised when weights do not match the parameters of the model."""
+@dataclass
+class UndirectedBonds:
+    """Bonds of a graph: an edge and its reverse are one bond.
+
+    The features of the bonds have one row per bond, shared by its two edges.
+
+    Attributes:
+        first: Index of one edge of each bond, shape (n_bonds,).
+        edge_bond: Index of the bond of each edge, shape (n_edges,).
+        num_bonds: Number of bonds per structure, shape (n_struct,).
+    """
+
+    first: Int[torch.Tensor, "n_bonds"]
+    edge_bond: Int[torch.Tensor, "n_edges"]
+    num_bonds: Int[torch.Tensor, "n_struct"]
+
+    @classmethod
+    def of(cls, bonds: EdgeTuples) -> UndirectedBonds:
+        """Bonds from the pairs of an edge and its reverse attached by AddBonds."""
+        n_bonds = bonds.index.shape[1]
+        number = torch.arange(n_bonds, device=bonds.device())
+
+        # every edge is in one bond, as its first or as its second edge
+        edge_bond = number.new_empty(int(bonds.num_edges.sum()))
+        edge_bond[bonds.index] = number
+
+        return cls(bonds.index[0], edge_bond, bonds.num_tuples)
+
+    def from_edges(
+        self, src: Float[torch.Tensor, "n_edges ..."]
+    ) -> Float[torch.Tensor, "n_bonds ..."]:
+        """Per-bond values from per-edge ones which are the same on both edges."""
+        return src[self.first]
+
+    def unpool_bonds(
+        self, src: Float[torch.Tensor, "n_bonds ..."]
+    ) -> Float[torch.Tensor, "n_edges ..."]:
+        """Per-bond features on the edges: the ones of the bond of each edge."""
+        return src[self.edge_bond]
+
+    def on_bonds(self, tuples: EdgeTuples) -> EdgeTuples:
+        """The same tuples of edges, as tuples of the bonds of these edges."""
+        return replace(
+            tuples, index=self.edge_bond[tuples.index], num_edges=self.num_bonds
+        )
 
 
 class MLP(nn.Module):
@@ -195,7 +236,7 @@ class AngleEncoder(nn.Module):
         self, cosine: Float[torch.Tensor, "n"]
     ) -> Float[torch.Tensor, "n num_angular"]:
         # as chgnet, the cosine is shrunk to keep the angle differentiable
-        return self.fourier_expansion(torch.acos(cosine * (1.0 - 1e-6)))
+        return self.fourier_expansion(torch.acos(cosine * (1.0 - COSINE_SHRINK)))
 
 
 class AtomEmbedding(nn.Module):
@@ -206,9 +247,9 @@ class AtomEmbedding(nn.Module):
         self.embedding = nn.Embedding(NUM_ELEMENTS, LATENT_DIM)
 
     def forward(
-        self, z: Int[torch.Tensor, "n_atoms"]
+        self, element: Int[torch.Tensor, "n_atoms"]
     ) -> Float[torch.Tensor, "n_atoms d"]:
-        return self.embedding(z - 1)
+        return self.embedding(element)
 
 
 class AtomConv(nn.Module):
@@ -224,14 +265,22 @@ class AtomConv(nn.Module):
         atoms: Float[torch.Tensor, "n_atoms d"],
         bonds: Float[torch.Tensor, "n_bonds d"],
         weights: Float[torch.Tensor, "n_bonds d"],
-        edge_index: Int[torch.Tensor, "2 n_edges"],
-        edge_bond: Int[torch.Tensor, "n_edges"],
+        graph: Graph,
+        undirected: UndirectedBonds,
     ) -> Float[torch.Tensor, "n_atoms d"]:
-        center, neighbor = edge_index
         messages = self.twoBody_atom(
-            torch.cat([atoms[center], bonds[edge_bond], atoms[neighbor]], dim=1)
+            torch.cat(
+                [
+                    graph.unpool_senders(atoms),
+                    undirected.unpool_bonds(bonds),
+                    graph.unpool_receivers(atoms),
+                ],
+                dim=1,
+            )
         )
-        received = scatter(messages * weights[edge_bond], center, atoms.shape[0])
+        received = graph.aggregate_edges_to_nodes(
+            messages * undirected.unpool_bonds(weights), to="sender"
+        )
 
         return atoms + self.mlp_out(received)
 
@@ -249,14 +298,14 @@ class BondConv(nn.Module):
         triplet_features: Float[torch.Tensor, "n_triplets 4*d"],
         bonds: Float[torch.Tensor, "n_bonds d"],
         weights: Float[torch.Tensor, "n_bonds d"],
-        triplet_bond: Int[torch.Tensor, "2 n_triplets"],
+        bond_triplets: EdgeTuples,
     ) -> Float[torch.Tensor, "n_bonds d"]:
         messages = (
             self.twoBody_bond(triplet_features)
-            * weights[triplet_bond[0]]
-            * weights[triplet_bond[1]]
+            * bond_triplets.unpool_edges(weights, position=0)
+            * bond_triplets.unpool_edges(weights, position=1)
         )
-        received = scatter(messages, triplet_bond[0], bonds.shape[0])
+        received = bond_triplets.aggregate_to_edges(messages, position=0)
 
         return bonds + self.mlp_out(received)
 
@@ -284,27 +333,39 @@ class AtomRef(nn.Module):
         self.fc = nn.Linear(NUM_ELEMENTS, 1, bias=False)
 
     def forward(
-        self, z: Int[torch.Tensor, "n_atoms"]
+        self, element: Int[torch.Tensor, "n_atoms"]
     ) -> Float[torch.Tensor, "n_atoms"]:
-        return self.fc.weight[0].double()[z - 1]
+        return self.fc.weight[0].double()[element]
 
 
 # one module per module of chgnet
 # pylint: disable-next=too-many-instance-attributes
-class ChgnetEnergyModel(nn.Module):
+class ChgnetEnergyModel(PretrainedModel):
     """Total energy of crystal structures predicted by CHGNet 0.3.0.
 
     Examples:
         >>> model = ChgnetEnergyModel()
         >>> structures = Structures.collate([Structures.diamond(), Structures.zincblende()])
+        >>> structures = model.transform()(structures)
         >>> with torch.no_grad():
         ...     energy = model(structures)
         >>> energy.shape, energy.dtype
         (torch.Size([2]), torch.float64)
     """
 
-    def __init__(self, num_layers: int = 4):
+    DEFAULT_WEIGHTS = CONFIG["default_weights"]
+    GRAPH_FIELDS = ("graph", "triplets", "bonds")
+    UNUSED_PARAMETERS = UNUSED_PARAMETERS
+
+    element_table: torch.Tensor
+
+    def __init__(self, num_layers: int = NUM_LAYERS):
         super().__init__()
+        self.register_buffer(
+            "element_table",
+            element_table(torch.arange(1, NUM_ELEMENTS + 1)),
+            persistent=False,
+        )
         self.composition_model = AtomRef()
         self.atom_embedding = AtomEmbedding()
         self.bond_basis_expansion = BondEncoder()
@@ -319,32 +380,18 @@ class ChgnetEnergyModel(nn.Module):
         self.angle_layers = nn.ModuleList(AngleUpdate() for _ in range(num_layers - 1))
 
         self.readout_norm = nn.LayerNorm(LATENT_DIM)
-        self.mlp = MLP(LATENT_DIM, [LATENT_DIM] * 3, 1)
+        self.mlp = MLP(LATENT_DIM, [LATENT_DIM] * READOUT_LAYERS, 1)
 
-    @classmethod
-    def from_pretrained(
-        cls,
-        name: str = "chgnet-0.3.0",
-        device: torch.device | str | None = None,
-        cache: str | os.PathLike | None = None,
-    ) -> ChgnetEnergyModel:
-        """Load a model with pretrained weights, downloaded on the first call.
+    def load_checkpoint(
+        self, name: str, cache: str | os.PathLike | None = None
+    ) -> None:
+        """Download weights listed in config.yaml and load them."""
+        (path,) = download("chgnet", name, cache)
+        checkpoint = torch.load(path, map_location="cpu", weights_only=True)
 
-        Args:
-            name: Name of the weights, see torchms.estimator.chgnet.weights.
-            device: Device of the model.
-            cache: Directory of the downloaded weights.
-        """
-        checkpoint = torch.load(
-            download(name, cache), map_location="cpu", weights_only=True
-        )
-
-        model = cls()
-        model.load_pretrained(
+        self.load_pretrained(
             checkpoint["model"]["state_dict"], checkpoint["model"]["model_args"]
         )
-
-        return model.to(device).eval().requires_grad_(False)
 
     def load_pretrained(
         self,
@@ -362,71 +409,72 @@ class ChgnetEnergyModel(nn.Module):
                 model was built with other arguments than CHGNet 0.3.0.
         """
         if model_args is not None:
-            different = {
-                key: model_args.get(key)
-                for key, value in MODEL_ARGS.items()
-                if model_args.get(key, value) != value
-            }
+            different = different_arguments(model_args, MODEL_ARGS)
             if different:
                 raise InvalidWeights(
                     f"weights of a model with other arguments: {different}"
                 )
 
-        used = {
-            name: values
-            for name, values in state_dict.items()
-            if not name.startswith(UNUSED_PARAMETERS)
-        }
+        self.load_parameters(state_dict)
 
-        try:
-            self.load_state_dict(used, strict=True)
-        except RuntimeError as e:
-            raise InvalidWeights(str(e)) from e
+    @classmethod
+    def transform(cls) -> Transform:
+        """Transform attaching the graph, the angles and the bonds of the model.
+
+        Atoms closer than 6 Å are connected, periodic images of the atom itself
+        included. Angles are the pairs of edges shorter than 3 Å starting from
+        the same atom. An edge and its reverse are the same bond.
+        """
+        return Compose(
+            [
+                AddRadiusGraph(RADIUS, self_images=True),
+                AddTriplets(radius=BOND_RADIUS, strict=True),
+                AddBonds(),
+            ]
+        )
 
     def graphs(self, structures: Structures) -> tuple[
         Graph,
-        Int[torch.Tensor, "n_edges"],
+        UndirectedBonds,
         Float[torch.Tensor, "n_bonds"],
-        Int[torch.Tensor, "2 n_triplets"],
+        EdgeTuples,
         Float[torch.Tensor, "n_triplets"],
     ]:
-        """Bonds and angles of the model.
+        """Bonds and angles of the structures, with their geometry.
 
-        Atoms closer than 6 Å are connected, periodic images of the atom itself
-        included. An edge and its reverse are the same bond. Angles are the
-        pairs of edges shorter than 3 Å starting from the same atom.
+        They are the graph, the triplets and the bonds attached to the
+        structures by transform. An edge and its reverse are the same bond.
 
         Returns:
-            Graph of the atoms, index of the bond of each edge, shape
-            (n_edges,), length of each bond in Å, shape (n_bonds,), indices of
-            the two edges of each angle, shape (2, n_triplets), and cosine of
-            each angle, shape (n_triplets,).
+            Graph of the atoms, its bonds, length of each bond in Å, shape
+            (n_bonds,), triplets of the graph, the two edges of each angle,
+            and cosine of each angle, shape (n_triplets,).
         """
-        device = structures.device()
-        graph = cutoff(structures, RADIUS, self_images=True)
-        distance = graph.edges_distances()
+        self.check_graphs(structures)
+        graph = attached_graph(structures, self)
+        angles = attached_tuples(structures, "triplets", self)
+        undirected = UndirectedBonds.of(attached_tuples(structures, "bonds", self))
 
-        # an edge and its reverse share the smallest of their two indices
-        edge = torch.arange(graph.edge_index.shape[1], device=device)
-        first, edge_bond = torch.unique(
-            torch.minimum(edge, reverse_edges(graph)), return_inverse=True
-        )
+        vectors = edges_vectors(graph)
+        distance = vectors.norm(dim=-1)
 
-        triplet_index, _, _ = triplets(graph, distance < BOND_RADIUS)
-        cosines = triplet_cosines(graph.edges_vectors(), triplet_index)
+        cosines = triplet_cosines(vectors, angles)
 
-        return graph, edge_bond, distance[first], triplet_index, cosines
+        return graph, undirected, undirected.from_edges(distance), angles, cosines
 
     def forward(self, structures: Structures) -> Float[torch.Tensor, "n_struct"]:
-        """Predict the total energy of each structure in eV, in double precision."""
-        graph, edge_bond, bond_length, triplet_index, cosines = self.graphs(structures)
+        """Predict the total energy of each structure in eV, in double precision.
 
-        center = graph.edge_index[0, triplet_index[0]]
-        triplet_bond = edge_bond[triplet_index]
+        Raises:
+            ValueError: If a structure has an element the model does not know.
+        """
+        element = element_index(structures.z, self.element_table)
+        graph, undirected, bond_length, edge_triplets, cosines = self.graphs(structures)
+        bond_triplets = undirected.on_bonds(edge_triplets)
 
         basis = self.bond_basis_expansion.rbf_expansion_ag(bond_length)
 
-        atoms = self.atom_embedding(structures.z)
+        atoms = self.atom_embedding(element)
         bonds = self.bond_embedding(basis)
         weights = self.bond_weights_ag(basis)
         weights_angles = self.bond_weights_bg(
@@ -437,39 +485,59 @@ class ChgnetEnergyModel(nn.Module):
         for atom_layer, bond_layer, angle_layer in zip(
             self.atom_conv_layers, self.bond_conv_layers, self.angle_layers
         ):
-            atoms = atom_layer(atoms, bonds, weights, graph.edge_index, edge_bond)
+            atoms = atom_layer(atoms, bonds, weights, graph, undirected)
 
             bonds = bond_layer(
-                self.triplet_features(atoms, bonds, angles, center, triplet_bond),
+                self.triplet_features(
+                    atoms, bonds, angles, graph, edge_triplets, bond_triplets
+                ),
                 bonds,
                 weights_angles,
-                triplet_bond,
+                bond_triplets,
             )
             angles = angle_layer(
-                self.triplet_features(atoms, bonds, angles, center, triplet_bond),
+                self.triplet_features(
+                    atoms, bonds, angles, graph, edge_triplets, bond_triplets
+                ),
                 angles,
             )
 
-        atoms = self.atom_conv_layers[-1](
-            atoms, bonds, weights, graph.edge_index, edge_bond
-        )
+        atoms = self.atom_conv_layers[-1](atoms, bonds, weights, graph, undirected)
 
         # energy of each atom, and reference energy of its element
         per_atom = self.mlp(self.readout_norm(atoms)).squeeze(-1).double()
-        per_atom = per_atom + self.composition_model(structures.z)
+        per_atom = per_atom + self.composition_model(element)
 
-        return scatter(per_atom, structures.batch, len(structures.num_atoms))
+        return graph.aggregate_nodes_to_structures(per_atom)
 
     @staticmethod
     def triplet_features(
         atoms: Float[torch.Tensor, "n_atoms d"],
         bonds: Float[torch.Tensor, "n_bonds d"],
         angles: Float[torch.Tensor, "n_triplets d"],
-        center: Int[torch.Tensor, "n_triplets"],
-        triplet_bond: Int[torch.Tensor, "2 n_triplets"],
+        graph: Graph,
+        edge_triplets: EdgeTuples,
+        bond_triplets: EdgeTuples,
     ) -> Float[torch.Tensor, "n_triplets 4*d"]:
-        """Features of the two bonds, of the angle and of the atom of each angle."""
+        """Features of the two bonds, of the angle and of the atom of each angle.
+
+        Args:
+            atoms: Features of the atoms.
+            bonds: Features of the bonds.
+            angles: Features of the angles.
+            graph: Graph of the atoms.
+            edge_triplets: Angles as pairs of edges of the graph.
+            bond_triplets: The same angles as pairs of bonds.
+        """
+        # both edges of an angle start from its atom
+        centers = edge_triplets.unpool_edges(graph.unpool_senders(atoms), position=0)
+
         return torch.cat(
-            [bonds[triplet_bond[0]], bonds[triplet_bond[1]], angles, atoms[center]],
+            [
+                bond_triplets.unpool_edges(bonds, position=0),
+                bond_triplets.unpool_edges(bonds, position=1),
+                angles,
+                centers,
+            ],
             dim=1,
         )

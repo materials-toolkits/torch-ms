@@ -10,7 +10,7 @@ Every material of the `summary` collection of the Materials Project, database ve
 | Stable (on the hull) | 141,128 |
 | Within 0.1 eV/atom of the hull | 216,917 |
 
-```python
+```{.python notest}
 dataset = load_dataset("materials-project")
 ```
 
@@ -43,7 +43,7 @@ missing for four of them.
 **Recommended**: the stable and meta-stable structures, at most 0.1 eV/atom above the hull. It
 also drops the four structures without energy above the hull.
 
-```python
+```{.python notest}
 from torchms.data import Filter, load_dataset
 
 dataset = load_dataset("materials-project", filter=Filter(max_energy_above_hull=0.1))

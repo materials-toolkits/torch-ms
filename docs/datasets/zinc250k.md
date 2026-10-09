@@ -16,7 +16,7 @@ holds positions in Å, see [Periodicity](../design/periodicity.md).
 | Atoms | 10,923,322, 9 to 83 per molecule (44 on average), hydrogens included |
 | Elements | H, C, N, O, F, P, S, Cl, Br, I |
 
-```python
+```{.python notest}
 dataset = load_dataset("zinc250k")
 ```
 
@@ -62,7 +62,7 @@ The four labels (`total_energy`, `band_gap`, ...) are `NaN`.
 
 **Recommended**: the molecules whose relaxation converged, which is all of them but two.
 
-```python
+```{.python notest}
 from torchms.data import Filter, load_dataset
 
 dataset = load_dataset("zinc250k", filter=Filter(equal={"mmff_converged": 1}))
