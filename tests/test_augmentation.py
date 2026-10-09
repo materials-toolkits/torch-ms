@@ -148,6 +148,19 @@ def test_random_orthogonal():
     assert (det > 0).any() and (det < 0).any()
 
 
+def test_random_orthogonal_is_the_qr_decomposition():
+    """Orthogonal to rounding for every draw, columns almost parallel included."""
+    drawn = random_orthogonal(200_000, torch.device("cpu"), generator())
+    identity = torch.bmm(drawn, drawn.transpose(1, 2))
+    assert (identity - torch.eye(3)).abs().max() < 1e-5
+
+    # Q of the decomposition of the same gaussian matrices, R with a positive diagonal
+    gaussian = torch.randn(200_000, 3, 3, generator=generator()).double()
+    q, r = torch.linalg.qr(gaussian)
+    q = q * torch.diagonal(r, dim1=1, dim2=2).sign().unsqueeze(1)
+    assert (drawn - q).abs().max() < 1e-4
+
+
 def test_random_orthogonal_proper():
     rotation = random_orthogonal(256, torch.device("cpu"), generator(), proper=True)
     identity = torch.eye(3).expand(256, 3, 3)

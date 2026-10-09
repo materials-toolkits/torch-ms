@@ -169,8 +169,10 @@ def periodic_pairs(
     Returns:
         Index of the first atom, index of the second atom, image of the second
         atom in lattice vectors, shape (n_pairs, 3), and structure index, of
-        each pair. Sorted by first atom, then second atom, then image. Every
-        pair closer than the radius is listed, with others which are farther.
+        each pair. Sorted by first atom, then second atom, then image; in a
+        batch of crystals and molecules, the pairs of the molecules come after
+        the ones of the crystals. Every pair closer than the radius is listed,
+        with others which are farther.
 
     Examples:
         One atom in a cubic cell of 3 Å: its images at most one cell away, in a
@@ -196,6 +198,28 @@ def periodic_pairs(
 
     pairs, pair_batch, _ = batched_cartesian_product_2(ptr, ptr)
     source, target = pairs[:, 0], pairs[:, 1]
+
+    # A pair of atoms of a molecule has no image to list: these pairs are set
+    # apart, which saves most of the time of the graphs of molecules. The
+    # number of molecules is read once from the device.
+    molecules: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None
+
+    if pbc is not None:
+        molecule = ~pbc.any(dim=1)
+        num_molecules = int(molecule.sum())
+
+        if num_molecules == len(molecule):
+            shift = torch.zeros((len(source), 3), dtype=torch.int64, device=device)
+            return source, target, shift, pair_batch
+
+        if num_molecules > 0:
+            in_molecule = molecule[pair_batch]
+            alone = in_molecule.nonzero().squeeze(1)
+            others = (~in_molecule).nonzero().squeeze(1)
+
+            molecules = (source[alone], target[alone], pair_batch[alone])
+            source, target = source[others], target[others]
+            pair_batch = pair_batch[others]
 
     # largest difference of fractional coordinates, with a margin for rounding
     width = 1.0 / lattice_heights(lattice).clamp_min(1e-8)[pair_batch]
@@ -228,7 +252,15 @@ def periodic_pairs(
         dim=1,
     )
 
-    return source[pair], target[pair], shift, pair_batch[pair]
+    source, target, pair_batch = source[pair], target[pair], pair_batch[pair]
+
+    if molecules is not None:
+        source = torch.cat([source, molecules[0]])
+        target = torch.cat([target, molecules[1]])
+        pair_batch = torch.cat([pair_batch, molecules[2]])
+        shift = F.pad(shift, (0, 0, 0, len(molecules[0])))
+
+    return source, target, shift, pair_batch
 
 
 def image_order(

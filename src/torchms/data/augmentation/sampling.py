@@ -6,6 +6,7 @@ DataLoader.
 """
 
 import torch
+import torch.nn.functional as F
 from jaxtyping import Bool, Float, Int
 
 
@@ -64,10 +65,26 @@ def random_orthogonal(
         tensor([1., 1., 1., 1.])
     """
     gaussian = torch.randn(n, 3, 3, generator=generator, device=device)
-    q, r = torch.linalg.qr(gaussian)  # pylint: disable=not-callable
 
-    # the QR decomposition is unique, and Q uniform, when diag(R) is positive
-    q = q * torch.diagonal(r, dim1=1, dim2=2).sign().unsqueeze(1)
+    # Q of the QR decomposition with a positive diagonal of R, which is
+    # uniform: the columns orthonormalised one after the other (Gram-Schmidt).
+    # torch.linalg.qr gives it too, forty times slower on a GPU for matrices
+    # this small.
+    a, b, c = gaussian.unbind(dim=2)
+    first = F.normalize(a, dim=1)
+
+    # subtracted twice: once leaves a part along the first column when the
+    # two columns are almost parallel
+    b = b - (first * b).sum(dim=1, keepdim=True) * first
+    b = b - (first * b).sum(dim=1, keepdim=True) * first
+    second = F.normalize(b, dim=1)
+
+    # the third column is normal to the two others, on the side of c
+    normal = torch.cross(first, second, dim=1)
+    side = (normal * c).sum(dim=1, keepdim=True)
+    third = F.normalize(normal, dim=1) * torch.where(side < 0, -1.0, 1.0)
+
+    q = torch.stack([first, second, third], dim=2)
 
     if proper:
         # in odd dimension -Q is the rotation of a rotoreflection Q
