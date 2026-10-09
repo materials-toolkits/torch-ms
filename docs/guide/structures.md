@@ -37,7 +37,7 @@ batched, separated and moved to a device with the structures.
 A label which is unknown is `NaN`. Cartesian positions are `x @ lattice`, for a crystal and for
 a molecule:
 
-```python
+```{.python notest}
 positions = structures.positions()   # (n_atoms, 3), in Å
 ```
 
@@ -89,7 +89,7 @@ it: see [Periodicity](../design/periodicity.md).
 `properties` holds the labels of a dataset which are not one of the four fields, each one a
 tensor with one value per structure:
 
-```python
+```{.python notest}
 structures = load_dataset("qm9")[:4]
 structures.properties["homo"]          # tensor of 4 values, in eV
 
@@ -116,7 +116,7 @@ first, second = Structures.separate(batch)
 `collate` also takes batches of several structures, and `separate` gives structures which
 are batches of one structure:
 
-```python
+```{.python continuation}
 larger = Structures.collate([batch, Structures.diamond(), batch])
 larger.num_atoms              # tensor([8, 8, 8, 8, 8])
 
@@ -131,7 +131,7 @@ All the tensors of a `Structures` must be on the same device; a mismatch raises
 `InvalidStructure`. `structures.device()` gives the device, `structures.to(device)` a copy on
 another one:
 
-```python
+```{.python notest}
 structures = structures.to("cuda")
 structures.device()   # device(type='cuda', index=0)
 ```

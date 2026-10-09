@@ -12,7 +12,7 @@ simulations. Their solvent is removed in two ways, which make the two splits:
 In `fsr` the solvent bound to the metals is kept. Most structures of `fsr` are also in `asr`,
 with the same name up to its suffix.
 
-```python
+```{.python notest}
 dataset = load_dataset("core-mof")        # asr
 dataset = load_dataset("core-mof/fsr")
 ```
@@ -56,7 +56,7 @@ The properties are the geometric ones of the table of the source, computed with 
 **Recommended**: without the structures the source set apart as disordered, and at most
 500 atoms.
 
-```python
+```{.python notest}
 from torchms.data import Filter, load_dataset
 
 dataset = load_dataset("core-mof", filter=Filter(equal={"disorder": 0}, max_atoms=500))

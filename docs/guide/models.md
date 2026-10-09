@@ -11,7 +11,7 @@ atoms. They follow the two ways recent models do it:
 Both take a batch of `Structures` and return one energy per structure. There is no training
 loop in the library: they are `torch.nn.Module`.
 
-```python
+```{.python notest}
 from torchms.data import load_dataset
 from torchms.models import EquivariantNetwork, LineGraphNetwork
 

@@ -10,7 +10,7 @@ Castelli et al. (2012).
 | `test` | 3,785 |
 | total | 18,928 |
 
-```python
+```{.python notest}
 dataset = load_dataset("perov-5", "train")
 ```
 
@@ -34,7 +34,7 @@ The source has two heats of formation (`heat_all`, `heat_ref`) and two gaps (`di
 
 **No filter is needed**: every structure has its two labels and 5 atoms.
 
-```python
+```{.python notest}
 from torchms.data import Filter, load_dataset
 
 dataset = load_dataset("perov-5", "train")                 # recommended: everything

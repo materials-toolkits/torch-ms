@@ -267,7 +267,7 @@ structures kept are copied once.
 
 `loader.config` says what was chosen, with the reason of each choice and what was measured:
 
-```python
+```{.python notest}
 loader = auto_loader("mp-20", "train", batch_size=128, transform=graphs, shuffle=True)
 print(loader.config)
 ```
@@ -299,7 +299,7 @@ It is a `LoaderConfig`:
 To change a choice, copy the config with the field changed and give it back. Nothing is
 detected nor measured when a config is given:
 
-```python
+```{.python notest}
 from dataclasses import replace
 
 # keep the memory of the GPU for the model
@@ -349,7 +349,7 @@ function. A batch is read from the file in one call, in any order, and the `tran
 dataset is applied once to the whole batch, in the workers. `random_split`, `Subset` and the
 other arguments of `DataLoader` work as usual.
 
-```python
+```{.python notest}
 from torch.utils.data import DataLoader
 from torchms.data import load_dataset
 
@@ -364,7 +364,7 @@ with `Structures.collate(batch)`.
 To build the graphs in the workers, on the CPU, put the graph transforms in the `transform` of
 the dataset, after the augmentations:
 
-```python
+```{.python notest}
 from torchms.data.augmentation import Compose
 
 dataset = load_dataset("mp-20", "train", transform=Compose([augment, graphs]))
@@ -376,7 +376,7 @@ dataset = load_dataset("mp-20", "train", transform=Compose([augment, graphs]))
 training process, and with `batch_size` splits the result in smaller batches. This is how
 graphs are built on a GPU, on large batches:
 
-```python
+```{.python notest}
 from torchms.data import OnDevice
 
 loader = DataLoader(dataset, batch_size=8192, shuffle=True, num_workers=16)
@@ -394,7 +394,7 @@ loader does. It is iterated once per epoch and has a length.
 `InMemoryDataset` holds a whole dataset as one batch, in RAM or on a GPU. It is indexed as an
 `HDF5Dataset`, and `batches` gives the batches of an epoch without a `DataLoader`:
 
-```python
+```{.python notest}
 from torchms.data import InMemoryDataset, OnDevice
 
 dataset = InMemoryDataset.from_hdf5("my_structures.hdf5", device="cuda")
@@ -414,7 +414,7 @@ for the augmentations, runs on the device of the dataset.
 their graph and what is built on it, the indices starting again at zero in each one.
 `Structures.select(index)` gathers structures of a batch in any order, without graph.
 
-```python
+```{.python notest}
 large = graphs(dataset[:8192].to("cuda"))     # the graphs of 8,192 structures, built once
 batches = large.split(128)                    # 64 batches of 128, with their graphs
 ```

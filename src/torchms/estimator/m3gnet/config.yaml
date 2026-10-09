@@ -1,0 +1,50 @@
+# M3GNet potential of matgl: weights, graph and hyperparameters, read by
+# model.py.
+
+default_weights: m3gnet-matpes-pbe-2025.2
+
+# parameters of the model (state.pt), then its arguments (model.pt)
+# files of the pretrained weights, by name: where a file is downloaded, its
+# expected SHA-256 and its name in the cache, the last part of the URL by default
+checkpoints:
+  m3gnet-matpes-pbe-2025.2:
+    - url: https://huggingface.co/materialyze/M3GNet-PES-MatPES-PBE-2025.2/resolve/a972e0dd982eaf2a4cf1e5c8de2c9e78c0013f72/state.pt
+      sha256: ba5b96249e366456cb3e518fcc93f58c49353f564c79648f309b916926b10fa0
+    - url: https://huggingface.co/materialyze/M3GNet-PES-MatPES-PBE-2025.2/resolve/a972e0dd982eaf2a4cf1e5c8de2c9e78c0013f72/model.pt
+      sha256: 8204c34dc4df513e03d080017c30d7628fa3e4fcc13b9fe47076da0bcd3129da
+
+# atoms closer than the radius are bonded; angles are between two bonds of at
+# most the three-body radius
+graph:
+  radius: &radius 5.0                         # Å
+  three_body_radius: &three_body_radius 4.0   # Å
+
+model:
+  latent_dim: &latent_dim 64   # features of the atoms and of the bonds
+  max_n: &max_n 3              # radial functions per degree
+  max_l: &max_l 3              # degrees of the basis of the angles
+  num_blocks: &num_blocks 3
+  cutoff_power: 3              # power of the smooth cutoff of the angles
+  cosine_margin: 1.0e-7        # the cosines of the angles are kept this far from ±1
+  # atomic numbers of the elements, in the order of the embedding, as first and
+  # last of each range: H to Bi, then Ac to Pu
+  elements: [[1, 83], [89, 94]]
+
+# arguments of the model the rewrite is written for, as stored with the weights
+upstream:
+  model_args:
+    dim_node_embedding: *latent_dim
+    dim_edge_embedding: *latent_dim
+    max_n: *max_n
+    max_l: *max_l
+    nblocks: *num_blocks
+    rbf_type: SphericalBessel
+    is_intensive: false
+    cutoff: *radius
+    threebody_cutoff: *three_body_radius
+    units: *latent_dim
+    ntargets: 1
+    use_smooth: false
+    use_phi: false
+    include_state: false
+    activation_type: swish

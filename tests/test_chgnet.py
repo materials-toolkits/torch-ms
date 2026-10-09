@@ -14,9 +14,16 @@ from torchms.data.augmentation import (
     LatticeRotation,
     make_supercell,
 )
-from torchms.estimator.chgnet import ChgnetEnergyModel, InvalidWeights, weights
+from torchms.estimator import weights
+from torchms.estimator.chgnet import ChgnetEnergyModel, InvalidWeights
 from torchms.estimator.chgnet.model import BOND_RADIUS, MODEL_ARGS, RADIUS
 from torchms.graph.line_graph import reverse_edges
+
+
+def predict(model, structures: Structures) -> torch.Tensor:
+    """Prediction of a model for structures without graph."""
+    return model(model.transform()(structures))
+
 
 DATA = Path(__file__).parent / "data"
 NAME = "chgnet-0.3.0"
@@ -48,23 +55,24 @@ def model() -> ChgnetEnergyModel:
 
 
 def per_atom(model: ChgnetEnergyModel, structures: Structures) -> torch.Tensor:
-    return model(structures) / structures.num_atoms
+    return predict(model, structures) / structures.num_atoms
 
 
 def test_pinned_checkpoints(tmp_path):
-    assert set(weights.CHECKPOINTS) == {NAME}
-    checkpoint = weights.CHECKPOINTS[NAME]
+    assert set(weights.CHECKPOINTS["chgnet"]) == {NAME}
+    (checkpoint,) = weights.CHECKPOINTS["chgnet"][NAME]
     assert checkpoint.url.startswith("https://")
     assert len(checkpoint.sha256) == 64
-    assert weights.checkpoint_path(NAME, tmp_path).parent == tmp_path / "chgnet"
+    (path,) = weights.checkpoint_paths("chgnet", NAME, tmp_path)
+    assert path.parent == tmp_path / "chgnet"
 
     with pytest.raises(KeyError, match="unknown model"):
-        weights.checkpoint_path("chgnet-9")
+        weights.checkpoint_paths("chgnet", "chgnet-9")
 
 
 def test_model_output(model):
     batch = make_batch()
-    energy = model(batch)
+    energy = predict(model, batch)
 
     assert energy.shape == (2,)
     assert energy.dtype == torch.float64
@@ -73,7 +81,11 @@ def test_model_output(model):
 
 def test_model_graphs(model):
     batch = make_batch()
-    graph, edge_bond, bond_length, triplet_index, cosines = model.graphs(batch)
+    graph, undirected, bond_length, triplets, cosines = model.graphs(
+        model.transform()(batch)
+    )
+    edge_bond = undirected.edge_bond
+    triplet_index = triplets.index
     distance = graph.edges_distances()
 
     assert (distance <= RADIUS).all()
@@ -95,9 +107,9 @@ def test_model_graphs(model):
 
 
 def test_model_batch_equals_single(model):
-    alone = torch.cat([model(structure) for structure in make_structures()])
+    alone = torch.cat([predict(model, structure) for structure in make_structures()])
 
-    assert torch.allclose(model(make_batch()), alone, rtol=1e-5)
+    assert torch.allclose(predict(model, make_batch()), alone, rtol=1e-5)
 
 
 @pytest.mark.parametrize(
@@ -108,7 +120,7 @@ def test_model_invariances(model, transform):
     batch = make_batch()
     augmented = transform(generator=generator())(batch)
 
-    assert torch.allclose(model(augmented), model(batch), rtol=1e-4)
+    assert torch.allclose(predict(model, augmented), predict(model, batch), rtol=1e-4)
 
 
 def test_model_energy_of_a_supercell(model):
@@ -117,7 +129,7 @@ def test_model_energy_of_a_supercell(model):
     supercell = make_supercell(batch, repeat)
 
     assert torch.allclose(
-        model(supercell), model(batch) * repeat.prod(dim=1), rtol=1e-4
+        predict(model, supercell), predict(model, batch) * repeat.prod(dim=1), rtol=1e-4
     )
 
 
@@ -126,10 +138,10 @@ def test_model_without_angles(model):
     structures = Structures(
         lattice=torch.eye(3).unsqueeze(0) * 4.0, x=torch.zeros(1, 3), z=[29]
     )
-    _, _, _, triplet_index, _ = model.graphs(structures)
+    _, _, _, triplets, _ = model.graphs(model.transform()(structures))
 
-    assert triplet_index.shape[1] == 0
-    assert model(structures).isfinite().all()
+    assert triplets.index.shape[1] == 0
+    assert predict(model, structures).isfinite().all()
 
 
 def test_load_pretrained_checks_the_parameters(model):
@@ -140,7 +152,9 @@ def test_load_pretrained_checks_the_parameters(model):
     other.load_pretrained(state_dict, MODEL_ARGS)
     other.eval()
     with torch.no_grad():
-        assert torch.allclose(other(make_batch()), model(make_batch()))
+        assert torch.allclose(
+            predict(other, make_batch()), predict(model, make_batch())
+        )
 
     with pytest.raises(InvalidWeights, match="other arguments"):
         other.load_pretrained(state_dict, {**MODEL_ARGS, "atom_graph_cutoff": 5})
@@ -169,7 +183,7 @@ def reference_structures() -> tuple[Structures, dict[str, np.ndarray]]:
 
 @pytest.fixture(scope="module")
 def pretrained() -> ChgnetEnergyModel:
-    if not weights.checkpoint_path(NAME).exists():
+    if not weights.checkpoint_paths("chgnet", NAME)[0].exists():
         pytest.skip(f"weights of {NAME} are not in the cache")
 
     return ChgnetEnergyModel.from_pretrained(NAME, device="cpu")
@@ -179,7 +193,11 @@ def pretrained() -> ChgnetEnergyModel:
 def test_pretrained_graphs_match_chgnet(pretrained):
     """Graphs of chgnet 0.4.2, computed once outside of the project."""
     structures, data = reference_structures()
-    graph, edge_bond, _, triplet_index, cosines = pretrained.graphs(structures)
+    graph, undirected, _, triplets, cosines = pretrained.graphs(
+        pretrained.transform()(structures)
+    )
+    edge_bond = undirected.edge_bond
+    triplet_index = triplets.index
     n_struct = len(structures.num_atoms)
 
     assert graph.num_edges.tolist() == data["num_edges"].tolist()
@@ -203,7 +221,7 @@ def test_pretrained_matches_chgnet(pretrained):
     """Energies of chgnet 0.4.2, computed once outside of the project."""
     structures, data = reference_structures()
 
-    energy = pretrained(structures).numpy()
+    energy = predict(pretrained, structures).numpy()
     error = np.abs(energy - data["energy"]) / data["num_atoms"]
 
     assert error.max() < 1e-4
@@ -212,8 +230,19 @@ def test_pretrained_matches_chgnet(pretrained):
 @pytest.mark.timeout(120)
 def test_pretrained_state_dict_is_fully_used(pretrained):
     checkpoint = torch.load(
-        weights.checkpoint_path(NAME), map_location="cpu", weights_only=True
+        weights.checkpoint_paths("chgnet", NAME)[0],
+        map_location="cpu",
+        weights_only=True,
     )
     unused = set(checkpoint["model"]["state_dict"]) - set(pretrained.state_dict())
 
     assert unused == {"site_wise.weight", "site_wise.bias"}
+
+
+def test_unknown_element(model):
+    structures = Structures(
+        lattice=torch.eye(3).unsqueeze(0) * 4.0, x=torch.zeros(1, 3), z=[95]
+    )
+
+    with pytest.raises(ValueError, match=r"elements \[95\] are not supported"):
+        predict(model, structures)

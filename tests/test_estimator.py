@@ -11,21 +11,25 @@ import torch
 from torchms.data import HDF5Dataset, Structures
 from torchms.estimator import EnergyEstimator, OrbEnergyModel
 from torchms.estimator import calibration
-from torchms.estimator.orb import weights
+from torchms.estimator import weights
 from torchms.estimator.energy import atom_batches, to_device
 from torchms.estimator.orb.model import (
     COVALENT_RADII,
     MAX_NEIGHBORS,
     RADIUS,
     UNUSED_PARAMETERS,
-    BesselBasis,
     InvalidWeights,
     ZBLBasis,
     build_mlp,
-    polynomial_cutoff,
-    segment_sum,
-    spherical_harmonics,
 )
+from torchms.graph.graph import Graph
+from torchms.models.basis import BesselBasis, polynomial_cutoff, spherical_harmonics
+
+
+def predict(model, structures: Structures) -> torch.Tensor:
+    """Prediction of a model for structures without graph."""
+    return model(model.transform()(structures))
+
 
 REFERENCE = Path(__file__).parent / "data" / "orb_reference.npz"
 
@@ -34,12 +38,12 @@ REFERENCE = Path(__file__).parent / "data" / "orb_reference.npz"
 
 
 def test_checkpoint_path(tmp_path, monkeypatch):
-    path = weights.checkpoint_path("orb-v3-conservative-inf-omat", tmp_path)
+    path = weights.checkpoint_paths("orb", "orb-v3-conservative-inf-omat", tmp_path)[0]
     assert path == tmp_path / "orb" / "orb-v3-conservative-inf-omat-20250404.ckpt"
 
     monkeypatch.setenv("TORCHMS_CACHE", str(tmp_path / "cache"))
     assert weights.cache_directory() == tmp_path / "cache"
-    assert weights.checkpoint_path("orb-v3-conservative-inf-mpa").parent == (
+    assert weights.checkpoint_paths("orb", "orb-v3-conservative-inf-mpa")[0].parent == (
         tmp_path / "cache" / "orb"
     )
 
@@ -48,7 +52,7 @@ def test_checkpoint_path(tmp_path, monkeypatch):
     assert weights.cache_directory() == tmp_path / "xdg" / "torchms"
 
     with pytest.raises(KeyError, match="unknown model"):
-        weights.checkpoint_path("orb-v9")
+        weights.checkpoint_paths("orb", "orb-v9")[0]
 
 
 def test_download_checks_the_content(tmp_path, monkeypatch):
@@ -56,27 +60,27 @@ def test_download_checks_the_content(tmp_path, monkeypatch):
     source.write_bytes(b"pretrained weights")
     good = weights.Checkpoint(source.as_uri(), weights.sha256(source))
     bad = weights.Checkpoint(source.as_uri(), "0" * 64)
-    monkeypatch.setitem(weights.CHECKPOINTS, "good", good)
-    monkeypatch.setitem(weights.CHECKPOINTS, "bad", bad)
+    monkeypatch.setitem(weights.CHECKPOINTS["orb"], "good", (good,))
+    monkeypatch.setitem(weights.CHECKPOINTS["orb"], "bad", (bad,))
 
-    path = weights.download("good", tmp_path / "cache")
+    path = weights.download("orb", "good", tmp_path / "cache")[0]
     assert path.read_bytes() == b"pretrained weights"
     assert not path.with_name(path.name + ".part").exists()
 
     # not downloaded again
     source.unlink()
-    assert weights.download("good", tmp_path / "cache") == path
+    assert weights.download("orb", "good", tmp_path / "cache")[0] == path
 
     with pytest.raises(weights.InvalidCheckpoint, match="SHA-256"):
-        weights.download("bad", tmp_path / "cache")
+        weights.download("orb", "bad", tmp_path / "cache")[0]
 
 
 def test_pinned_checkpoints():
-    assert set(weights.CHECKPOINTS) == {
+    assert set(weights.CHECKPOINTS["orb"]) == {
         "orb-v3-conservative-inf-omat",
         "orb-v3-conservative-inf-mpa",
     }
-    for checkpoint in weights.CHECKPOINTS.values():
+    for (checkpoint,) in weights.CHECKPOINTS["orb"].values():
         assert checkpoint.url.startswith("https://")
         assert len(checkpoint.sha256) == 64
 
@@ -158,19 +162,6 @@ def test_bessel_basis():
     assert set(basis.state_dict()) == {"bessel_weights", "r_max", "prefactor"}
 
 
-def test_segment_sum():
-    values = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
-    index = torch.tensor([2, 0, 2])
-
-    assert segment_sum(values, index, 4).tolist() == [
-        [3.0, 4.0],
-        [0.0, 0.0],
-        [6.0, 8.0],
-        [0.0, 0.0],
-    ]
-    assert segment_sum(values[:, 0], index, 3).tolist() == [3.0, 0.0, 6.0]
-
-
 def test_build_mlp_names():
     mlp = build_mlp(4, [8, 8], 2)
 
@@ -189,12 +180,17 @@ def test_build_mlp_names():
 def test_pair_repulsion_only_at_short_distance():
     repulsion = ZBLBasis()
     z = torch.tensor([6, 6])
-    batch, num_atoms = torch.tensor([0, 0]), torch.tensor([2])
-    senders, receivers = torch.tensor([0, 1]), torch.tensor([1, 0])
+    graph = Graph.from_edges(
+        None,
+        torch.tensor([2]),
+        torch.tensor([[0, 1], [1, 0]]),
+        torch.zeros(2, 3, dtype=torch.int64),
+        edge_batch=torch.tensor([0, 0]),
+    )
 
     def energy(distance: float) -> float:
         vectors = torch.tensor([[distance, 0.0, 0.0], [-distance, 0.0, 0.0]])
-        return float(repulsion(z, vectors, senders, receivers, batch, num_atoms))
+        return float(repulsion(z, vectors, graph))
 
     # cut at the covalent radii of the next element (nitrogen), see ZBLBasis
     limit = 2 * COVALENT_RADII[7]
@@ -246,22 +242,14 @@ def supercell(structures: Structures) -> Structures:
 
 
 def repulsion(model: OrbEnergyModel, structures: Structures) -> torch.Tensor:
-    graph, vectors = model.edges(structures)
-    senders, receivers = graph.edge_index
-    return model.pair_repulsion_fn(
-        structures.z,
-        vectors,
-        senders,
-        receivers,
-        structures.batch,
-        structures.num_atoms,
-    )
+    graph, vectors = model.edges(model.transform()(structures))
+    return model.pair_repulsion_fn(structures.z, vectors, graph)
 
 
 def test_model_output(model):
     structures = double(Structures.collate([Structures.diamond(), tilted()]))
 
-    energy = model(structures)
+    energy = predict(model, structures)
 
     assert energy.shape == (2,)
     assert energy.dtype == torch.float64
@@ -269,7 +257,7 @@ def test_model_output(model):
 
 
 def test_model_graph(model):
-    graph, vectors = model.edges(double(Structures.diamond()))
+    graph, vectors = model.edges(model.transform()(double(Structures.diamond())))
     degree = torch.bincount(graph.edge_index[0], minlength=8)
 
     # diamond has more than 120 atoms closer than 6 Å
@@ -277,7 +265,7 @@ def test_model_graph(model):
     assert vectors.norm(dim=1).max() <= RADIUS
     assert torch.allclose(vectors.norm(dim=1), graph.edges_distances())
 
-    graph, vectors = model.edges(double(tilted()))
+    graph, vectors = model.edges(model.transform()(double(tilted())))
     assert torch.bincount(graph.edge_index[0], minlength=3).max() < MAX_NEIGHBORS
     assert torch.allclose(vectors.norm(dim=1), graph.edges_distances())
 
@@ -285,23 +273,24 @@ def test_model_graph(model):
 def test_model_batch_equals_single(model):
     parts = [double(Structures.zincblende()), double(tilted())]
 
-    batched = model(Structures.collate(parts))
-    single = torch.cat([model(part) for part in parts])
+    batched = predict(model, Structures.collate(parts))
+    single = torch.cat([predict(model, part) for part in parts])
 
     assert torch.allclose(batched, single, rtol=1e-10)
 
 
 def test_model_invariances(model):
     structures = double(tilted())
-    reference = model(structures)
+    reference = predict(model, structures)
 
     def variant(lattice=None, x=None, z=None) -> torch.Tensor:
-        return model(
+        return predict(
+            model,
             Structures(
                 lattice=structures.lattice if lattice is None else lattice,
                 x=structures.x if x is None else x,
                 z=structures.z if z is None else z,
-            )
+            ),
         )
 
     # order of the atoms
@@ -324,7 +313,7 @@ def test_model_energy_of_a_supercell(model):
     assert repulsion(model, structures) == 0.0
 
     assert torch.allclose(
-        model(supercell(structures)), 2 * model(structures), rtol=1e-4
+        predict(model, supercell(structures)), 2 * predict(model, structures), rtol=1e-4
     )
 
 
@@ -336,9 +325,9 @@ def test_model_pair_repulsion_is_a_mean_over_atoms(model):
     assert repulsion(model, structures) > 0.0
     assert torch.allclose(repulsion(model, doubled), repulsion(model, structures))
 
-    rest = model(structures) - repulsion(model, structures)
+    rest = predict(model, structures) - repulsion(model, structures)
     assert torch.allclose(
-        model(doubled) - repulsion(model, doubled), 2 * rest, rtol=1e-4
+        predict(model, doubled) - repulsion(model, doubled), 2 * rest, rtol=1e-4
     )
 
 
@@ -353,7 +342,9 @@ def test_load_pretrained_checks_the_parameters(model):
 
     other = OrbEnergyModel().double()
     other.load_pretrained(state_dict)
-    assert torch.allclose(other(double(tilted())), model(double(tilted())))
+    assert torch.allclose(
+        predict(other, double(tilted())), predict(model, double(tilted()))
+    )
 
     with pytest.raises(InvalidWeights, match="Unexpected"):
         other.load_pretrained({**state_dict, "model.unknown.weight": torch.zeros(1)})
@@ -382,15 +373,15 @@ def reference_structures() -> tuple[Structures, dict[str, np.ndarray]]:
 def test_pretrained_matches_orb_models(name):
     """Energies of orb-models 0.7.0, computed once outside of the project."""
     full_name = f"orb-v3-conservative-inf-{name}"
-    if not weights.checkpoint_path(full_name).exists():
+    if not weights.checkpoint_paths("orb", full_name)[0].exists():
         pytest.skip(f"weights of {full_name} are not in the cache")
 
     structures, data = reference_structures()
     pretrained = OrbEnergyModel.from_pretrained(full_name, device="cpu")
 
-    graph, _ = pretrained.edges(structures)
+    graph, _ = pretrained.edges(pretrained.transform()(structures))
     with torch.no_grad():
-        energy = pretrained(structures).numpy()
+        energy = predict(pretrained, structures).numpy()
 
     assert graph.num_edges.tolist() == data["num_edges"].tolist()
 
@@ -407,7 +398,7 @@ def test_pretrained_matches_orb_models(name):
 def test_pretrained_is_almost_invariant_to_rotations():
     """The network is not equivariant: it learned the invariance of the energy."""
     name = "orb-v3-conservative-inf-omat"
-    if not weights.checkpoint_path(name).exists():
+    if not weights.checkpoint_paths("orb", name)[0].exists():
         pytest.skip(f"weights of {name} are not in the cache")
 
     structures, data = reference_structures()
@@ -423,7 +414,7 @@ def test_pretrained_is_almost_invariant_to_rotations():
 
     with torch.no_grad():
         change = (
-            pretrained(rotated) - pretrained(structures)
+            predict(pretrained, rotated) - predict(pretrained, structures)
         ).abs() / structures.num_atoms
 
     assert change.max() > 1e-7
@@ -432,7 +423,7 @@ def test_pretrained_is_almost_invariant_to_rotations():
 
 
 def test_pretrained_state_dict_is_fully_used():
-    path = weights.checkpoint_path("orb-v3-conservative-inf-omat")
+    path = weights.checkpoint_paths("orb", "orb-v3-conservative-inf-omat")[0]
     if not path.exists():
         pytest.skip("weights are not in the cache")
 

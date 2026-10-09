@@ -12,7 +12,7 @@ crystals**: `pbc` is `False` and `x` holds positions in Å, see
 | Elements | H, C, N, O, F |
 | Flagged `uncharacterized` | 3,054 |
 
-```python
+```{.python notest}
 dataset = load_dataset("qm9")
 ```
 
@@ -65,7 +65,7 @@ the unit of the source.
 **Recommended**: without the 3,054 molecules which failed the consistency check of the source,
 as most papers do.
 
-```python
+```{.python notest}
 from torchms.data import Filter, load_dataset
 
 dataset = load_dataset("qm9", filter=Filter(equal={"uncharacterized": 0}))

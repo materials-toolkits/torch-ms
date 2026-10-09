@@ -174,6 +174,13 @@ def assert_consistent(structures: Structures):
         assert (graph.edge_batch[tuples.index] == tuples.batch).all()
 
         sender, receiver = graph.edge_index[:, tuples.index]
+        if name == "bonds":
+            # an edge and its reverse, without angle
+            assert (sender[0] == receiver[1]).all()
+            assert (receiver[0] == sender[1]).all()
+            assert tuples.angle is None
+            continue
+
         if name == "triplets":
             assert (sender[0] == sender[1]).all()
             expected = torch.acos(triplet_cosines(vectors, tuples.index))
@@ -541,7 +548,7 @@ class TestBatching:
         assert moved.graph.edge_vector.device.type == "cuda"
         assert moved.graph.structures.x.device.type == "cuda"
         assert moved.graph.structures.x is moved.x
-        for name in TUPLES_FIELDS:
+        for name in ("line_graph", "triplets", "quadruplets"):
             assert getattr(moved, name).device().type == "cuda"
             assert getattr(moved, name).angle.device.type == "cuda"
 
@@ -781,3 +788,57 @@ class TestSplit:
             assert part.triplets.device().type == "cuda"
             assert_consistent(part)
             assert_same_attached(part.to("cpu"), reference)
+
+
+def test_triplets_of_edges_strictly_shorter_than_a_radius():
+    from torchms.graph.transforms import AddRadiusGraph, AddTriplets, attached_tuples
+
+    # simple cubic: 6 neighbours at exactly 2 Å
+    cubic = Structures(
+        lattice=torch.eye(3).unsqueeze(0) * 2.0, x=torch.zeros(1, 3), z=[29]
+    )
+    structures = AddRadiusGraph(2.5, self_images=True)(cubic)
+
+    included = AddTriplets(radius=2.0)(structures)
+    excluded = AddTriplets(radius=2.0, strict=True)(structures)
+
+    assert included.triplets.num_tuples.tolist() == [30]
+    assert excluded.triplets.num_tuples.tolist() == [0]
+
+    assert attached_tuples(included, "triplets", None) is included.triplets
+    with pytest.raises(ValueError, match="needs structures.line_graph"):
+        attached_tuples(included, "line_graph", AddTriplets())
+
+
+def test_bonds_pair_each_edge_with_its_reverse():
+    from torchms.graph.line_graph import reverse_edges
+    from torchms.graph.transforms import (
+        AddBonds,
+        AddRadiusGraph,
+        KeepNearestNeighbors,
+    )
+
+    items = [Structures.diamond(), Structures.zincblende()]
+    transform = Compose([AddRadiusGraph(3.0, self_images=True), AddBonds()])
+    batch = Structures.collate([transform(item) for item in items])
+    graph, bonds = batch.graph, batch.bonds
+
+    # batched with the structures, as the bonds of the batch
+    assert_consistent(batch)
+    assert torch.equal(bonds.index, transform(Structures.collate(items)).bonds.index)
+
+    first, second = bonds.index
+    assert torch.equal(bonds.num_tuples * 2, graph.num_edges)
+    assert torch.equal(reverse_edges(graph)[first], second)
+    assert (first < second).all() and (first[1:] > first[:-1]).all()
+    assert bonds.index.flatten().sort().values.tolist() == list(range(len(first) * 2))
+
+    # after nearest neighbours, an edge can be alone
+    nearest = Compose([AddRadiusGraph(4.0), KeepNearestNeighbors(1), AddBonds()])
+    distorted = Structures(
+        lattice=torch.eye(3).unsqueeze(0) * 10.0,
+        x=[[0.0, 0.0, 0.0], [0.1, 0.0, 0.0], [0.25, 0.0, 0.0]],
+        z=[1, 1, 1],
+    )
+    with pytest.raises(ValueError, match="every edge has its reverse"):
+        nearest(distorted)

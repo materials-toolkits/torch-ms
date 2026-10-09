@@ -18,180 +18,61 @@ spherical Bessel functions of the length of the other bond and of spherical
 harmonics of the angle. Bonds and atoms are then updated from each other. The
 energy is a sum of an energy per atom and of a reference energy per element.
 
-Weights are the ones published with matgl, see weights.py.
+Weights are the ones published with matgl, see config.yaml.
 """
 
 from __future__ import annotations
 
-import math
 import os
 from typing import Mapping
 
-import numpy as np
 import torch
 from jaxtyping import Float, Int
-from scipy.optimize import brentq
-from scipy.special import spherical_jn
 from torch import nn
 
+from torchms.data.augmentation.transforms import Compose, Transform
 from torchms.data.batching import Structures
 from torchms.data.constants import symbol_to_number
-from torchms.estimator.m3gnet.weights import download
-from torchms.estimator.orb.model import polynomial_cutoff
-from torchms.graph.cutoff import cutoff
+from torchms.estimator.config import load_config
+from torchms.estimator.pretrained import (
+    InvalidWeights,
+    PretrainedModel,
+    different_arguments,
+    element_index,
+    element_table,
+)
+from torchms.estimator.weights import download
 from torchms.graph.geometry import triplet_cosines
-from torchms.graph.graph import Graph
-from torchms.graph.line_graph import triplets
-from torchms.graph.sparse import scatter
+from torchms.graph.graph import EdgeTuples, Graph
+from torchms.graph.transforms import (
+    AddRadiusGraph,
+    AddTriplets,
+    attached_graph,
+    attached_tuples,
+    edges_vectors,
+)
+from torchms.models.basis import SphericalBesselBasis, legendre, polynomial_cutoff
 
-RADIUS = 5.0
-THREE_BODY_RADIUS = 4.0
-LATENT_DIM = 64
-MAX_N = 3
-MAX_L = 3
-NUM_BLOCKS = 3
+# every value of the model is in config.yaml, next to this module
+CONFIG = load_config(__file__)
 
-# atomic numbers of the elements of the model, in the order of its embedding:
-# H to Bi, then Ac to Pu
-ELEMENTS = (*range(1, 84), *range(89, 95))
+RADIUS: float = CONFIG["graph"]["radius"]
+THREE_BODY_RADIUS: float = CONFIG["graph"]["three_body_radius"]
+
+LATENT_DIM: int = CONFIG["model"]["latent_dim"]
+MAX_N: int = CONFIG["model"]["max_n"]
+MAX_L: int = CONFIG["model"]["max_l"]
+NUM_BLOCKS: int = CONFIG["model"]["num_blocks"]
+CUTOFF_POWER: int = CONFIG["model"]["cutoff_power"]
+COSINE_MARGIN: float = CONFIG["model"]["cosine_margin"]
+
+# atomic numbers of the elements of the model, in the order of its embedding
+ELEMENTS: tuple[int, ...] = tuple(
+    z for first, last in CONFIG["model"]["elements"] for z in range(first, last + 1)
+)
 
 # arguments of the model the rewrite is written for, as stored with the weights
-MODEL_ARGS = {
-    "dim_node_embedding": LATENT_DIM,
-    "dim_edge_embedding": LATENT_DIM,
-    "max_n": MAX_N,
-    "max_l": MAX_L,
-    "nblocks": NUM_BLOCKS,
-    "rbf_type": "SphericalBessel",
-    "is_intensive": False,
-    "cutoff": RADIUS,
-    "threebody_cutoff": THREE_BODY_RADIUS,
-    "units": LATENT_DIM,
-    "ntargets": 1,
-    "use_smooth": False,
-    "use_phi": False,
-    "include_state": False,
-    "activation_type": "swish",
-}
-
-
-class InvalidWeights(Exception):
-    """Raised when weights do not match the parameters of the model."""
-
-
-def spherical_bessel_roots(max_l: int, max_n: int) -> np.ndarray:
-    """First roots of the spherical Bessel functions j_0 to j_(max_l - 1).
-
-    The roots of j_l are between the ones of j_(l-1).
-
-    Returns:
-        Roots with shape (max_l, max_n).
-
-    Examples:
-        >>> spherical_bessel_roots(2, 2).round(4)
-        array([[3.1416, 6.2832],
-               [4.4934, 7.7253]])
-    """
-    zeros = np.arange(1, max_l + max_n + 1) * math.pi
-    roots = [zeros[:max_n]]
-
-    for degree in range(1, max_l):
-        zeros = np.array(
-            [
-                brentq(lambda x, v=degree: spherical_jn(v, x), low, high)
-                for low, high in zip(zeros[:-1], zeros[1:])
-            ]
-        )
-        roots.append(zeros[:max_n])
-
-    return np.array(roots)
-
-
-def spherical_bessel(
-    max_l: int, x: Float[torch.Tensor, "..."]
-) -> list[Float[torch.Tensor, "..."]]:
-    """Spherical Bessel functions j_0 to j_max_l, for x > 0.
-
-    Examples:
-        >>> j0, j1 = spherical_bessel(1, torch.tensor([math.pi / 2]))
-        >>> j0, j1
-        (tensor([0.6366]), tensor([0.4053]))
-    """
-    functions = [torch.sin(x) / x, torch.sin(x) / x**2 - torch.cos(x) / x]
-
-    for degree in range(1, max_l):
-        functions.append((2 * degree + 1) / x * functions[-1] - functions[-2])
-
-    return functions[: max_l + 1]
-
-
-def legendre(max_l: int, x: Float[torch.Tensor, "n"]) -> Float[torch.Tensor, "n max_l"]:
-    """Spherical harmonics Y_l0 of an angle from its cosine, for l < max_l.
-
-    Examples:
-        >>> legendre(3, torch.tensor([1.0, 0.0]))
-        tensor([[ 0.2821,  0.4886,  0.6308],
-                [ 0.2821,  0.0000, -0.3154]])
-    """
-    polynomials = [torch.ones_like(x), x]
-
-    for degree in range(1, max_l - 1):
-        polynomials.append(
-            ((2 * degree + 1) * x * polynomials[-1] - degree * polynomials[-2])
-            / (degree + 1)
-        )
-
-    return torch.stack(
-        [
-            math.sqrt((2 * degree + 1) / (4 * math.pi)) * polynomials[degree]
-            for degree in range(max_l)
-        ],
-        dim=-1,
-    )
-
-
-class SphericalBesselFunction(nn.Module):
-    """Radial basis j_l(z_ln r / r_max), with z_ln the roots of j_l.
-
-    The functions are normalized on the sphere of radius r_max, and ordered by
-    l then by n.
-    """
-
-    cutoff: torch.Tensor
-    roots: torch.Tensor
-    norm: torch.Tensor
-
-    def __init__(self):
-        super().__init__()
-        roots = torch.tensor(spherical_bessel_roots(MAX_L, MAX_N), dtype=torch.float64)
-        next_degree = torch.stack(
-            [
-                spherical_bessel(MAX_L, roots[degree])[degree + 1]
-                for degree in range(MAX_L)
-            ]
-        )
-
-        self.register_buffer("cutoff", torch.tensor(RADIUS))
-        self.register_buffer("roots", roots.float(), persistent=False)
-        self.register_buffer(
-            "norm",
-            (math.sqrt(2.0 / RADIUS**3) / next_degree.abs()).float(),
-            persistent=False,
-        )
-
-    def forward(
-        self, distance: Float[torch.Tensor, "n"]
-    ) -> Float[torch.Tensor, "n max_l*max_n"]:
-        scaled = (distance.clamp(max=self.cutoff) / self.cutoff).unsqueeze(-1)
-
-        return torch.cat(
-            [
-                spherical_bessel(MAX_L, scaled * self.roots[degree])[degree]
-                * self.norm[degree]
-                for degree in range(MAX_L)
-            ],
-            dim=1,
-        )
+MODEL_ARGS: dict[str, object] = CONFIG["upstream"]["model_args"]
 
 
 class BondExpansion(nn.Module):
@@ -199,7 +80,7 @@ class BondExpansion(nn.Module):
 
     def __init__(self):
         super().__init__()
-        self.rbf = SphericalBesselFunction()
+        self.rbf = SphericalBesselBasis(MAX_L, MAX_N, RADIUS)
 
     def forward(
         self, distance: Float[torch.Tensor, "n"]
@@ -212,7 +93,7 @@ class SphericalBesselWithHarmonics(nn.Module):
 
     def __init__(self):
         super().__init__()
-        self.sbf = SphericalBesselFunction()
+        self.sbf = SphericalBesselBasis(MAX_L, MAX_N, RADIUS)
 
     def forward(
         self, distance: Float[torch.Tensor, "n"], cosine: Float[torch.Tensor, "n"]
@@ -286,11 +167,13 @@ class ThreeBodyInteractions(nn.Module):
         atoms: Float[torch.Tensor, "n_atoms d"],
         bonds: Float[torch.Tensor, "n_edges d"],
         triplet_basis: Float[torch.Tensor, "n_triplets b"],
-        end_atom: Int[torch.Tensor, "n_triplets"],
-        first_bond: Int[torch.Tensor, "n_triplets"],
+        graph: Graph,
+        angles: EdgeTuples,
     ) -> Float[torch.Tensor, "n_edges d"]:
-        messages = triplet_basis * self.update_network_atom(atoms)[end_atom]
-        received = scatter(messages, first_bond, bonds.shape[0])
+        # an angle i→j, i→k sends to its first bond the features of the atom k
+        end_atoms = graph.unpool_receivers(self.update_network_atom(atoms))
+        messages = triplet_basis * angles.unpool_edges(end_atoms, position=1)
+        received = angles.aggregate_to_edges(messages, position=0)
 
         return bonds + self.update_network_bond(received)
 
@@ -311,19 +194,19 @@ class M3GNetGraphConv(nn.Module):
         atoms: Float[torch.Tensor, "n_atoms d"],
         bonds: Float[torch.Tensor, "n_edges d"],
         basis: Float[torch.Tensor, "n_edges b"],
-        edge_index: Int[torch.Tensor, "2 n_edges"],
+        graph: Graph,
     ) -> tuple[Float[torch.Tensor, "n_atoms d"], Float[torch.Tensor, "n_edges d"]]:
-        sender, receiver = edge_index
+        senders, receivers = graph.unpool_senders(atoms), graph.unpool_receivers(atoms)
 
         bonds = bonds + self.edge_update_func(
-            torch.cat([atoms[sender], atoms[receiver], bonds], dim=1)
+            torch.cat([senders, receivers, bonds], dim=1)
         ) * self.edge_weight_func(basis)
 
         messages = self.node_update_func(
-            torch.cat([atoms[sender], atoms[receiver], bonds], dim=1)
+            torch.cat([senders, receivers, bonds], dim=1)
         ) * self.node_weight_func(basis)
 
-        return atoms + scatter(messages, sender, atoms.shape[0]), bonds
+        return atoms + graph.aggregate_edges_to_nodes(messages, to="sender"), bonds
 
 
 class M3GNetBlock(nn.Module):
@@ -338,9 +221,9 @@ class M3GNetBlock(nn.Module):
         atoms: Float[torch.Tensor, "n_atoms d"],
         bonds: Float[torch.Tensor, "n_edges d"],
         basis: Float[torch.Tensor, "n_edges b"],
-        edge_index: Int[torch.Tensor, "2 n_edges"],
+        graph: Graph,
     ) -> tuple[Float[torch.Tensor, "n_atoms d"], Float[torch.Tensor, "n_edges d"]]:
-        return self.conv(atoms, bonds, basis, edge_index)
+        return self.conv(atoms, bonds, basis, graph)
 
 
 class WeightedReadOut(nn.Module):
@@ -373,27 +256,29 @@ class M3GNet(nn.Module):
     def forward(
         self,
         element: Int[torch.Tensor, "n_atoms"],
-        edge_index: Int[torch.Tensor, "2 n_edges"],
+        graph: Graph,
         distance: Float[torch.Tensor, "n_edges"],
-        triplet_index: Int[torch.Tensor, "2 n_triplets"],
+        angles: EdgeTuples,
         cosine: Float[torch.Tensor, "n_triplets"],
     ) -> Float[torch.Tensor, "n_atoms"]:
-        first_bond, second_bond = triplet_index
         basis = self.bond_expansion(distance)
 
         # an angle is weighted by the smooth cutoffs of its two bonds
-        envelope = polynomial_cutoff(distance, THREE_BODY_RADIUS, p=3)
-        triplet_basis = self.basis_expansion(distance[second_bond], cosine) * (
-            envelope[first_bond] * envelope[second_bond]
-        ).unsqueeze(-1)
+        envelope = polynomial_cutoff(distance, THREE_BODY_RADIUS, p=CUTOFF_POWER)
+        triplet_basis = self.basis_expansion(
+            angles.unpool_edges(distance, position=1), cosine
+        ) * (
+            angles.unpool_edges(envelope, position=0)
+            * angles.unpool_edges(envelope, position=1)
+        ).unsqueeze(
+            -1
+        )
 
         atoms, bonds = self.embedding(element, basis)
 
         for three_body, block in zip(self.three_body_interactions, self.graph_layers):
-            bonds = three_body(
-                atoms, bonds, triplet_basis, edge_index[1, second_bond], first_bond
-            )
-            atoms, bonds = block(atoms, bonds, basis, edge_index)
+            bonds = three_body(atoms, bonds, triplet_basis, graph, angles)
+            atoms, bonds = block(atoms, bonds, basis, graph)
 
         return self.final_layer(atoms)
 
@@ -413,21 +298,25 @@ class AtomRef(nn.Module):
         return self.property_offset.double()[element]
 
 
-class M3gnetEnergyModel(nn.Module):
+class M3gnetEnergyModel(PretrainedModel):
     """Total energy of crystal structures predicted by the M3GNet potential.
 
     Examples:
         >>> model = M3gnetEnergyModel()
         >>> structures = Structures.collate([Structures.diamond(), Structures.zincblende()])
+        >>> structures = model.transform()(structures)
         >>> with torch.no_grad():
         ...     energy = model(structures)
         >>> energy.shape, energy.dtype
         (torch.Size([2]), torch.float64)
     """
 
+    DEFAULT_WEIGHTS = CONFIG["default_weights"]
+    GRAPH_FIELDS = ("graph", "triplets")
+
     data_mean: torch.Tensor
     data_std: torch.Tensor
-    element_index: torch.Tensor
+    element_table: torch.Tensor
 
     def __init__(self):
         super().__init__()
@@ -437,32 +326,19 @@ class M3gnetEnergyModel(nn.Module):
         self.register_buffer("data_std", torch.tensor(1.0))
 
         # index of each atomic number in the embedding, -1 if it has none
-        element_index = torch.full((119,), -1, dtype=torch.int64)
-        element_index[torch.tensor(ELEMENTS)] = torch.arange(len(ELEMENTS))
-        self.register_buffer("element_index", element_index, persistent=False)
+        self.register_buffer(
+            "element_table", element_table(torch.tensor(ELEMENTS)), persistent=False
+        )
 
-    @classmethod
-    def from_pretrained(
-        cls,
-        name: str = "m3gnet-matpes-pbe-2025.2",
-        device: torch.device | str | None = None,
-        cache: str | os.PathLike | None = None,
-    ) -> M3gnetEnergyModel:
-        """Load a model with pretrained weights, downloaded on the first call.
-
-        Args:
-            name: Name of the weights, see torchms.estimator.m3gnet.weights.
-            device: Device of the model.
-            cache: Directory of the downloaded weights.
-        """
-        state_path, args_path = download(name, cache)
+    def load_checkpoint(
+        self, name: str, cache: str | os.PathLike | None = None
+    ) -> None:
+        """Download weights listed in config.yaml and load them."""
+        state_path, args_path = download("m3gnet", name, cache)
         state_dict = torch.load(state_path, map_location="cpu", weights_only=True)
         args = torch.load(args_path, map_location="cpu", weights_only=True)
 
-        model = cls()
-        model.load_pretrained(state_dict, args["model"]["init_args"])
-
-        return model.to(device).eval().requires_grad_(False)
+        self.load_pretrained(state_dict, args["model"]["init_args"])
 
     def load_pretrained(
         self,
@@ -480,11 +356,7 @@ class M3gnetEnergyModel(nn.Module):
                 model was built with other arguments or elements.
         """
         if model_args is not None:
-            different = {
-                key: model_args.get(key)
-                for key, value in MODEL_ARGS.items()
-                if model_args.get(key, value) != value
-            }
+            different = different_arguments(model_args, MODEL_ARGS)
             elements = model_args.get("element_types")
             if (
                 isinstance(elements, (tuple, list))
@@ -496,36 +368,50 @@ class M3gnetEnergyModel(nn.Module):
                     f"weights of a model with other arguments: {different}"
                 )
 
-        try:
-            self.load_state_dict(state_dict, strict=True)
-        except RuntimeError as e:
-            raise InvalidWeights(str(e)) from e
+        self.load_parameters(state_dict)
 
-    def graphs(self, structures: Structures) -> tuple[
-        Graph,
-        Float[torch.Tensor, "n_edges"],
-        Int[torch.Tensor, "2 n_triplets"],
-        Float[torch.Tensor, "n_triplets"],
-    ]:
-        """Bonds and angles of the model.
+    @classmethod
+    def transform(cls) -> Transform:
+        """Transform attaching the bonds and the angles of the model.
 
         Atoms closer than 5 Å are bonded, periodic images of the atom itself
         included. Angles are the pairs of bonds of at most 4 Å starting from
         the same atom.
+        """
+        return Compose(
+            [
+                AddRadiusGraph(RADIUS, self_images=True),
+                AddTriplets(radius=THREE_BODY_RADIUS),
+            ]
+        )
+
+    def graphs(self, structures: Structures) -> tuple[
+        Graph,
+        Float[torch.Tensor, "n_edges"],
+        EdgeTuples,
+        Float[torch.Tensor, "n_triplets"],
+    ]:
+        """Bonds and angles of the structures, with their geometry.
+
+        They are the graph and the triplets attached to the structures by
+        transform.
 
         Returns:
             Graph of the atoms, length of each bond in Å, shape (n_edges,),
-            indices of the two bonds of each angle, shape (2, n_triplets), and
-            cosine of each angle, shape (n_triplets,).
+            triplets of the graph, the two bonds of each angle, and cosine of
+            each angle, shape (n_triplets,).
         """
-        graph = cutoff(structures, RADIUS, self_images=True)
-        vectors = graph.edges_vectors()
+        self.check_graphs(structures)
+        graph = attached_graph(structures, self)
+        angles = attached_tuples(structures, "triplets", self)
+
+        vectors = edges_vectors(graph)
         distance = vectors.norm(dim=-1)
+        cosine = triplet_cosines(vectors, angles).clamp(
+            -1 + COSINE_MARGIN, 1 - COSINE_MARGIN
+        )
 
-        triplet_index, _, _ = triplets(graph, distance <= THREE_BODY_RADIUS)
-        cosine = triplet_cosines(vectors, triplet_index).clamp(-1 + 1e-7, 1 - 1e-7)
-
-        return graph, distance, triplet_index, cosine
+        return graph, distance, angles, cosine
 
     def forward(self, structures: Structures) -> Float[torch.Tensor, "n_struct"]:
         """Predict the total energy of each structure in eV, in double precision.
@@ -533,20 +419,14 @@ class M3gnetEnergyModel(nn.Module):
         Raises:
             ValueError: If a structure has an element the model does not know.
         """
-        element = self.element_index[structures.z]
-        if (element < 0).any():
-            unknown = structures.z[element < 0].unique().tolist()
-            raise ValueError(f"elements {unknown} are not supported by the model")
+        element = element_index(structures.z, self.element_table)
 
-        graph, distance, triplet_index, cosine = self.graphs(structures)
-        n_struct = len(structures.num_atoms)
+        graph, distance, angles, cosine = self.graphs(structures)
 
-        per_atom = self.model(
-            element, graph.edge_index, distance, triplet_index, cosine
-        )
-        energy = self.data_std * scatter(per_atom, structures.batch, n_struct)
+        per_atom = self.model(element, graph, distance, angles, cosine)
+        energy = self.data_std * graph.aggregate_nodes_to_structures(per_atom)
         energy = energy + self.data_mean
 
-        return energy.double() + scatter(
-            self.element_refs(element), structures.batch, n_struct
+        return energy.double() + graph.aggregate_nodes_to_structures(
+            self.element_refs(element)
         )

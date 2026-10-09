@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import torch
 import torch.nn.functional as F
 from jaxtyping import Bool, Float, Int
@@ -7,6 +11,9 @@ from torchms.graph.sparse import (
     batched_cartesian_product_2,
     batched_cartesian_product_3,
 )
+
+if TYPE_CHECKING:
+    from torchms.graph.graph import EdgeTuples
 
 
 def lattice_heights(
@@ -299,14 +306,14 @@ def image_order(
 
 def triplet_cosines(
     vectors: Float[torch.Tensor, "n_edges 3"],
-    triplet_index: Int[torch.Tensor, "2 n_triplets"],
+    triplet_index: Int[torch.Tensor, "2 n_triplets"] | EdgeTuples,
 ) -> Float[torch.Tensor, "n_triplets"]:
     """Cosine of the angle between the two edges of each triplet.
 
     Args:
         vectors: Cartesian vector of each edge, shape (n_edges, 3).
-        triplet_index: Indices of the two edges of each triplet, which start
-            from the same atom, shape (2, n_triplets).
+        triplet_index: Triplets as EdgeTuples, or indices of the two edges of
+            each triplet, which start from the same atom, shape (2, n_triplets).
 
     Returns:
         Cosine of the angle at the shared atom, in [-1, 1], shape (n_triplets,).
@@ -316,10 +323,37 @@ def triplet_cosines(
         >>> triplet_cosines(vectors, torch.tensor([[0, 0], [1, 2]]))
         tensor([ 0., -1.])
     """
+    if not isinstance(triplet_index, torch.Tensor):
+        triplet_index = triplet_index.index
+
     a = F.normalize(vectors[triplet_index[0]], dim=-1)
     b = F.normalize(vectors[triplet_index[1]], dim=-1)
 
     return (a * b).sum(dim=-1).clamp(-1.0, 1.0)
+
+
+def pair_cosines(
+    vectors: Float[torch.Tensor, "n_edges 3"],
+    pair_index: Int[torch.Tensor, "2 n_pairs"] | EdgeTuples,
+) -> Float[torch.Tensor, "n_pairs"]:
+    """Cosine of the angle of each pair of edges head to tail u→v, v→w.
+
+    Args:
+        vectors: Cartesian vector of each edge, shape (n_edges, 3).
+        pair_index: Pairs of a line graph as EdgeTuples, or indices of the two
+            edges of each pair, the first one arrives at the atom the second
+            one leaves, shape (2, n_pairs).
+
+    Returns:
+        Cosine of the angle at v between u and w, in [-1, 1], shape (n_pairs,).
+        It is 1 for an edge followed by its reverse.
+
+    Examples:
+        >>> vectors = torch.tensor([[1.0, 0.0, 0.0], [0.0, 2.0, 0.0], [-3.0, 0.0, 0.0]])
+        >>> pair_cosines(vectors, torch.tensor([[0, 0], [1, 2]]))
+        tensor([-0., 1.])
+    """
+    return -triplet_cosines(vectors, pair_index)
 
 
 def dihedral_angles(

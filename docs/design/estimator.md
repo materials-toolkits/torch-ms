@@ -108,6 +108,36 @@ energy only, load the official weights, and are not used by `EnergyEstimator`. N
 these models is a dependency: their energies were computed once, outside of the project, by
 the scripts `scripts/reference_*.py`, for the 40 structures of the test of orb.
 
+Each model has a file `config.yaml` next to its module `model.py`, with the files of its
+pretrained weights, the radii of its graph, its hyperparameters and the arguments checked in
+the weights of the project it comes from. `model.py` has no value of its own: adding weights
+or reading a radius is done in this file.
+
+None of these models builds a graph. Each class gives the transform which attaches to the
+structures the graph and the tuples of edges it reads, `Model.transform()`, a chain of the
+transforms of `torchms.graph.transforms`. It is applied when the structures are loaded, or to
+a batch; a model refuses structures without them.
+
+```{.python notest}
+from torchms.data import HDF5Dataset
+from torchms.estimator import M3gnetEnergyModel
+
+dataset = HDF5Dataset("structures.hdf5", transform=M3gnetEnergyModel.transform())
+model = M3gnetEnergyModel.from_pretrained(device="cuda")
+energy = model(dataset[:32].to("cuda"))
+```
+
+| Model | Transform |
+|---|---|
+| orb-v3 | `AddRadiusGraph(6.0)`, `KeepNearestNeighbors(120)` |
+| MACE | `AddRadiusGraph(6.0)` |
+| M3GNet | `AddRadiusGraph(5.0)`, `AddTriplets(radius=4.0)` |
+| CHGNet | `AddRadiusGraph(6.0)`, `AddTriplets(radius=3.0, strict=True)`, `AddBonds()` |
+| ALIGNN | `AddRadiusGraph(5.0)`, `KeepNearestNeighbors(12)`, `AddLineGraph(radius=3.5, backtrack=True)` |
+
+Every radius graph has `self_images=True`. `EnergyEstimator` applies the transform of its
+model to the structures it is given without a graph.
+
 ### CHGNet
 
 `ChgnetEnergyModel` is CHGNet 0.3.0
@@ -172,8 +202,8 @@ same distance. When the 12th and the 13th are, the ones which are kept depend on
 a sort: alignn and this rewrite do not keep the same ones (124 edges of 2,658 differ), and the
 prediction changes by up to 0.012 eV/atom. For the same reason the prediction of such a
 structure can change with a rotation, a translation or a change of basis of the cell; this
-was not measured. `AlignnModel.forward` accepts a graph, to predict on the exact graph of
-alignn.
+was not measured. `AlignnModel` reads the graph attached to the structures: with the graph of
+alignn attached, it predicts on this exact graph.
 
 The graphs follow the configuration of the training of the model. The function of alignn
 which predicts a property builds another line graph, with all the bonds up to 5 Å; it was not

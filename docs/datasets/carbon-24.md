@@ -10,7 +10,7 @@ from the AIRSS carbon data of C. J. Pickard (2020).
 | `test` | 2,030 |
 | total | 10,153 |
 
-```python
+```{.python notest}
 dataset = load_dataset("carbon-24", "train")
 ```
 
@@ -33,7 +33,7 @@ about 1e-5 eV/atom.
 
 **No filter is needed**: every structure has its total energy, 6 to 24 atoms, and only carbon.
 
-```python
+```{.python notest}
 from torchms.data import load_dataset
 
 dataset = load_dataset("carbon-24", "train")               # recommended: everything

@@ -19,7 +19,7 @@ the bonds on the graph of the atoms, then the bonds and the angles on the line
 graph; four more layers work on the graph of the atoms alone. The prediction is
 read from the mean of the features of the atoms.
 
-Weights are the ones published with alignn, see weights.py.
+Weights are the ones published with alignn, see config.yaml.
 """
 
 from __future__ import annotations
@@ -29,78 +29,74 @@ import json
 import os
 import zipfile
 from pathlib import Path
-from typing import Mapping
+from typing import Any, Mapping
 
 import numpy as np
 import torch
-from jaxtyping import Float, Int
+from jaxtyping import Float
 from torch import nn
 
+from torchms.data.augmentation.transforms import Compose, Transform
 from torchms.data.batching import Structures
-from torchms.estimator.alignn.weights import download
-from torchms.graph.cutoff import cutoff, nearest_neighbors
-from torchms.graph.geometry import triplet_cosines
-from torchms.graph.graph import Graph
-from torchms.graph.line_graph import line_graph
-from torchms.graph.sparse import scatter
+from torchms.estimator.config import load_config
+from torchms.estimator.pretrained import (
+    InvalidWeights,
+    PretrainedModel,
+    different_arguments,
+)
+from torchms.estimator.weights import download
+from torchms.graph.geometry import pair_cosines
+from torchms.graph.graph import EdgeTuples, Graph
+from torchms.graph.transforms import (
+    AddLineGraph,
+    AddRadiusGraph,
+    KeepNearestNeighbors,
+    attached_graph,
+    attached_tuples,
+    edges_vectors,
+)
+from torchms.models.basis import GaussianBasis
 
-RADIUS = 5.0
-THREE_BODY_RADIUS = 3.5
-MAX_NEIGHBORS = 12
-HIDDEN_DIM = 512
-EMBEDDING_DIM = 64
-NUM_EDGE_BASES = 80
-NUM_ANGLE_BASES = 40
-NUM_ELEMENT_FEATURES = 92
+# every value of the model is in config.yaml, next to this module
+CONFIG = load_config(__file__)
 
-FEATURES = Path(__file__).parent / "cgcnn_features.npz"
+RADIUS: float = CONFIG["graph"]["radius"]
+THREE_BODY_RADIUS: float = CONFIG["graph"]["three_body_radius"]
+MAX_NEIGHBORS: int = CONFIG["graph"]["max_neighbors"]
+
+HIDDEN_DIM: int = CONFIG["model"]["hidden_dim"]
+EMBEDDING_DIM: int = CONFIG["model"]["embedding_dim"]
+NUM_LAYERS: int = CONFIG["model"]["num_layers"]
+NUM_ELEMENT_FEATURES: int = CONFIG["model"]["num_element_features"]
+GATE_EPSILON: float = CONFIG["model"]["gate_epsilon"]
+
+# gaussians of the lengths of the bonds and of the cosines of the angles: their
+# first and last centers and their number
+EDGE_BASIS: dict[str, Any] = CONFIG["model"]["edge_basis"]
+ANGLE_BASIS: dict[str, Any] = CONFIG["model"]["angle_basis"]
+NUM_EDGE_BASES: int = EDGE_BASIS["num_basis"]
+NUM_ANGLE_BASES: int = ANGLE_BASIS["num_basis"]
+
+FEATURES = Path(__file__).parent / CONFIG["model"]["element_features"]
 
 # the table of the features of the elements is empty in the pretrained weights
-UNUSED_PARAMETERS = ("_species_table",)
+UNUSED_PARAMETERS: tuple[str, ...] = tuple(CONFIG["unused_parameters"])
 
-# configuration of the model the rewrite is written for, as stored with the weights
-MODEL_ARGS = {
-    "name": "alignn_atomwise_pure",
-    "alignn_layers": 4,
-    "gcn_layers": 4,
-    "atom_input_features": NUM_ELEMENT_FEATURES,
-    "edge_input_features": NUM_EDGE_BASES,
-    "triplet_input_features": NUM_ANGLE_BASES,
-    "embedding_features": EMBEDDING_DIM,
-    "hidden_features": HIDDEN_DIM,
-    "output_features": 1,
-    "calculate_gradient": False,
-    "energy_mult_natoms": False,
-    "use_penalty": False,
-    "link": "identity",
-    "classification": False,
-    "use_cutoff_function": False,
-}
-GRAPH_ARGS = {
-    "atom_features": "cgcnn",
-    "cutoff": RADIUS,
-    "max_neighbors": MAX_NEIGHBORS,
-    "three_body_cutoff": THREE_BODY_RADIUS,
-}
+# configuration of the model the rewrite is written for, as stored with the
+# weights: the one of the model, then the one of its graphs
+MODEL_ARGS: dict[str, object] = CONFIG["upstream"]["model_args"]
+GRAPH_ARGS: dict[str, object] = CONFIG["upstream"]["graph_args"]
 
 
-class InvalidWeights(Exception):
-    """Raised when weights do not match the parameters of the model."""
+def rbf_expansion(start: float, stop: float, num_basis: int) -> GaussianBasis:
+    """Gaussians of a value, centered on a regular grid.
 
+    As alignn, their gamma is the inverse of the step of the grid, not of its
+    square.
+    """
+    gamma = (num_basis - 1) / (stop - start)
 
-class RBFExpansion(nn.Module):
-    """Gaussians of a value, centered on a regular grid."""
-
-    centers: torch.Tensor
-
-    def __init__(self, vmin: float, vmax: float, bins: int):
-        super().__init__()
-        self.register_buffer("centers", torch.linspace(vmin, vmax, bins))
-        # as alignn, the inverse of the step of the grid, not of its square
-        self.gamma = (bins - 1) / (vmax - vmin)
-
-    def forward(self, value: Float[torch.Tensor, "n"]) -> Float[torch.Tensor, "n bins"]:
-        return torch.exp(-self.gamma * (value.unsqueeze(1) - self.centers) ** 2)
+    return GaussianBasis(start, stop, num_basis, gamma=gamma)
 
 
 class MLPLayer(nn.Module):
@@ -121,6 +117,9 @@ class EdgeGatedGraphConv(nn.Module):
 
     A node receives the features of its neighbours, weighted by a gate computed
     from the two nodes and their edge, and normalized by the sum of the gates.
+
+    The graph is the one of the atoms, or its line graph, whose nodes are the
+    bonds and whose edges are the angles, see EdgeTuples.as_graph.
     """
 
     def __init__(self):
@@ -137,19 +136,18 @@ class EdgeGatedGraphConv(nn.Module):
         self,
         nodes: Float[torch.Tensor, "n_nodes d"],
         edges: Float[torch.Tensor, "n_edges d"],
-        edge_index: Int[torch.Tensor, "2 n_edges"],
+        graph: Graph,
     ) -> tuple[Float[torch.Tensor, "n_nodes d"], Float[torch.Tensor, "n_edges d"]]:
-        sender, receiver = edge_index
-
         messages = (
-            self.src_gate(nodes)[sender]
-            + self.dst_gate(nodes)[receiver]
+            graph.unpool_senders(self.src_gate(nodes))
+            + graph.unpool_receivers(self.dst_gate(nodes))
             + self.edge_gate(edges)
         )
         gate = torch.sigmoid(messages)
 
-        received = scatter(self.dst_update(nodes)[sender] * gate, receiver, len(nodes))
-        received = received / (scatter(gate, receiver, len(nodes)) + 1e-6)
+        neighbors = graph.unpool_senders(self.dst_update(nodes))
+        received = graph.aggregate_edges_to_nodes(neighbors * gate)
+        received = received / (graph.aggregate_edges_to_nodes(gate) + GATE_EPSILON)
 
         new_nodes = nn.functional.silu(self.bn_nodes(self.src_update(nodes) + received))
         new_edges = nn.functional.silu(self.bn_edges(messages))
@@ -170,15 +168,15 @@ class ALIGNNConv(nn.Module):
         atoms: Float[torch.Tensor, "n_atoms d"],
         bonds: Float[torch.Tensor, "n_edges d"],
         angles: Float[torch.Tensor, "n_pairs d"],
-        edge_index: Int[torch.Tensor, "2 n_edges"],
-        pair_index: Int[torch.Tensor, "2 n_pairs"],
+        graph: Graph,
+        line_graph: Graph,
     ) -> tuple[
         Float[torch.Tensor, "n_atoms d"],
         Float[torch.Tensor, "n_edges d"],
         Float[torch.Tensor, "n_pairs d"],
     ]:
-        atoms, bonds = self.node_update(atoms, bonds, edge_index)
-        bonds, angles = self.edge_update(bonds, angles, pair_index)
+        atoms, bonds = self.node_update(atoms, bonds, graph)
+        bonds, angles = self.edge_update(bonds, angles, line_graph)
 
         return atoms, bonds, angles
 
@@ -200,7 +198,7 @@ def element_features() -> Float[torch.Tensor, "119 92"]:
         return torch.from_numpy(data["features"]).float()
 
 
-class AlignnModel(nn.Module):
+class AlignnModel(PretrainedModel):
     """Property of crystal structures predicted by ALIGNN.
 
     The pretrained model predicts the formation energy in eV/atom.
@@ -208,24 +206,29 @@ class AlignnModel(nn.Module):
     Examples:
         >>> model = AlignnModel()
         >>> structures = Structures.collate([Structures.diamond(), Structures.zincblende()])
+        >>> structures = model.transform()(structures)
         >>> with torch.no_grad():
         ...     prediction = model(structures)
         >>> prediction.shape
         torch.Size([2])
     """
 
+    DEFAULT_WEIGHTS = CONFIG["default_weights"]
+    GRAPH_FIELDS = ("graph", "line_graph")
+    UNUSED_PARAMETERS = UNUSED_PARAMETERS
+
     species_table: torch.Tensor
 
-    def __init__(self, num_layers: int = 4):
+    def __init__(self, num_layers: int = NUM_LAYERS):
         super().__init__()
         self.atom_embedding = MLPLayer(NUM_ELEMENT_FEATURES, HIDDEN_DIM)
         self.edge_embedding = nn.Sequential(
-            RBFExpansion(0.0, 8.0, NUM_EDGE_BASES),
+            rbf_expansion(**EDGE_BASIS),
             MLPLayer(NUM_EDGE_BASES, EMBEDDING_DIM),
             MLPLayer(EMBEDDING_DIM, HIDDEN_DIM),
         )
         self.angle_embedding = nn.Sequential(
-            RBFExpansion(-1.0, 1.0, NUM_ANGLE_BASES),
+            rbf_expansion(**ANGLE_BASIS),
             MLPLayer(NUM_ANGLE_BASES, EMBEDDING_DIM),
             MLPLayer(EMBEDDING_DIM, HIDDEN_DIM),
         )
@@ -235,21 +238,12 @@ class AlignnModel(nn.Module):
 
         self.register_buffer("species_table", element_features(), persistent=False)
 
-    @classmethod
-    def from_pretrained(
-        cls,
-        name: str = "alignn-formation-energy-radius",
-        device: torch.device | str | None = None,
-        cache: str | os.PathLike | None = None,
-    ) -> AlignnModel:
-        """Load a model with pretrained weights, downloaded on the first call.
-
-        Args:
-            name: Name of the weights, see torchms.estimator.alignn.weights.
-            device: Device of the model.
-            cache: Directory of the downloaded weights.
-        """
-        with zipfile.ZipFile(download(name, cache)) as archive:
+    def load_checkpoint(
+        self, name: str, cache: str | os.PathLike | None = None
+    ) -> None:
+        """Download weights listed in config.yaml and load them."""
+        (path,) = download("alignn", name, cache)
+        with zipfile.ZipFile(path) as archive:
             config = json.loads(archive.read("config.json"))
             state_dict = torch.load(
                 io.BytesIO(archive.read("best_model.pt")),
@@ -257,10 +251,7 @@ class AlignnModel(nn.Module):
                 weights_only=True,
             )
 
-        model = cls()
-        model.load_pretrained(state_dict, config)
-
-        return model.to(device).eval().requires_grad_(False)
+        self.load_pretrained(state_dict, config)
 
     def load_pretrained(
         self,
@@ -282,99 +273,73 @@ class AlignnModel(nn.Module):
             if not isinstance(model_config, Mapping):
                 raise InvalidWeights("the configuration has no model")
 
-            different = {
-                key: model_config.get(key)
-                for key, value in MODEL_ARGS.items()
-                if model_config.get(key, value) != value
-            }
-            different.update(
-                {
-                    key: config.get(key)
-                    for key, value in GRAPH_ARGS.items()
-                    if config.get(key, value) != value
-                }
-            )
+            different = different_arguments(model_config, MODEL_ARGS)
+            different.update(different_arguments(config, GRAPH_ARGS))
             if different:
                 raise InvalidWeights(
                     f"weights of a model with another configuration: {different}"
                 )
 
-        used = {
-            name: values
-            for name, values in state_dict.items()
-            if not name.startswith(UNUSED_PARAMETERS)
-        }
+        self.load_parameters(state_dict)
 
-        try:
-            self.load_state_dict(used, strict=True)
-        except RuntimeError as e:
-            raise InvalidWeights(str(e)) from e
-
-    def neighbors(self, structures: Structures) -> Graph:
-        """Graph of the atoms of the model.
+    @classmethod
+    def transform(cls) -> Transform:
+        """Transform attaching the graph of the atoms and its line graph.
 
         An atom is connected to its 12 nearest neighbours closer than 5 Å,
         periodic images of the atom itself included. Among neighbours at the
-        same distance, the ones which are kept are not the ones of alignn.
+        same distance, the ones which are kept are not the ones of alignn. In
+        the line graph, a bond u→v is followed by every bond v→w, its own
+        reverse included, both of at most 3.5 Å.
         """
-        return nearest_neighbors(
-            cutoff(structures, RADIUS, self_images=True), MAX_NEIGHBORS
+        return Compose(
+            [
+                AddRadiusGraph(RADIUS, self_images=True),
+                KeepNearestNeighbors(MAX_NEIGHBORS),
+                AddLineGraph(radius=THREE_BODY_RADIUS, backtrack=True),
+            ]
         )
 
-    def angles(self, graph: Graph) -> tuple[
+    def graphs(self, structures: Structures) -> tuple[
+        Graph,
         Float[torch.Tensor, "n_edges"],
-        Int[torch.Tensor, "2 n_pairs"],
+        EdgeTuples,
         Float[torch.Tensor, "n_pairs"],
     ]:
-        """Line graph of a graph of the atoms.
+        """Bonds and angles of the structures, with their geometry.
 
-        A bond u→v is followed by every bond v→w, its own reverse included,
-        both of at most 3.5 Å.
+        They are the graph and the line graph attached to the structures by
+        transform.
 
         Returns:
-            Length of each bond in Å, shape (n_edges,), indices of the two
-            bonds of each angle, shape (2, n_pairs), and cosine of the angle
-            at v between u and w, shape (n_pairs,).
+            Graph of the atoms, length of each bond in Å, shape (n_edges,),
+            pairs of bonds of the line graph, one per angle, and cosine of the
+            angle at v between u and w, shape (n_pairs,).
         """
-        vectors = graph.edges_vectors()
-        distance = vectors.norm(dim=-1)
+        self.check_graphs(structures)
+        graph = attached_graph(structures, self)
+        pairs = attached_tuples(structures, "line_graph", self)
 
-        short = (distance <= THREE_BODY_RADIUS).nonzero().squeeze(1)
-        pair_index = short[
-            line_graph(graph.edge_index[:, short], int(graph.num_atoms.sum()))
-        ]
+        vectors = edges_vectors(graph)
 
-        # the first bond arrives at v, the second one leaves it
-        cosine = -triplet_cosines(vectors, pair_index)
+        return graph, vectors.norm(dim=-1), pairs, pair_cosines(vectors, pairs)
 
-        return distance, pair_index, cosine
-
-    def forward(
-        self, structures: Structures, graph: Graph | None = None
-    ) -> Float[torch.Tensor, "n_struct"]:
-        """Predict the property of each structure.
-
-        Args:
-            structures: Batched Structures object.
-            graph: Graph of the atoms, the one of neighbors by default.
-        """
-        if graph is None:
-            graph = self.neighbors(structures)
-
-        distance, pair_index, cosine = self.angles(graph)
+    def forward(self, structures: Structures) -> Float[torch.Tensor, "n_struct"]:
+        """Predict the property of each structure."""
+        graph, distance, pairs, cosine = self.graphs(structures)
 
         atoms = self.atom_embedding(self.species_table[structures.z])
         bonds = self.edge_embedding(distance)
         angles = self.angle_embedding(cosine)
 
+        line_graph = pairs.as_graph()
+
         for layer in self.alignn_layers:
-            atoms, bonds, angles = layer(
-                atoms, bonds, angles, graph.edge_index, pair_index
-            )
+            atoms, bonds, angles = layer(atoms, bonds, angles, graph, line_graph)
 
         for layer in self.gcn_layers:
-            atoms, bonds = layer(atoms, bonds, graph.edge_index)
+            atoms, bonds = layer(atoms, bonds, graph)
 
-        mean = scatter(atoms, structures.batch, len(structures.num_atoms), "mean")
+        mean = graph.aggregate_nodes_to_structures(atoms, "mean")
 
         return self.fc(mean).squeeze(-1)

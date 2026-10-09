@@ -16,7 +16,8 @@ from torchms.data.augmentation import (
     make_supercell,
     random_orthogonal,
 )
-from torchms.estimator.mace import InvalidWeights, MaceEnergyModel, weights
+from torchms.estimator import weights
+from torchms.estimator.mace import InvalidWeights, MaceEnergyModel
 from torchms.estimator.mace.model import (
     DEGREES,
     EXPECTED,
@@ -25,7 +26,13 @@ from torchms.estimator.mace.model import (
     RADIUS,
 )
 from torchms.estimator.mace.reader import Placeholder, read_model
-from torchms.estimator.orb.model import spherical_harmonics
+from torchms.models.basis import spherical_harmonics
+
+
+def predict(model, structures: Structures) -> torch.Tensor:
+    """Prediction of a model for structures without graph."""
+    return model(model.transform()(structures))
+
 
 DATA = Path(__file__).parent / "data"
 NAME = "mace-mp-0-small"
@@ -60,16 +67,16 @@ def mace_state_dict(model: MaceEnergyModel) -> dict[str, torch.Tensor]:
 
 
 def test_pinned_checkpoints(tmp_path):
-    assert set(weights.CHECKPOINTS) == {NAME}
-    checkpoint = weights.CHECKPOINTS[NAME]
+    assert set(weights.CHECKPOINTS["mace"]) == {NAME}
+    (checkpoint,) = weights.CHECKPOINTS["mace"][NAME]
     assert checkpoint.url.startswith("https://")
     assert len(checkpoint.sha256) == 64
-    assert weights.checkpoint_path(NAME, tmp_path) == (
+    assert weights.checkpoint_paths("mace", NAME, tmp_path)[0] == (
         tmp_path / "mace" / "2023-12-10-mace-128-L0_energy_epoch-249.model"
     )
 
     with pytest.raises(KeyError, match="unknown model"):
-        weights.checkpoint_path("mace-9")
+        weights.checkpoint_paths("mace", "mace-9")
 
 
 # reading of a pickled model without its classes
@@ -150,7 +157,7 @@ def test_degrees():
 def test_model_with_random_weights():
     torch.manual_seed(0)
     model = MaceEnergyModel().eval().requires_grad_(False)
-    energy = model(make_batch())
+    energy = predict(model, make_batch())
 
     assert energy.shape == (2,)
     assert energy.dtype == torch.float64
@@ -164,7 +171,7 @@ def test_model_unknown_element():
     )
 
     with pytest.raises(ValueError, match="not supported"):
-        model(structures)
+        predict(model, structures)
 
 
 def test_load_pretrained_checks_the_parameters():
@@ -182,7 +189,9 @@ def test_load_pretrained_checks_the_parameters():
 
     model.avg_num_neighbors, model.activation = 30.0, 1.5
     with torch.no_grad():
-        assert torch.allclose(other(make_batch()), model(make_batch()))
+        assert torch.allclose(
+            predict(other, make_batch()), predict(model, make_batch())
+        )
 
     with pytest.raises(InvalidWeights, match="different activation"):
         other.load_pretrained(state_dict, 30.0, {"a": 1.5, "b": 1.6})
@@ -203,7 +212,7 @@ def test_load_pretrained_checks_the_parameters():
 
 @pytest.fixture(scope="module")
 def pretrained() -> MaceEnergyModel:
-    if not weights.checkpoint_path(NAME).exists():
+    if not weights.checkpoint_paths("mace", NAME)[0].exists():
         pytest.skip(f"weights of {NAME} are not in the cache")
 
     return MaceEnergyModel.from_pretrained(NAME, device="cpu")
@@ -223,13 +232,13 @@ def reference_structures() -> tuple[Structures, dict[str, np.ndarray]]:
 def test_pretrained_matches_mace(pretrained):
     """Energies of mace 0.3.16, computed once outside of the project."""
     structures, data = reference_structures()
-    graph, vectors = pretrained.edges(structures)
+    graph, vectors = pretrained.edges(pretrained.transform()(structures))
 
     assert graph.num_edges.tolist() == data["num_edges"].tolist()
     assert vectors.dtype == torch.float64
     assert (vectors.norm(dim=-1) <= RADIUS + 1e-5).all()
 
-    energy = pretrained(structures).numpy()
+    energy = predict(pretrained, structures).numpy()
     error = np.abs(energy - data["energy"]) / structures.num_atoms.numpy()
 
     assert error.max() < 1e-9
@@ -256,9 +265,11 @@ def test_pretrained_coupling_tensors_are_invariant(pretrained):
 
 
 def test_pretrained_batch_equals_single(pretrained):
-    alone = torch.cat([pretrained(structure) for structure in make_structures()])
+    alone = torch.cat(
+        [predict(pretrained, structure) for structure in make_structures()]
+    )
 
-    assert torch.allclose(pretrained(make_batch()), alone, rtol=1e-10)
+    assert torch.allclose(predict(pretrained, make_batch()), alone, rtol=1e-10)
 
 
 @pytest.mark.parametrize(
@@ -270,7 +281,9 @@ def test_pretrained_invariances(pretrained, transform):
     augmented = transform(generator=generator())(batch)
 
     # the structures are in single precision
-    assert torch.allclose(pretrained(augmented), pretrained(batch), rtol=1e-5)
+    assert torch.allclose(
+        predict(pretrained, augmented), predict(pretrained, batch), rtol=1e-5
+    )
 
 
 def test_pretrained_energy_of_a_supercell(pretrained):
@@ -279,5 +292,7 @@ def test_pretrained_energy_of_a_supercell(pretrained):
     supercell = make_supercell(batch, repeat)
 
     assert torch.allclose(
-        pretrained(supercell), pretrained(batch) * repeat.prod(dim=1), rtol=1e-5
+        predict(pretrained, supercell),
+        predict(pretrained, batch) * repeat.prod(dim=1),
+        rtol=1e-5,
     )

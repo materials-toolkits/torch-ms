@@ -21,7 +21,7 @@ on a graph, and attaches it to the structures. Transforms are chained with `Comp
 to [`auto_loader`](datasets.md#training-auto_loader), which builds the graphs of each batch
 while it loads the dataset:
 
-```python
+```{.python notest}
 from torchms.data import auto_loader
 from torchms.data.augmentation import Compose, LatticeRotation
 from torchms.graph.transforms import AddQuadruplets, AddRadiusGraph, AddTriplets
@@ -59,7 +59,7 @@ GPU, a dataset held in memory), see the design note
 A transform is also a function, to call on any batch, for an evaluation without loader for
 instance:
 
-```python
+```{.python notest}
 structures = graphs(structures.to("cuda"))
 ```
 
@@ -241,7 +241,7 @@ The loader, `Structures.collate` and `Structures.separate` keep everything consi
   number of **edges** of the structures before, as `graph.edge_ptr`;
 - per structure counts and geometry are concatenated, `batch` and `ptr` fields are rebuilt.
 
-```python
+```{.python notest}
 batch = Structures.collate([structures, structures])   # diamond twice, 32 edges each
 
 batch.graph.edge_ptr                     # tensor([ 0, 32, 64])
@@ -264,7 +264,7 @@ structure back with its graph and its tuples, numbered from 0.
 
 Everything attached can be recomputed from the indices:
 
-```python
+```{.python notest}
 graph, triplets = structures.graph, structures.triplets
 
 # vector of the edge e
@@ -285,7 +285,7 @@ graph.edge_index[0, first], graph.edge_index[1, first], graph.edge_index[1, seco
 Features of the atoms are gathered on the edges with `graph.edge_index`, features of the edges
 on the tuples with `triplets.index`, and summed back with `scatter`:
 
-```python
+```{.python notest}
 messages = edge_features[triplets.index[1]]                     # (n_triplets, F)
 edge_update = scatter(messages, triplets.index[0], graph.edge_index.shape[1])
 ```
@@ -317,7 +317,7 @@ The vector of an edge, in fractional coordinates, is
 By default an atom is never connected to itself. In a cell smaller than the radius an atom has
 its own periodic images as neighbours; ask for them with `self_images=True`:
 
-```python
+```{.python continuation}
 import torch
 
 cubic = Structures(lattice=torch.eye(3).unsqueeze(0) * 3.0, x=torch.zeros(1, 3), z=torch.tensor([29]))
@@ -329,7 +329,7 @@ Fractional coordinates can be inside or outside the cell.
 
 ### Nearest neighbours
 
-```python
+```{.python continuation}
 from torchms.graph.cutoff import nearest_neighbors
 
 graph = nearest_neighbors(cutoff(Structures.diamond(), 4.0), 4)
@@ -343,7 +343,7 @@ Edges of the result are sorted by source atom, then by length.
 `atomic_radius` connects two atoms closer than a multiple of the sum of their atomic radii, and
 can keep only the first shell of distances:
 
-```python
+```{.python continuation}
 from torchms.graph.atomic_radius import atomic_radius
 
 graph = atomic_radius(structures, scaling=1.1)
@@ -356,7 +356,7 @@ The graph is undirected: every edge has its reverse.
 Graph functions work on batches. `graph.edge_batch` is the structure of each edge and
 `graph.edge_ptr` the index of the first edge of each structure, as `batch` and `ptr` for atoms.
 
-```python
+```{.python continuation}
 batch = Structures.collate([Structures.diamond(), Structures.zincblende()])
 graph = cutoff(batch, 3.0)
 graph.num_edges    # edges of each structure
@@ -364,7 +364,7 @@ graph.num_edges    # edges of each structure
 
 ### Aggregation
 
-```python
+```{.python notest}
 energy_per_atom = graph.aggregate_edges_to_nodes(edge_values)       # sum over the edges of an atom
 per_structure = graph.aggregate_nodes_to_structures(atom_values)
 ```
@@ -377,7 +377,7 @@ Models with terms on three or four atoms need the pairs and the chains of edges 
 `triplets` gives the pairs of edges starting from the same atom, `quadruplets` the chains of
 three edges:
 
-```python
+```{.python continuation}
 from torchms.graph.geometry import dihedral_angles, triplet_cosines
 from torchms.graph.line_graph import quadruplets, triplets
 
@@ -407,7 +407,7 @@ with the same key.
 `color_refinement` gives a hash of each structure which does not depend on the order of its
 atoms, from a graph of its bonds:
 
-```python
+```{.python continuation}
 from torchms.graph.coloring import color_refinement
 
 hashes = color_refinement(structures, atomic_radius(structures))   # (n_struct, 4) uint32
@@ -417,7 +417,7 @@ The hash depends on the number of atoms: a supercell has another hash than its c
 `refined_coloring` gives the colors of the atoms the hash is computed from, which are the same
 in a cell and in its supercells:
 
-```python
+```{.python continuation}
 from torchms.graph.coloring import refined_coloring
 
 colors = refined_coloring(structures, atomic_radius(structures))   # (n_atoms, 4) uint32

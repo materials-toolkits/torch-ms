@@ -5,8 +5,8 @@ transform of a dataset, alone or chained with Compose after the augmentations.
 What it builds is attached to the structures it returns:
 
 * Structures.graph, a Graph: the edges between the atoms;
-* Structures.line_graph, Structures.triplets and Structures.quadruplets,
-  EdgeTuples: pairs and chains of edges of this graph.
+* Structures.line_graph, Structures.triplets, Structures.quadruplets and
+  Structures.bonds, EdgeTuples: pairs and chains of edges of this graph.
 
 Add transforms attach a field, Keep transforms remove edges of the graph. The
 structures given are not modified.
@@ -26,14 +26,22 @@ Examples:
 from dataclasses import dataclass, replace
 
 import torch
+import torch.nn.functional as F
 from jaxtyping import Bool, Float
 
 from torchms.data.batching import Structures
 from torchms.graph.atomic_radius import atomic_radius
 from torchms.graph.cutoff import cutoff, nearest_neighbors
-from torchms.graph.geometry import dihedral_angles, triplet_cosines
+from torchms.graph.geometry import dihedral_angles, pair_cosines, triplet_cosines
 from torchms.graph.graph import EdgeTuples, Graph
-from torchms.graph.line_graph import edge_pairs, quadruplets, triplets
+from torchms.graph.line_graph import (
+    edge_pairs,
+    quadruplets,
+    reverse_edges,
+    triplets,
+    undirected_edges,
+)
+from torchms.graph.sparse import count_by
 
 
 def attached_graph(structures: Structures, transform: object) -> Graph:
@@ -49,6 +57,28 @@ def attached_graph(structures: Structures, transform: object) -> Graph:
         )
 
     return structures.graph
+
+
+def attached_tuples(structures: Structures, name: str, transform: object) -> EdgeTuples:
+    """Tuples of edges attached to the structures: their line graph, triplets
+    or quadruplets.
+
+    Args:
+        structures: Structures with tuples of edges.
+        name: Field of the tuples: "line_graph", "triplets" or "quadruplets".
+        transform: What needs them, named in the error.
+
+    Raises:
+        ValueError: If the structures do not have these tuples.
+    """
+    tuples = getattr(structures, name)
+    if tuples is None:
+        raise ValueError(
+            f"{type(transform).__name__} needs structures.{name}: add it before, "
+            "with AddLineGraph, AddTriplets, AddQuadruplets or AddBonds"
+        )
+
+    return tuples
 
 
 def attach_graph(structures: Structures, graph: Graph, geometry: bool) -> Structures:
@@ -68,16 +98,20 @@ def edges_vectors(graph: Graph) -> Float[torch.Tensor, "n_edges 3"]:
 
 
 def shorter_edges(
-    graph: Graph, radius: float | None
+    graph: Graph, radius: float | None, strict: bool = False
 ) -> Bool[torch.Tensor, "n_edges"] | None:
-    """Mask of the edges not longer than a radius, None without radius."""
+    """Mask of the edges not longer than a radius, None without radius.
+
+    With strict, an edge as long as the radius is not in the mask.
+    """
     if radius is None:
         return None
 
-    if graph.edge_distance is not None:
-        return graph.edge_distance <= radius
+    distance = graph.edge_distance
+    if distance is None:
+        distance = graph.edges_distances()
 
-    return graph.edges_distances() <= radius
+    return distance < radius if strict else distance <= radius
 
 
 def edge_tuples(
@@ -292,8 +326,7 @@ class AddLineGraph:
 
         angle = None
         if self.geometry:
-            # the first edge arrives at v, the second one leaves it
-            angle = torch.acos(-triplet_cosines(edges_vectors(graph), index))
+            angle = torch.acos(pair_cosines(edges_vectors(graph), index))
 
         return replace(
             structures, line_graph=edge_tuples(graph, index, batch, ptr, angle)
@@ -325,6 +358,7 @@ class AddTriplets:
             All the edges by default. The indices still point to the edges of
             the whole graph.
         geometry: If True, the angle of each triplet is attached.
+        strict: If True, an edge as long as the radius is not in a triplet.
 
     Examples:
         Each atom of diamond has 4 neighbours, 4 × 3 triplets.
@@ -339,10 +373,13 @@ class AddTriplets:
 
     radius: float | None = None
     geometry: bool = False
+    strict: bool = False
 
     def __call__(self, structures: Structures) -> Structures:
         graph = attached_graph(structures, self)
-        index, batch, ptr = triplets(graph, shorter_edges(graph, self.radius))
+        index, batch, ptr = triplets(
+            graph, shorter_edges(graph, self.radius, self.strict)
+        )
 
         angle = None
         if self.geometry:
@@ -410,8 +447,53 @@ class AddQuadruplets:
         )
 
 
+@dataclass
+class AddBonds:
+    """Attach the bonds: an edge and its reverse are one bond.
+
+    For models whose features are on the bonds, shared by the two edges of a
+    bond. See torchms.graph.line_graph.undirected_edges.
+
+    Fields:
+        Sets structures.bonds, an EdgeTuples. The graph is not changed.
+
+        * bonds.index, (2, n_bonds): row 0 is an edge, row 1 its reverse,
+          indices of edges of structures.graph in the batch. Every edge is in
+          one bond. Row 0 is the first of the two edges, in ascending order.
+        * bonds.num_edges, (n_struct,): edges of the graph per structure.
+        * bonds.num_tuples, (n_struct,): bonds per structure.
+        * bonds.batch, (n_bonds,), and bonds.ptr, (n_struct + 1,).
+        * bonds.angle is None.
+
+    Raises:
+        ValueError: If an edge of the graph has no reverse, as after
+            KeepNearestNeighbors.
+
+    Examples:
+        >>> structures = AddBonds()(AddRadiusGraph(2.0)(Structures.diamond()))
+        >>> structures.graph.num_edges, structures.bonds.num_tuples
+        (tensor([32]), tensor([16]))
+    """
+
+    def __call__(self, structures: Structures) -> Structures:
+        graph = attached_graph(structures, self)
+        reverse = reverse_edges(graph)
+        if (reverse < 0).any():
+            raise ValueError("AddBonds needs a graph where every edge has its reverse")
+
+        first, _ = undirected_edges(graph)
+        batch = graph.edge_batch[first]
+        count = count_by(batch, len(graph.num_atoms))
+        ptr = F.pad(torch.cumsum(count, dim=0), (1, 0), value=0)
+
+        index = torch.stack([first, reverse[first]])
+
+        return replace(structures, bonds=edge_tuples(graph, index, batch, ptr, None))
+
+
 __all__ = [
     "AddAtomicRadiusGraph",
+    "AddBonds",
     "AddLineGraph",
     "AddQuadruplets",
     "AddRadiusGraph",

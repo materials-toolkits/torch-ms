@@ -18,7 +18,7 @@ TensorLike = torch.Tensor | np.ndarray | Sequence[Any]
 
 
 # fields of Structures holding tuples of edges of the graph
-TUPLES_FIELDS = ("line_graph", "triplets", "quadruplets")
+TUPLES_FIELDS = ("line_graph", "triplets", "quadruplets", "bonds")
 
 
 class InvalidStructure(Exception):
@@ -67,6 +67,9 @@ class Structures:  # pylint: disable=too-many-instance-attributes
         quadruplets: Quadruplets of atoms of the graph, None unless attached
             (AddQuadruplets): chains of three edges u→v, v→w, w→x. See
             EdgeTuples for its fields.
+        bonds: Bonds of the graph, None unless attached (AddBonds): pairs of
+            an edge and its reverse, one pair per bond. See EdgeTuples for its
+            fields.
 
     The graph and the tuples of edges describe the structures as they are: they
     are batched with the structures by collate, moved with them by to, and
@@ -112,6 +115,7 @@ class Structures:  # pylint: disable=too-many-instance-attributes
     line_graph: EdgeTuples | None
     triplets: EdgeTuples | None
     quadruplets: EdgeTuples | None
+    bonds: EdgeTuples | None
     _validate: bool
 
     def __init__(
@@ -130,6 +134,7 @@ class Structures:  # pylint: disable=too-many-instance-attributes
         line_graph: EdgeTuples | None = None,
         triplets: EdgeTuples | None = None,
         quadruplets: EdgeTuples | None = None,
+        bonds: EdgeTuples | None = None,
         pbc: TensorLike | None = None,
         properties: Mapping[str, TensorLike] | None = None,
         _validate: bool = False,
@@ -189,6 +194,7 @@ class Structures:  # pylint: disable=too-many-instance-attributes
         self.line_graph = line_graph
         self.triplets = triplets
         self.quadruplets = quadruplets
+        self.bonds = bonds
 
         self._validate = _validate
         if self._validate:

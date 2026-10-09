@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import torch
-from jaxtyping import Float, Int
+from jaxtyping import Float
 from torch import nn
 
 from torchms.data.batching import Structures
-from torchms.estimator.orb.model import (
+from torchms.graph.cutoff import cutoff
+from torchms.graph.graph import Graph
+from torchms.models.basis import (
+    DEGREES,
+    NUM_HARMONICS,
     BesselBasis,
+    gaunt_coefficients,
     polynomial_cutoff,
     spherical_harmonics,
 )
-from torchms.graph.cutoff import cutoff
-from torchms.graph.sparse import scatter
-from torchms.models.basis import DEGREES, NUM_HARMONICS, gaunt_coefficients
 
 NUM_ELEMENTS = 118
 NUM_DEGREES = 4
@@ -64,12 +66,12 @@ class EquivariantLayer(nn.Module):
     def environment(
         self,
         features: Float[torch.Tensor, "n_atoms c"],
-        edge_index: Int[torch.Tensor, "2 n_edges"],
+        graph: Graph,
         radial: Float[torch.Tensor, "n_edges b"],
         harmonics: Float[torch.Tensor, "n_edges 16"],
     ) -> Float[torch.Tensor, "n_atoms c 16"]:
         """Sum over the neighbours of radial functions times harmonics."""
-        sender, receiver = edge_index
+        sender = graph.edge_index[0]
 
         # (n_edges, c, 16): one weight per degree, repeated on its harmonics
         weights = self.radial(radial).view(-1, NUM_DEGREES, self.channels)
@@ -79,7 +81,7 @@ class EquivariantLayer(nn.Module):
             weights * self.linear_up(features)[sender].unsqueeze(-1)
         ) * harmonics.unsqueeze(1)
 
-        return scatter(messages, receiver, features.shape[0])
+        return graph.aggregate_edges_to_nodes(messages)
 
     def invariants(
         self, environment: Float[torch.Tensor, "n_atoms c 16"]
@@ -108,11 +110,11 @@ class EquivariantLayer(nn.Module):
     def forward(
         self,
         features: Float[torch.Tensor, "n_atoms c"],
-        edge_index: Int[torch.Tensor, "2 n_edges"],
+        graph: Graph,
         radial: Float[torch.Tensor, "n_edges b"],
         harmonics: Float[torch.Tensor, "n_edges 16"],
     ) -> Float[torch.Tensor, "n_atoms c"]:
-        environment = self.environment(features, edge_index, radial, harmonics)
+        environment = self.environment(features, graph, radial, harmonics)
 
         return features + self.update(self.invariants(environment))
 
@@ -171,14 +173,14 @@ class EquivariantNetwork(nn.Module):
         )
 
     def build_graph(self, structures: Structures) -> tuple[
-        Int[torch.Tensor, "2 n_edges"],
+        Graph,
         Float[torch.Tensor, "n_edges b"],
         Float[torch.Tensor, "n_edges 16"],
     ]:
         """Pairs of atoms of the model.
 
         Returns:
-            Atoms of each edge, shape (2, n_edges), radial basis of its length
+            Graph of the atoms, radial basis of the length of each edge
             with a smooth cutoff, shape (n_edges, num_basis), and spherical
             harmonics of its direction, shape (n_edges, 16).
         """
@@ -190,16 +192,16 @@ class EquivariantNetwork(nn.Module):
             distance, self.radius, p=CUTOFF_POWER
         ).unsqueeze(-1)
 
-        return graph.edge_index, radial, spherical_harmonics(vectors)
+        return graph, radial, spherical_harmonics(vectors)
 
     def forward(self, structures: Structures) -> Float[torch.Tensor, "n_struct"]:
         """Predict the energy of each structure."""
-        edge_index, radial, harmonics = self.build_graph(structures)
+        graph, radial, harmonics = self.build_graph(structures)
 
         features = self.atom_embedding(structures.z)
         for layer in self.layers:
-            features = layer(features, edge_index, radial, harmonics)
+            features = layer(features, graph, radial, harmonics)
 
         per_atom = self.readout(features).squeeze(-1)
 
-        return scatter(per_atom, structures.batch, len(structures.num_atoms))
+        return graph.aggregate_nodes_to_structures(per_atom)

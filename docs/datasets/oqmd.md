@@ -11,7 +11,7 @@ One structure per entry of the Open Quantum Materials Database, version 1.8 (Feb
 
 Structures have 1 to 312 atoms (median 6).
 
-```python
+```{.python notest}
 dataset = load_dataset("oqmd", "unique")
 ```
 
@@ -58,7 +58,7 @@ entries are removed. Duplicates which OQMD does not mark are not removed.
 **Recommended**: remove the failed calculations, a positive total energy or a stability above
 5 eV/atom. Use it on `unique`, without the duplicates marked by OQMD.
 
-```python
+```{.python notest}
 from torchms.data import Filter, load_dataset
 
 clean = Filter(maximum={"total_energy": 0.0, "energy_above_hull": 5.0})

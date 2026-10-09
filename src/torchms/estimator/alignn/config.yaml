@@ -1,0 +1,61 @@
+# ALIGNN 2.0 "alignn_atomwise_pure" of alignn: weights, graph and
+# hyperparameters, read by model.py.
+
+default_weights: alignn-formation-energy-radius
+
+# archives of the ALIGNN2 project of Figshare, with the parameters of a model
+# (best_model.pt) and its configuration (config.json)
+# files of the pretrained weights, by name: where a file is downloaded, its
+# expected SHA-256 and its name in the cache, the last part of the URL by default
+checkpoints:
+  alignn-formation-energy-radius:
+    - url: https://ndownloader.figshare.com/files/67163411
+      sha256: 148c9069f16c43d1ab3fc0c4df756549a31fcd662131252ad54b0cf0e2f2a114
+      filename: formation_energy_peratom_radius.zip
+
+# the table of the features of the elements is empty in the pretrained weights
+unused_parameters:
+  - _species_table
+
+# an atom is connected to its nearest neighbours closer than the radius; in the
+# line graph, both bonds of an angle are at most the three-body radius
+graph:
+  radius: &radius 5.0                         # Å
+  three_body_radius: &three_body_radius 3.5   # Å
+  max_neighbors: &max_neighbors 12
+
+model:
+  hidden_dim: &hidden_dim 512          # features of the atoms, bonds and angles
+  embedding_dim: &embedding_dim 64     # hidden layer of the embeddings
+  num_layers: &num_layers 4            # layers on both graphs, then on the atoms alone
+  num_element_features: &num_element_features 92
+  element_features: cgcnn_features.npz   # features of the elements, in this directory
+  # gaussians of the lengths of the bonds, in Å, and of the cosines of the angles
+  edge_basis: {start: 0.0, stop: 8.0, num_basis: &num_edge_bases 80}
+  angle_basis: {start: -1.0, stop: 1.0, num_basis: &num_angle_bases 40}
+  gate_epsilon: 1.0e-6                 # added to the sum of the gates of a node
+
+# configuration of the model the rewrite is written for, as stored with the
+# weights: the one of the model, then the one of its graphs
+upstream:
+  model_args:
+    name: alignn_atomwise_pure
+    alignn_layers: *num_layers
+    gcn_layers: *num_layers
+    atom_input_features: *num_element_features
+    edge_input_features: *num_edge_bases
+    triplet_input_features: *num_angle_bases
+    embedding_features: *embedding_dim
+    hidden_features: *hidden_dim
+    output_features: 1
+    calculate_gradient: false
+    energy_mult_natoms: false
+    use_penalty: false
+    link: identity
+    classification: false
+    use_cutoff_function: false
+  graph_args:
+    atom_features: cgcnn
+    cutoff: *radius
+    max_neighbors: *max_neighbors
+    three_body_cutoff: *three_body_radius

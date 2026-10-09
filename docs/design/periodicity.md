@@ -12,7 +12,7 @@ The position of an atom in Å is `x @ lattice`, for every structure:
 - a molecule has no cell. Its `lattice` is only a frame, **the identity**, and `x` is then its
   positions in Å.
 
-```python
+```{.python notest}
 molecule = Structures.molecule(positions, z)   # identity lattice, pbc False
 molecule.positions()                           # x @ lattice, for any structure
 ```

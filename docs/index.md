@@ -15,7 +15,7 @@ crystals, metal-organic frameworks and molecules. It provides:
   ones (orb, CHGNet, M3GNet, ALIGNN, MACE).
 - **Energy above the convex hull**, from DFT energies or estimated with a pretrained model.
 
-```python
+```{.python notest}
 from torchms.data import load_dataset
 from torchms.estimator import EnergyEstimator
 

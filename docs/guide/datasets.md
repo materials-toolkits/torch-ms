@@ -5,7 +5,7 @@ file is downloaded on the first call and cached by `huggingface_hub`.
 
 From a name to the batches of a training, in the order of this page:
 
-```python
+```{.python notest}
 from torchms.data import Filter, auto_loader, load_dataset, random_split
 from torchms.graph.transforms import AddRadiusGraph
 
@@ -81,7 +81,7 @@ dataset_url("oqmd", "unique")
 
 `load_dataset` gives the dataset itself, to read structures by their indices:
 
-```python
+```{.python notest}
 from torchms.data import load_dataset
 
 dataset = load_dataset("mp-20", "train")
@@ -102,7 +102,7 @@ A dataset returns batches of [`Structures`](structures.md), in the order of the 
 
 A local file, a file of any other repository, or another version of a published one:
 
-```python
+```{.python notest}
 from torchms.data import HDF5Dataset
 
 dataset = HDF5Dataset("my_structures.hdf5")
@@ -118,7 +118,7 @@ To make such a file from your own structures, see
 A `Filter` keeps the structures which pass its settings. It is given when a dataset is loaded,
 or applied to a dataset already loaded:
 
-```python
+```{.python notest}
 from torchms.data import Filter, load_dataset
 
 dataset = load_dataset("qm9", filter=Filter(equal={"uncharacterized": 0}))
@@ -154,7 +154,7 @@ CPU or its GPU.
 For a condition a `Filter` cannot express, `dataset.filter` takes any function from
 `Structures` to a mask of the structures to keep, and `dataset.subset` the indices themselves:
 
-```python
+```{.python notest}
 small_cells = dataset.filter(lambda structures: structures.lattice.det().abs() < 100.0)
 first = dataset.subset(range(1000))
 ```
@@ -166,7 +166,7 @@ The filter to start from for each dataset is in
 
 `random_split` cuts a dataset at random in parts of the sizes given:
 
-```python
+```{.python notest}
 from torchms.data import Filter, load_dataset, random_split
 
 dataset = load_dataset("qm9", filter=Filter(equal={"uncharacterized": 0}))
@@ -183,7 +183,7 @@ train, val, test = random_split(dataset, [0.8, 0.1, 0.1], seed=0)
 The same seed gives the same split with the same version of PyTorch. To keep a split for good,
 or to share it, save its indices:
 
-```python
+```{.python notest}
 from torchms.data import load_split, save_split, split_indices
 
 train, val, test = split_indices(len(dataset), [0.8, 0.1, 0.1], seed=0)
@@ -205,7 +205,7 @@ structures of the dataset, and `load_split` raises an error for a dataset of ano
 `auto_loader` gives the batches of a training. It looks at the CPU cores, the RAM and the GPU
 of the machine and loads the dataset the fastest way it can:
 
-```python
+```{.python notest}
 from torchms.data import auto_loader
 from torchms.data.augmentation import LatticeRotation
 from torchms.graph.transforms import AddRadiusGraph
@@ -234,7 +234,7 @@ loader is iterated once per epoch and has a length. Setting it up takes about a 
 The source is the name of a dataset, the path of an HDF5 file, or a dataset, such as the part
 of a split:
 
-```python
+```{.python notest}
 auto_loader("mp-20/train", batch_size=128)             # name and split in one string
 auto_loader("my_structures.hdf5", batch_size=128)      # a local file
 auto_loader(train, batch_size=128)                     # a dataset, a part of a split
@@ -284,7 +284,7 @@ How it chooses, how to change one of its choices, and the pieces to build a load
 Give a list of sources. The datasets are loaded together in memory and, with `shuffle=True`,
 every batch mixes their structures:
 
-```python
+```{.python notest}
 loader = auto_loader(
     ["mp-20/train", "qm9"],
     batch_size=128,
@@ -312,7 +312,7 @@ With a list alone, the proportions in a batch are the sizes of the datasets: the
 crystals of the training set of MP-20 are drowned in the 249,427 molecules of ZINC250k.
 `counts` gives the number of structures of each source in every batch:
 
-```python
+```{.python notest}
 loader = auto_loader(
     ["mp-20/train", "zinc250k"],
     batch_size=128,
@@ -338,7 +338,7 @@ loader = auto_loader(
 `InMemoryDataset.concat` makes one dataset from several, and `mix` one with a fixed share of
 each:
 
-```python
+```{.python notest}
 from torchms.data import InMemoryDataset, load_dataset, mix
 
 crystals = InMemoryDataset.from_hdf5(load_dataset("mp-20/train"))

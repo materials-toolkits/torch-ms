@@ -1,0 +1,57 @@
+# CHGNet 0.3.0 of chgnet: weights, graph and hyperparameters, read by model.py.
+
+default_weights: chgnet-0.3.0
+
+# files of the pretrained weights, by name: where a file is downloaded, its
+# expected SHA-256 and its name in the cache, the last part of the URL by default
+checkpoints:
+  chgnet-0.3.0:
+    - url: https://raw.githubusercontent.com/CederGroupHub/chgnet/v0.4.2/chgnet/pretrained/0.3.0/chgnet_0.3.0_e29f68s314m37.pth.tar
+      sha256: d14ab7c0f093efe64b60a7bcd540bca10e74fb7f46c86108a079af60524659d1
+
+# parameters of the pretrained weights which are not used to predict the energy
+unused_parameters:
+  - site_wise.
+
+# atoms closer than the radius are bonded; angles are between two bonds
+# shorter than the bond radius
+graph:
+  radius: &radius 6.0            # Å
+  bond_radius: &bond_radius 3.0  # Å
+
+model:
+  latent_dim: &latent_dim 64     # features of the atoms, of the bonds and of the angles
+  num_elements: 94
+  num_radial: &num_radial 31     # functions of the radial basis
+  num_angular: &num_angular 31   # functions of the basis of the angles
+  cutoff_power: &cutoff_power 8  # power of the smooth cutoff of the bonds
+  num_layers: &num_layers 4
+  readout_layers: 3              # hidden layers of the read-out
+  cosine_shrink: 1.0e-6          # as chgnet, cosines are shrunk by 1 - this value
+
+# arguments of the model the rewrite is written for, as stored with the weights
+upstream:
+  model_args:
+    atom_fea_dim: *latent_dim
+    bond_fea_dim: *latent_dim
+    angle_fea_dim: *latent_dim
+    composition_model: MPtrj
+    num_radial: *num_radial
+    num_angular: *num_angular
+    n_conv: *num_layers
+    atom_conv_hidden_dim: *latent_dim
+    update_bond: true
+    bond_conv_hidden_dim: *latent_dim
+    update_angle: true
+    angle_layer_hidden_dim: 0
+    read_out: ave
+    mlp_hidden_dims: [*latent_dim, *latent_dim, *latent_dim]
+    mlp_first: true
+    is_intensive: true
+    non_linearity: silu
+    atom_graph_cutoff: *radius
+    bond_graph_cutoff: *bond_radius
+    cutoff_coeff: *cutoff_power
+    learnable_rbf: true
+    gMLP_norm: layer
+    readout_norm: layer

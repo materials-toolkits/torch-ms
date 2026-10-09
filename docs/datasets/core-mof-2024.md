@@ -12,7 +12,7 @@ the earlier version of the database.
 | `ion`, computation-ready, with their ions | 100 | 28,886 | 64 to 1,376, median 244 |
 | `ncr`, not computation-ready | 1,826 | 849,226 | 10 to 11,696, median 240 |
 
-```python
+```{.python notest}
 dataset = load_dataset("core-mof-2024")        # asr
 dataset = load_dataset("core-mof-2024/ncr")
 ```
@@ -63,7 +63,7 @@ The three stabilities are `NaN` when the source says `unknown`: 9 structures of 
 **Recommended**: the computation-ready splits (`asr`, `fsr`, `ion`), at most 500 atoms. The
 source already removed what it judged unfit from these splits.
 
-```python
+```{.python notest}
 from torchms.data import Filter, load_dataset
 
 dataset = load_dataset("core-mof-2024", "asr", filter=Filter(max_atoms=500))

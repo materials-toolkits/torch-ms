@@ -17,7 +17,8 @@ from torchms.data.augmentation import (
     LatticeRotation,
     make_supercell,
 )
-from torchms.estimator.alignn import AlignnModel, InvalidWeights, weights
+from torchms.estimator import weights
+from torchms.estimator.alignn import AlignnModel, InvalidWeights
 from torchms.estimator.weights import Checkpoint, sha256
 from torchms.estimator.alignn.model import (
     GRAPH_ARGS,
@@ -25,11 +26,18 @@ from torchms.estimator.alignn.model import (
     MODEL_ARGS,
     RADIUS,
     THREE_BODY_RADIUS,
-    RBFExpansion,
+    rbf_expansion,
     element_features,
 )
 from torchms.graph.graph import Graph
 from torchms.graph.line_graph import reverse_edges
+from torchms.graph.transforms import AddLineGraph, attach_graph
+
+
+def predict(model, structures: Structures) -> torch.Tensor:
+    """Prediction of a model for structures without graph."""
+    return model(model.transform()(structures))
+
 
 DATA = Path(__file__).parent / "data"
 NAME = "alignn-formation-energy-radius"
@@ -58,6 +66,12 @@ def make_batch() -> Structures:
     return Structures.collate(make_structures())
 
 
+def with_graph(structures: Structures, graph: Graph) -> Structures:
+    """Structures with a given graph of the atoms, and the line graph of the model."""
+    line_graph = AddLineGraph(radius=THREE_BODY_RADIUS, backtrack=True)
+    return line_graph(attach_graph(structures, graph, False))
+
+
 def generator(seed: int = 0) -> torch.Generator:
     return torch.Generator().manual_seed(seed)
 
@@ -70,16 +84,16 @@ def model() -> AlignnModel:
 
 
 def test_pinned_checkpoints(tmp_path):
-    assert set(weights.CHECKPOINTS) == {NAME}
-    checkpoint = weights.CHECKPOINTS[NAME]
+    assert set(weights.CHECKPOINTS["alignn"]) == {NAME}
+    (checkpoint,) = weights.CHECKPOINTS["alignn"][NAME]
     assert checkpoint.url.startswith("https://")
     assert len(checkpoint.sha256) == 64
-    assert weights.checkpoint_path(NAME, tmp_path) == (
+    assert weights.checkpoint_paths("alignn", NAME, tmp_path)[0] == (
         tmp_path / "alignn" / "formation_energy_peratom_radius.zip"
     )
 
     with pytest.raises(KeyError, match="unknown model"):
-        weights.checkpoint_path("alignn-9")
+        weights.checkpoint_paths("alignn", "alignn-9")
 
 
 def test_element_features():
@@ -95,7 +109,7 @@ def test_element_features():
 
 
 def test_rbf_expansion():
-    expansion = RBFExpansion(0.0, 8.0, 80)
+    expansion = rbf_expansion(0.0, 8.0, 80)
     values = expansion(torch.tensor([0.0, 4.0, 8.0]))
 
     assert values.shape == (3, 80)
@@ -109,7 +123,7 @@ def test_rbf_expansion():
 
 
 def test_model_output(model):
-    prediction = model(make_batch())
+    prediction = predict(model, make_batch())
 
     assert prediction.shape == (2,)
     assert prediction.isfinite().all()
@@ -117,8 +131,8 @@ def test_model_output(model):
 
 def test_model_graphs(model):
     batch = make_batch()
-    graph = model.neighbors(batch)
-    distance, pair_index, cosine = model.angles(graph)
+    graph, distance, pairs, cosine = model.graphs(model.transform()(batch))
+    pair_index = pairs.index
 
     assert (distance <= RADIUS).all()
     degree = torch.bincount(graph.edge_index[0], minlength=len(batch.z))
@@ -147,9 +161,9 @@ def test_model_graphs(model):
 
 
 def test_model_batch_equals_single(model):
-    alone = torch.cat([model(structure) for structure in make_structures()])
+    alone = torch.cat([predict(model, structure) for structure in make_structures()])
 
-    assert torch.allclose(model(make_batch()), alone, atol=1e-5)
+    assert torch.allclose(predict(model, make_batch()), alone, atol=1e-5)
 
 
 @pytest.mark.parametrize(
@@ -162,7 +176,7 @@ def test_model_invariances(model, transform):
     batch = make_batch()
     augmented = transform(generator=generator())(batch)
 
-    assert torch.allclose(model(augmented), model(batch), atol=1e-4)
+    assert torch.allclose(predict(model, augmented), predict(model, batch), atol=1e-4)
 
 
 def test_model_prediction_of_a_supercell(model):
@@ -170,14 +184,18 @@ def test_model_prediction_of_a_supercell(model):
     batch = make_batch()
     supercell = make_supercell(batch, torch.tensor([[2, 1, 1], [1, 1, 1]]))
 
-    assert torch.allclose(model(supercell), model(batch), atol=1e-4)
+    assert torch.allclose(predict(model, supercell), predict(model, batch), atol=1e-4)
 
 
 def test_model_with_a_given_graph(model):
     batch = make_batch()
-    graph = model.neighbors(batch)
+    graph, _, _, _ = model.graphs(model.transform()(batch))
 
-    assert torch.equal(model(batch, graph), model(batch))
+    assert torch.equal(model(with_graph(batch, graph)), predict(model, batch))
+
+    # a graph of the atoms without its line graph is not completed
+    with pytest.raises(ValueError, match="needs structures with their line_graph"):
+        model(attach_graph(batch, graph, False))
 
 
 def state_and_config(model: AlignnModel) -> tuple[dict, dict]:
@@ -193,7 +211,9 @@ def test_load_pretrained_checks_the_parameters(model):
     other.load_pretrained(state_dict, config)
     other.eval()
     with torch.no_grad():
-        assert torch.allclose(other(make_batch()), model(make_batch()))
+        assert torch.allclose(
+            predict(other, make_batch()), predict(model, make_batch())
+        )
 
     with pytest.raises(InvalidWeights, match="another configuration"):
         other.load_pretrained(state_dict, {**config, "cutoff": 8.0})
@@ -222,10 +242,10 @@ def test_from_pretrained_reads_the_archive(model, tmp_path, monkeypatch):
         fp.writestr("best_model.pt", buffer.getvalue())
 
     checkpoint = Checkpoint(archive.as_uri(), sha256(archive), "model.zip")
-    monkeypatch.setitem(weights.CHECKPOINTS, "local", checkpoint)
+    monkeypatch.setitem(weights.CHECKPOINTS["alignn"], "local", (checkpoint,))
 
     loaded = AlignnModel.from_pretrained("local", cache=tmp_path / "cache")
-    assert torch.allclose(loaded(make_batch()), model(make_batch()))
+    assert torch.allclose(predict(loaded, make_batch()), predict(model, make_batch()))
 
 
 # the pretrained model against the real alignn
@@ -270,7 +290,7 @@ def edges_of(graph: Graph) -> list[set[tuple[int, ...]]]:
 
 @pytest.fixture(scope="module")
 def pretrained() -> AlignnModel:
-    if not weights.checkpoint_path(NAME).exists():
+    if not weights.checkpoint_paths("alignn", NAME)[0].exists():
         pytest.skip(f"weights of {NAME} are not in the cache")
 
     return AlignnModel.from_pretrained(NAME, device="cpu")
@@ -280,7 +300,8 @@ def pretrained() -> AlignnModel:
 def test_pretrained_line_graph_matches_alignn(pretrained):
     """Line graphs of alignn 2026.8.11, computed once outside of the project."""
     structures, reference, graph = reference_structures()
-    _, pair_index, cosine = pretrained.angles(graph)
+    _, _, pairs, cosine = pretrained.graphs(with_graph(structures, graph))
+    pair_index = pairs.index
     n_struct = len(structures.num_atoms)
 
     pair_batch = graph.edge_batch[pair_index[0]]
@@ -298,7 +319,7 @@ def test_pretrained_matches_alignn_on_its_graph(pretrained):
     """Predictions of alignn 2026.8.11, computed once outside of the project."""
     structures, reference, graph = reference_structures()
 
-    prediction = pretrained(structures, graph).numpy()
+    prediction = pretrained(with_graph(structures, graph)).numpy()
 
     assert np.abs(prediction - reference["prediction"]).max() < 1e-4
 
@@ -306,7 +327,7 @@ def test_pretrained_matches_alignn_on_its_graph(pretrained):
 @pytest.mark.timeout(120)
 def test_pretrained_matches_alignn_without_equidistant_neighbours(pretrained):
     structures, reference, graph = reference_structures()
-    own = pretrained.neighbors(structures)
+    own, _, _, _ = pretrained.graphs(pretrained.transform()(structures))
 
     assert own.num_edges.tolist() == reference["num_edges"].tolist()
 
@@ -314,6 +335,6 @@ def test_pretrained_matches_alignn_without_equidistant_neighbours(pretrained):
     same = np.array([a == b for a, b in zip(edges_of(own), edges_of(graph))])
     assert same.sum() >= 10 and (~same).sum() >= 10
 
-    error = np.abs(pretrained(structures).numpy() - reference["prediction"])
+    error = np.abs(predict(pretrained, structures).numpy() - reference["prediction"])
     assert error[same].max() < 1e-4
     assert error[~same].max() < 0.05

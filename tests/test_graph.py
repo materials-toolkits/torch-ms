@@ -232,3 +232,77 @@ def test_aggregate_invalid_reduce():
     src = torch.ones(3)
     with pytest.raises(ValueError):
         g.aggregate_edges_to_nodes(src, reduce="max")
+
+
+def test_aggregate_edges_to_senders():
+    g = _graph_with_known_edges()
+    src = torch.tensor([[1.0], [3.0], [5.0]])
+    out = g.aggregate_edges_to_nodes(src, to="sender")
+    # node 0 sends edges 0 and 2, node 1 sends edge 1, node 2 sends nothing
+    assert out.squeeze().tolist() == [6.0, 3.0, 0.0]
+
+    with pytest.raises(ValueError, match="unknown end"):
+        g.aggregate_edges_to_nodes(src, to="both")  # type: ignore[arg-type]
+
+
+def test_aggregate_nodes_to_structures_of_a_graph_with_structures():
+    from torchms.data.batching import Structures
+    from torchms.graph.cutoff import cutoff
+
+    structures = Structures.collate([Structures.diamond(), Structures.water()])
+    attached = cutoff(structures, 2.0)
+    alone = Graph(
+        edge_index=attached.edge_index,
+        edge_shift=attached.edge_shift,
+        num_atoms=attached.num_atoms,
+        num_edges=attached.num_edges,
+    )
+    assert attached.structures is not None and alone.structures is None
+
+    src = torch.arange(11.0)
+    out = attached.aggregate_nodes_to_structures(src)
+    assert out.tolist() == [28.0, 27.0]  # 0+...+7 and 8+9+10
+    assert torch.equal(out, alone.aggregate_nodes_to_structures(src))
+
+
+def test_unpool_nodes_to_edges():
+    g = _graph_with_known_edges()
+    atoms = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+
+    assert g.senders.tolist() == [0, 1, 0] and g.receivers.tolist() == [1, 2, 2]
+    assert g.unpool_senders(atoms).tolist() == [[1.0, 2.0], [3.0, 4.0], [1.0, 2.0]]
+    assert g.unpool_receivers(atoms).tolist() == [[3.0, 4.0], [5.0, 6.0], [5.0, 6.0]]
+
+
+def test_edge_tuples_unpool_and_line_graph():
+    from torchms.data.batching import Structures
+    from torchms.graph.cutoff import cutoff
+    from torchms.graph.geometry import pair_cosines
+    from torchms.graph.line_graph import edge_pairs, quadruplets
+    from torchms.graph.transforms import edge_tuples
+
+    structures = Structures.collate([Structures.diamond(), Structures.diamond()])
+    graph = cutoff(structures, 2.0)
+    pairs = edge_tuples(graph, *edge_pairs(graph), angle=None)
+    edges = torch.arange(float(graph.edge_index.shape[1]))
+
+    assert torch.equal(pairs.unpool_edges(edges, 0), edges[pairs.index[0]])
+    assert torch.equal(pairs.unpool_edges(edges, -1), edges[pairs.index[1]])
+
+    # the line graph: its nodes are the edges, its edges the pairs
+    line_graph = pairs.as_graph()
+    assert torch.equal(line_graph.num_atoms, graph.num_edges)
+    assert torch.equal(line_graph.num_edges, pairs.num_tuples)
+    assert torch.equal(line_graph.senders, pairs.index[0])
+    values = torch.ones(pairs.index.shape[1])
+    assert torch.equal(
+        line_graph.aggregate_edges_to_nodes(values), pairs.aggregate_to_edges(values)
+    )
+
+    # the tuples themselves are accepted where their indices are
+    vectors = graph.edges_vectors()
+    assert torch.equal(pair_cosines(vectors, pairs), pair_cosines(vectors, pairs.index))
+
+    chains = edge_tuples(graph, *quadruplets(graph), angle=None)
+    with pytest.raises(ValueError, match="only pairs"):
+        chains.as_graph()

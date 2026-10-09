@@ -11,7 +11,7 @@ coordination polymers relaxed with PBE-D3(BJ). It is the database of the
 | Elements | 79, from H to Pu |
 | With a band gap at HLE17 / HSE06* / HSE06 | 10,756 / 10,811 / 10,810 |
 
-```python
+```{.python notest}
 dataset = load_dataset("qmof")
 ```
 
@@ -55,7 +55,7 @@ dataset = load_dataset("qmof")
 **Recommended for training**: at most 200 atoms, which keeps nine structures in ten and
 batches which fit on a GPU.
 
-```python
+```{.python notest}
 from torchms.data import Filter, load_dataset
 
 dataset = load_dataset("qmof", filter=Filter(max_atoms=200))

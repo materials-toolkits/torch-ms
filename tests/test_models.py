@@ -13,7 +13,7 @@ from torchms.data.augmentation import (
     random_orthogonal,
     rotate_lattice,
 )
-from torchms.estimator.orb.model import spherical_harmonics
+from torchms.models.basis import spherical_harmonics
 from torchms.models import (
     AngleBasis,
     EquivariantNetwork,

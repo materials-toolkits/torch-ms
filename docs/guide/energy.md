@@ -15,7 +15,7 @@ elements, and the one of OQMD is negative for the most stable phases.
 `EnergyEstimator` predicts the total energy of a structure with a pretrained model and compares
 it to the convex hull of LeMat-Bulk.
 
-```python
+```{.python notest}
 from torchms.data import load_dataset
 from torchms.estimator import EnergyEstimator
 
@@ -59,7 +59,7 @@ difference between a stable phase and its close competitors.
 `torchms.data.hull` computes the hull itself. Energies must be comparable: same
 functional and same calculation settings.
 
-```python
+```{.python notest}
 from torchms.data.hull import energy_above_hull, energy_above_reference, load_hull
 
 # hull of a set of structures, from its own energies
@@ -73,7 +73,7 @@ above = energy_above_reference(hull, z, num_atoms, total_energy)
 `z` is the atomic number of all the atoms, `num_atoms` and `total_energy` have one value per
 structure: numpy arrays, as stored in the datasets.
 
-```python
+```{.python notest}
 dataset = load_dataset("oqmd", "unique")
 z, num_atoms = dataset.dataset("z")[:], dataset.dataset("num_atoms")[:]
 total_energy = dataset.dataset("total_energy")[:]
