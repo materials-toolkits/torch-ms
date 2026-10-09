@@ -51,7 +51,7 @@ The four labels (`total_energy`, `band_gap`, ...) are `NaN`.
 - Two molecules are kept with `mmff_converged` at 0.
 - **Charged molecules** are in the source (protonated amines, for instance) and are kept.
 - **No bond is stored**, as for every dataset: graphs are built from the positions.
-- **No split.** Papers draw their own.
+- **No split.** Papers draw their own, as `random_split(dataset, [0.8, 0.1, 0.1], seed=0)`.
 - **Licence.** The table comes from the repository of the paper (Apache 2.0); the molecules
   come from ZINC: free to use, significant portions not to be redistributed without written
   permission.

@@ -49,8 +49,10 @@ the unit of the source.
   0.01 meV.
 - **Nothing is filtered.** The 3,054 molecules whose geometry failed the consistency check of
   the source are kept, with `uncharacterized` set to 1. Most papers remove them:
-  `properties["uncharacterized"] == 0` selects the 130,831 others.
-- **No split.** The source has none; papers draw their own.
+  `load_dataset("qm9", filter=Filter(equal={"uncharacterized": 0}))` keeps the 130,831
+  others.
+- **No split.** The source has none; papers draw their own, as
+  `random_split(dataset, [0.8, 0.1, 0.1], seed=0)`.
 - **`band_gap` of a molecule** is its HOMO-LUMO gap, which is not the band gap of a crystal:
   do not compare it with the one of the crystal datasets.
 - **Identifiers and SMILES** are not in the file. `all_index.parquet` gives for each row the

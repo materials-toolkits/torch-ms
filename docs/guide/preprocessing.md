@@ -37,7 +37,9 @@ uv run preprocessing structures.cif filtered.hdf5 \
 
 `--max-energy-above-hull 0` keeps stable structures, `0.1` stable and meta-stable ones;
 structures without energy above the hull are dropped by this filter. From Python, any function
-returning a mask of the structures to keep can be used:
+returning a mask of the structures to keep can be used, and `Filter` has more settings than the
+command line: see [Filtering a dataset](datasets.md#filtering-a-dataset). The same filter can
+be given when a dataset is loaded instead, which keeps the file complete:
 
 ```python
 from torchms.data.filters import Filter

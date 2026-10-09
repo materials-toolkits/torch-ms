@@ -232,6 +232,19 @@ above, in RAM otherwise: a shuffled batch then mixes the structures of all of th
 and molecules. A file cannot be shuffled with another one at this speed, so datasets which do
 not fit together in memory are refused with an error. The rest is the table above.
 
+With `counts`, every batch holds a fixed number of structures of each source. This is done by
+the order of an epoch and by nothing else: the structures go by groups of `batch_size`,
+`counts[i]` of them from the source `i`. The graphs are still built on large batches, which
+are multiples of `batch_size`, and `Structures.split` cuts them in consecutive structures: the
+batches given have the shares asked, at the speed of a plain loader. A sampler which drew each
+batch apart would have built the graphs batch by batch.
+
+### Subsets
+
+A filter or the part of a split is a subset of a dataset: a list of rows. For a dataset read
+from its file nothing is copied, the rows asked are mapped to rows of the file. In memory the
+structures kept are copied once.
+
 ## Changing the configuration
 
 `loader.config` says what was chosen, with the reason of each choice and what was measured:

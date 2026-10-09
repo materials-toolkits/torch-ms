@@ -38,10 +38,10 @@ The properties are the geometric ones of the table of the source, computed with 
 - **Very large cells.** One structure in ten has more than 690 atoms, 559 of `asr` have more
   than 1,000, and the largest has 10,560. The radius graph lists the pairs of atoms of a
   structure: at 5 Å a cell of 2,000 atoms takes 0.5 GB on a GPU, one of 5,000 atoms 3.3 GB.
-  Filter by `num_atoms` or use batches of a few structures.
+  Load it with `filter=Filter(max_atoms=500)` or use batches of a few structures.
 - **Nothing is filtered.** The 1,877 structures of `asr` and the 1,053 of `fsr` that the
   source set apart as disordered are kept, with `disorder` set to 1.
-  `properties["disorder"] == 0` selects the others.
+  `filter=Filter(equal={"disorder": 0})` keeps the others.
 - **Experimental structures are not relaxed**, and hydrogens can be missing.
 - **Atoms are in the order of the files.** 8 files of `asr` and 7 of `fsr` are not in P1:
   their symmetry operations were applied by pymatgen.

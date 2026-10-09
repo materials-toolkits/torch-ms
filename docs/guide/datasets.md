@@ -139,6 +139,113 @@ dataset = InMemoryDataset.concat(
 ```
 
 
+## Filtering a dataset
+
+A `Filter` keeps the structures which pass its settings. It is given when a dataset is loaded,
+by its name or by `auto_loader`, or applied to a dataset:
+
+```python
+from torchms.data import Filter, auto_loader, load_dataset
+
+dataset = load_dataset("qm9", filter=Filter(equal={"uncharacterized": 0}))
+dataset = load_dataset("core-mof", filter=Filter(max_atoms=500, equal={"disorder": 0}))
+loader = auto_loader("mp-20/train", batch_size=128, filter=Filter(max_energy_above_hull=0.1))
+
+organic = dataset.filter(Filter(elements=(1, 6, 7, 8)))   # a dataset already loaded
+```
+
+| Setting | Keeps the structures |
+|---|---|
+| `min_atoms`, `max_atoms` | with a number of atoms in the range |
+| `elements` | made only of these atomic numbers |
+| `exclude_elements` | without these atomic numbers |
+| `periodic` | `True`: crystals only, `False`: molecules only |
+| `max_energy_above_hull` | not above this energy above the hull, in eV/atom |
+| `minimum`, `maximum` | `{"band_gap": 0.5}`: a label or a named property above, below a value |
+| `equal` | `{"disorder": 0}`: a label or a named property equal to a value |
+| `known` | `("total_energy",)`: with a value for these labels or properties |
+
+A structure is kept if it passes every setting given. A name is one of the four labels
+(`total_energy`, `formation_energy_per_atom`, `energy_above_hull`, `band_gap`) or a named
+property of the dataset; an unknown name raises a `KeyError`. A structure without value for a
+label (`NaN`) does not pass a condition on it.
+
+The result is a dataset of the structures kept, in their order: it is read, split, mixed and
+given to `auto_loader` like any other. Nothing is copied for a dataset read from a file.
+`dataset.filter` also takes any function from `Structures` to a mask of the structures to
+keep, and `dataset.subset(indices)` the indices themselves. A list of sources of `auto_loader`
+takes one filter for all of them, or a list with one per source (`None` for none).
+
+## Splitting a dataset
+
+`random_split` cuts a dataset at random in parts of the sizes given:
+
+```python
+from torchms.data import load_dataset, random_split
+
+dataset = load_dataset("qm9", filter=Filter(equal={"uncharacterized": 0}))
+train, val, test = random_split(dataset, [0.8, 0.1, 0.1], seed=0)
+
+loader = auto_loader(train, batch_size=128, shuffle=True)
+```
+
+Every structure is in one part and only one, and the same seed gives the same split. Filter
+first, then split: the split is made on what the filter kept.
+
+To keep a split for good, or to share it, save its indices:
+
+```python
+from torchms.data import load_split, save_split, split_indices
+
+train, val, test = split_indices(len(dataset), [0.8, 0.1, 0.1], seed=0)
+save_split("qm9_split.npz", {"train": train, "val": val, "test": test}, dataset)
+
+parts = load_split("qm9_split.npz", dataset)     # a dictionary of indices
+train = dataset.subset(parts["train"])
+```
+
+The file is a NumPy `.npz` with an array of indices per part. It records the number of
+structures of the dataset, and `load_split` raises an error for a dataset of another size.
+The indices are positions in the dataset given: a split saved after a filter is loaded after
+the same filter.
+
+## A fixed share of each dataset in every batch
+
+With a list of sources alone, the proportions in a batch are the sizes of the datasets: 27,136
+crystals of MP-20 are drowned in the 249,427 molecules of ZINC250k. `counts` gives the number of
+structures of each source in every batch:
+
+```python
+loader = auto_loader(
+    ["mp-20/train", train],            # names, files, datasets, parts of a split
+    batch_size=128,
+    counts=[64, 64],                   # 64 crystals and 64 molecules in every batch
+    transform=AddRadiusGraph(5.0),
+    shuffle=True,
+)
+```
+
+- `counts` must sum to `batch_size`. Every batch is full.
+- In a batch the structures are grouped by source, in the order of the list: here the 64
+  crystals, then the 64 molecules.
+- `epoch="shortest"`, the default: an epoch ends when a source cannot fill its share any more,
+  after 424 batches here. No structure is given twice, and with `shuffle=True` the larger
+  source gives other structures at each epoch.
+- `epoch="longest"`: an epoch ends when every structure of every source has been given. The
+  smaller sources are gone through several times.
+
+Without `auto_loader`, `mix` makes the dataset and `batches` reads it:
+
+```python
+from torchms.data import InMemoryDataset, mix
+
+mixed = mix([InMemoryDataset.from_hdf5(crystals), InMemoryDataset.from_hdf5(molecules)], [64, 64])
+for structures in mixed.batches(128, shuffle=True):
+    ...
+```
+
+The sources of a mix are held in memory together, as the ones of a list.
+
 ## Reading structures
 
 `load_dataset` gives the dataset itself, to read structures by their indices:
