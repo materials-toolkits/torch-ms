@@ -12,7 +12,7 @@ uv sync
 ```
 
 `uv sync` installs the library in editable mode with the development group (tests, type
-checker, ASE, pymatgen, pyarrow). Always run Python through `uv run`, which uses the
+checker, ASE, pymatgen, pyarrow, and RDKit for the script building ZINC250k). Always run Python through `uv run`, which uses the
 environment of the project.
 
 | Need | Command | What it adds |

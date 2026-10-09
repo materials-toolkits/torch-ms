@@ -55,3 +55,7 @@ Two places work on something else than tensors, by design:
 
 A file stores the same flat tensors. Its `ptr` has one value per structure (the first atom),
 without the final total: batches can be appended to a file one after the other.
+
+The named properties are in a group `properties`, one array per name. `pbc` says which
+structures are periodic; a file without it holds crystals only, see
+[Periodicity](periodicity.md).

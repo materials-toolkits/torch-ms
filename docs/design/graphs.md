@@ -21,6 +21,9 @@ fractional = x[target] + edge_shift - x[source]
 The shift is relative to the coordinates as given, which can be outside `[0, 1)`: `cutoff`
 wraps atoms in the cell to search neighbours, then expresses shifts for the given coordinates.
 
+Along a lattice vector along which a structure is not periodic, the shift is zero: the edges
+of a molecule are between its atoms. See [Periodicity](periodicity.md).
+
 Graphs of `cutoff` and `atomic_radius` contain both directions of each pair. Edges are grouped
 by structure, in the order of the batch.
 

@@ -34,6 +34,15 @@ for epoch in range(10):
 | `materials-project` | `all` | 271,325 | [Materials Project](../datasets/materials-project.md) |
 | `oqmd` | `all`, `unique` | 1,407,269 / 1,259,553 | [OQMD](../datasets/oqmd.md) |
 | `lematerial` | `all`, `unique` | 5,335,299 / 4,927,038 | [LeMat-Bulk](../datasets/lematerial.md) |
+| `qmof` | `all` | 20,372 | [QMOF](../datasets/qmof.md) |
+| `core-mof` | `asr`, `fsr` | 12,020 / 7,061 | [CoRE MOF 2019](../datasets/core-mof.md) |
+| `core-mof-2024` | `asr`, `fsr`, `ion`, `ncr` | 1,371 / 1,191 / 100 / 1,826 | [CoRE MOF 2024](../datasets/core-mof-2024.md) |
+| `qm9` | `all` | 133,885 | [QM9](../datasets/qm9.md) |
+| `zinc250k` | `all` | 249,427 | [ZINC250k](../datasets/zinc250k.md) |
+
+The first six are inorganic crystals, `qmof`, `core-mof` and `core-mof-2024` metal-organic frameworks, `qm9` and
+`zinc250k` organic molecules. ZINC20 in 3D and the MOFs of the Cambridge Structural Database
+are built locally: see [Datasets to build yourself](../datasets/local.md).
 
 Names are not case sensitive and `_` is accepted for `-`. An unknown name or split raises a
 `KeyError` listing the valid ones.
@@ -96,6 +105,38 @@ auto_loader(HDF5Dataset.from_hub("user/repository", "file.hdf5"), batch_size=128
 | `device` | device of the batches, the GPU by default if there is one |
 
 Setting up takes about a second.
+
+## Several datasets, crystals and molecules together
+
+Give a list of sources. The datasets are loaded together in memory and, with `shuffle=True`,
+every batch mixes their structures:
+
+```python
+loader = auto_loader(
+    ["mp-20/train", "qm9"],
+    batch_size=128,
+    transform=AddRadiusGraph(5.0),
+    shuffle=True,
+)
+
+for structures in loader:
+    crystal = structures.pbc.all(dim=1)       # (128,): False for the molecules
+    structures.properties["homo"]             # NaN for the crystals
+```
+
+The split of each dataset is given in its name. The graph of a molecule has no periodic image:
+its `edge_shift` is zero. A batch has the properties of all the datasets, `NaN` for the
+structures of a dataset without them. See [Periodicity](../design/periodicity.md).
+
+Without `auto_loader`, `InMemoryDataset.concat` makes one dataset from several:
+
+```python
+from torchms.data import InMemoryDataset
+
+dataset = InMemoryDataset.concat(
+    [InMemoryDataset.from_hdf5(load_dataset("mp-20/train")), InMemoryDataset.from_hdf5(load_dataset("qm9"))]
+)
+```
 
 
 ## Reading structures

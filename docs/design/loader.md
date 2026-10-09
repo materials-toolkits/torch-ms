@@ -225,6 +225,13 @@ RTX 4060 and of 8,192 on the H100.
 What is not measured: several GPUs, a GPU shared with a model during the measure, cells of
 hundreds of atoms, and a machine where the file or the CPU alone is the right choice.
 
+### Several datasets
+
+A list of sources is loaded as one dataset in memory, on the GPU if it fits there by the rule
+above, in RAM otherwise: a shuffled batch then mixes the structures of all of them, crystals
+and molecules. A file cannot be shuffled with another one at this speed, so datasets which do
+not fit together in memory are refused with an error. The rest is the table above.
+
 ## Changing the configuration
 
 `loader.config` says what was chosen, with the reason of each choice and what was measured:
