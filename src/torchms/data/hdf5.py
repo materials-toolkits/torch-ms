@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 # group of the file holding the properties of Structures.properties
 PROPERTIES_GROUP = "properties"
 
+# rows are read as one block of the file when the block is at most this many
+# times larger than what is asked
+DENSE_BLOCK = 8
+
 # indices of structures of a dataset
 Indices = torch.Tensor | np.ndarray | Sequence[int]
 
@@ -250,7 +254,8 @@ class HDF5Dataset(Dataset):
         """Read rows of a dataset of the file, in any order.
 
         HDF5 reads rows in ascending order without duplicates: other indices
-        are read sorted, then put back in the order asked.
+        are read sorted, then put back in the order asked. Rows close to each
+        other are read as one block.
 
         Args:
             name: Name of the dataset.
@@ -261,6 +266,21 @@ class HDF5Dataset(Dataset):
             Rows in the order of indices, shape (n, ...).
         """
         dataset = self.dataset(name)
+
+        if len(indices) > 0:
+            first, last = int(indices.min()), int(indices.max())
+
+            # rows close to each other are read as one block of the file, and
+            # taken from it: reading rows one by one is much slower
+            if last - first + 1 <= DENSE_BLOCK * len(indices):
+                block = dataset[first : last + 1]
+
+                if len(block) == len(indices) and bool(
+                    (indices[1:] > indices[:-1]).all()
+                ):
+                    return torch.from_numpy(block)
+
+                return torch.from_numpy(block[indices - first])
 
         if len(indices) < 2 or bool((indices[1:] > indices[:-1]).all()):
             return torch.from_numpy(dataset[indices])

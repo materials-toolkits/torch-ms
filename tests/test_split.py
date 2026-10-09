@@ -93,6 +93,22 @@ class TestSubset:
 
         assert numbers(subset[:]) == [29, 10, 15]
 
+    @pytest.mark.parametrize(
+        "index",
+        [
+            list(range(5, 25)),  # consecutive rows: one block of the file
+            [24, 5, 9, 9, 23, 6],  # close to each other, any order, one twice
+            [0, 39],  # far from each other
+            [],
+        ],
+    )
+    def test_rows_read_as_a_block(self, hdf5, structures, index):
+        expected = structures.select(torch.tensor(index, dtype=torch.int64))
+
+        assert numbers(hdf5[index]) == index
+        assert_same(hdf5[index], expected)
+        assert_same(hdf5.subset(index)[:], expected)
+
     def test_invalid_indices(self, hdf5):
         with pytest.raises(IndexError):
             hdf5.subset([N])
