@@ -50,6 +50,19 @@ The labels of a dataset beyond the four common ones are in `structures.propertie
 3D and the MOFs of the Cambridge Structural Database are built locally by a script, see the
 documentation.
 
+A dataset is filtered when it is loaded, split at random from a seed, and mixed with others in
+fixed shares per batch:
+
+```python
+from torchms.data import Filter, auto_loader, load_dataset, random_split
+
+qm9 = load_dataset("qm9", filter=Filter(equal={"uncharacterized": 0}))
+train, val, test = random_split(qm9, [0.8, 0.1, 0.1], seed=0)
+
+# 64 crystals and 64 molecules in every batch
+loader = auto_loader(["mp-20/train", train], batch_size=128, counts=[64, 64], shuffle=True)
+```
+
 Datasets are complete and unfiltered: unphysical labels of the sources are kept, filter
 them when loading or preprocessing. Missing labels are NaN. `unique` files drop the
 duplicates marked by the source (OQMD) or sharing a fingerprint (LeMat-Bulk), keeping the
