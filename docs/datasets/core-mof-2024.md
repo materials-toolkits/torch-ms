@@ -58,6 +58,29 @@ The three stabilities are `NaN` when the source says `unknown`: 9 structures of 
   row, its name in the source, its metals, its topology and its DOI.
 - **Licence**: CC BY 4.0.
 
+## Filters
+
+**Recommended**: the computation-ready splits (`asr`, `fsr`, `ion`), at most 500 atoms. The
+source already removed what it judged unfit from these splits.
+
+```python
+from torchms.data import Filter, load_dataset
+
+dataset = load_dataset("core-mof-2024", "asr", filter=Filter(max_atoms=500))
+```
+
+| Filter | Keeps, of `asr` / `fsr` / `ion` / `ncr` |
+|---|---|
+| none | 1,371 / 1,191 / 100 / 1,826 |
+| `Filter(max_atoms=500)`, **recommended** | 1,214 / 1,063 / 92 / 1,458 |
+| `Filter(max_atoms=1000)` | 1,347 / 1,179 / 98 / 1,674 |
+| `Filter(equal={"unmodified": 1})`, as published, not modified by the source | 411 / 613 / 34 / – |
+| `Filter(max_atoms=500, known=("thermal_stability",))`, with predicted stabilities | 1,205 / 1,040 / 1 / – |
+
+`ncr` has no property: a filter on one raises an error. Do not train on `ncr` as it is.
+
+See [Filtering a dataset](../guide/datasets.md#filtering-a-dataset) for every setting.
+
 ## Source and checks
 
 - [CoRE MOF 2024 Dataset](https://doi.org/10.5281/zenodo.15055758), Zenodo, version 1.1:

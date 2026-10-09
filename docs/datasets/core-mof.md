@@ -51,6 +51,31 @@ The properties are the geometric ones of the table of the source, computed with 
 - No structure with partial occupancy was found.
 - **Licence**: CC BY 4.0.
 
+## Filters
+
+**Recommended**: without the structures the source set apart as disordered, and at most
+500 atoms.
+
+```python
+from torchms.data import Filter, load_dataset
+
+dataset = load_dataset("core-mof", filter=Filter(equal={"disorder": 0}, max_atoms=500))
+```
+
+| Filter | Keeps, of `asr` / `fsr` |
+|---|---|
+| none | 12,020 / 7,061 |
+| `Filter(equal={"disorder": 0}, max_atoms=500)`, **recommended** | 8,722 / 5,108 |
+| `Filter(equal={"disorder": 0})` | 10,143 / 6,008 |
+| `Filter(equal={"disorder": 0}, max_atoms=1000)` | 9,804 / 5,774 |
+| `Filter(equal={"disorder": 0}, max_atoms=200)` | 5,747 / 3,208 |
+| `Filter(max_atoms=500)` | 9,906 / 5,794 |
+
+The limit on the atoms is a matter of memory, not of quality: raise it if your GPU allows,
+see the cost of the graphs above.
+
+See [Filtering a dataset](../guide/datasets.md#filtering-a-dataset) for every setting.
+
 ## Source and checks
 
 - [CoRE MOF 2019 Dataset](https://doi.org/10.5281/zenodo.7691378), Zenodo, version 1.1.4:

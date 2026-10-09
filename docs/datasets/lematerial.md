@@ -59,6 +59,39 @@ computed from the total energies of the dataset.
 | `energy_validation.json`, `energy_splits.parquet` | validation of the estimator |
 | `lematerial*.cif` | an older, curated selection in CIF, unrelated to the HDF5 files |
 
+## Filters
+
+**Recommended**: remove the failed calculations, which have a positive total energy. Use it on
+`unique`, with one structure per fingerprint.
+
+```python
+from torchms.data import Filter, load_dataset
+
+dataset = load_dataset("lematerial/unique", filter=Filter(maximum={"total_energy": 0.0}))
+```
+
+| Filter | Keeps, of `all` / `unique` |
+|---|---|
+| none | 5,335,299 / 4,927,038 |
+| `Filter(maximum={"total_energy": 0.0})`, **recommended** | 5,335,147 / 4,926,943 |
+| the same with `max_energy_above_hull=0.1`, stable and meta-stable | 1,640,789 / 1,547,665 |
+| the same with `max_energy_above_hull=0.0`, on the hull | 109,113 / 105,636 |
+| the same with `max_energy_above_hull=0.1, max_atoms=64` | 1,625,115 / 1,533,980 |
+| the same with `max_energy_above_hull=0.1, exclude_elements=(26, 28, 29, 64, 75, 83, 91, 93, 94)` | 1,292,205 / 1,215,745 |
+
+!!! warning "A filter on the stored energy above the hull inherits its flaw"
+    The energy above the hull of the file is not reliable for the structures from OQMD with
+    one of nine elements (Fe, Ni, Cu, Gd, Re, Bi, Pa, Np, Pu), see above. The last filter
+    drops every structure with one of them, from any source: it is safe and loses 21 % of the
+    stable and meta-stable structures. To keep them, compute the energy above
+    [`hull.hdf5`](../design/hull.md) and filter on it with your own function.
+
+The corrupt entry `oqmd-2969647` has a negative energy and passes the recommended filter. It
+is 1.32 eV/atom above the hull: every filter on the energy above the hull of this table
+removes it.
+
+See [Filtering a dataset](../guide/datasets.md#filtering-a-dataset) for every setting.
+
 ## Source and checks
 
 - LeMat-Bulk revision `0dc17eea`, LeMat-Bulk-DFT-Hull-All revision `fc063a96`.

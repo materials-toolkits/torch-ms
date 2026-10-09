@@ -58,6 +58,25 @@ The four labels (`total_energy`, `band_gap`, ...) are `NaN`.
 - **Same positions with the same RDKit.** The build is reproducible with RDKit 2026.03.6;
   another version can give other conformers.
 
+## Filters
+
+**Recommended**: the molecules whose relaxation converged, which is all of them but two.
+
+```python
+from torchms.data import Filter, load_dataset
+
+dataset = load_dataset("zinc250k", filter=Filter(equal={"mmff_converged": 1}))
+```
+
+| Filter | Keeps, of 249,427 |
+|---|---|
+| `Filter(equal={"mmff_converged": 1})`, **recommended** | 249,425 |
+| `Filter(equal={"mmff_converged": 1}, max_atoms=60)`, hydrogens included | 243,396 |
+| `Filter(minimum={"qed": 0.5})`, the more drug-like | 228,905 |
+| `Filter(elements=(1, 6, 7, 8))`, the elements of QM9 without fluorine | 102,452 |
+
+See [Filtering a dataset](../guide/datasets.md#filtering-a-dataset) for every setting.
+
 ## Source and checks
 
 - `250k_rndm_zinc_drugs_clean_3.csv` of

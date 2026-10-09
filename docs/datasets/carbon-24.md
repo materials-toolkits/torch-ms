@@ -29,6 +29,21 @@ about 1e-5 eV/atom.
     are computed differently and cannot be compared, and the energy estimator of
     [Energy above the hull](../guide/energy.md) is not on the scale of this dataset.
 
+## Filters
+
+**No filter is needed**: every structure has its total energy, 6 to 24 atoms, and only carbon.
+
+```python
+from torchms.data import load_dataset
+
+dataset = load_dataset("carbon-24", "train")               # recommended: everything
+```
+
+A filter on the number of atoms, `Filter(max_atoms=12)` for instance, is the only one which
+selects something here: the three other labels are `NaN` for every structure.
+
+See [Filtering a dataset](../guide/datasets.md#filtering-a-dataset) for every setting.
+
 ## Source and checks
 
 - `https://github.com/txie-93/cdvae/tree/main/data/carbon_24`

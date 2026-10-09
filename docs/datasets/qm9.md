@@ -60,6 +60,26 @@ the unit of the source.
   geometry.
 - **Licence**: CC0.
 
+## Filters
+
+**Recommended**: without the 3,054 molecules which failed the consistency check of the source,
+as most papers do.
+
+```python
+from torchms.data import Filter, load_dataset
+
+dataset = load_dataset("qm9", filter=Filter(equal={"uncharacterized": 0}))
+```
+
+| Filter | Keeps, of 133,885 |
+|---|---|
+| `Filter(equal={"uncharacterized": 0})`, **recommended** | 130,831 |
+| `Filter(elements=(1, 6, 7, 8))`, without fluorine | 131,722 |
+
+Every molecule has every label: a filter on missing values removes nothing.
+
+See [Filtering a dataset](../guide/datasets.md#filtering-a-dataset) for every setting.
+
 ## Source and checks
 
 - [Quantum chemistry structures and properties of 134 kilo molecules](https://doi.org/10.6084/m9.figshare.c.978904.v5),

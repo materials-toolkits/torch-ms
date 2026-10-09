@@ -30,6 +30,27 @@ The source has two heats of formation (`heat_all`, `heat_ref`) and two gaps (`di
     Values are copied from the source without conversion. They are consistent with eV/atom
     and eV, but this was not checked against the original publication.
 
+## Filters
+
+**No filter is needed**: every structure has its two labels and 5 atoms.
+
+```python
+from torchms.data import Filter, load_dataset
+
+dataset = load_dataset("perov-5", "train")                 # recommended: everything
+```
+
+| Filter | Keeps, of `train` / `val` / `test` |
+|---|---|
+| none | 11,356 / 3,787 / 3,785 |
+| `Filter(minimum={"band_gap": 1e-6})`, the perovskites with a gap | 441 / 143 / 151 |
+| `Filter(maximum={"formation_energy_per_atom": 0.0})`, a negative heat of formation | 37 / 15 / 22 |
+
+Most perovskites of this dataset are metals with a positive heat of formation: the two filters
+above keep very little, and are there to study these structures, not to train on them.
+
+See [Filtering a dataset](../guide/datasets.md#filtering-a-dataset) for every setting.
+
 ## Source and checks
 
 - `https://github.com/txie-93/cdvae/tree/main/data/perov_5`

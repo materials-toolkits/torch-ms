@@ -49,6 +49,29 @@ dataset = load_dataset("qmof")
 - No structure with partial occupancy was found in the database.
 - **Licence**: CC BY 4.0. Cite the two papers of the database.
 
+## Filters
+
+**No filter is needed for the labels**: every structure has its PBE energy and band gap.
+**Recommended for training**: at most 200 atoms, which keeps nine structures in ten and
+batches which fit on a GPU.
+
+```python
+from torchms.data import Filter, load_dataset
+
+dataset = load_dataset("qmof", filter=Filter(max_atoms=200))
+```
+
+| Filter | Keeps, of 20,372 |
+|---|---|
+| `Filter(max_atoms=200)`, **recommended** | 18,352 |
+| `Filter(max_atoms=100)` | 11,176 |
+| `Filter(equal={"synthesized": 1})`, from experimental databases | 16,881 |
+| `Filter(equal={"synthesized": 1}, max_atoms=200)` | 15,208 |
+| `Filter(known=("band_gap_hse06",))`, with a band gap at HSE06 | 10,810 |
+| `Filter(equal={"net_magmom": 0})`, not magnetic | 17,299 |
+
+See [Filtering a dataset](../guide/datasets.md#filtering-a-dataset) for every setting.
+
 ## Source and checks
 
 - [QMOF Database](https://doi.org/10.6084/m9.figshare.13147324.v18), figshare, version 18:

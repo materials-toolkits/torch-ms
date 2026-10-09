@@ -26,6 +26,32 @@ see [Datasets to build yourself](local.md).
 
 See [Loading datasets](../guide/datasets.md) to load them.
 
+## Recommended filters
+
+Nothing is removed from the files. A good default for each dataset, with what it keeps; the
+page of each dataset has the others and what they keep.
+
+```python
+from torchms.data import Filter, load_dataset
+
+dataset = load_dataset("qm9", filter=Filter(equal={"uncharacterized": 0}))
+```
+
+| Dataset | Recommended filter | Keeps | Why |
+|---|---|---|---|
+| `perov-5`, `carbon-24`, `mp-20` | none | everything | already selected, every label known |
+| `materials-project` | `Filter(max_energy_above_hull=0.1)` | 216,917 of 271,325 | stable and meta-stable |
+| `oqmd/unique` | `Filter(maximum={"total_energy": 0.0, "energy_above_hull": 5.0})` | 1,258,843 of 1,259,553 | failed calculations |
+| `lematerial/unique` | `Filter(maximum={"total_energy": 0.0})` | 4,926,943 of 4,927,038 | failed calculations |
+| `qmof` | `Filter(max_atoms=200)` | 18,352 of 20,372 | size of the batches |
+| `core-mof` | `Filter(equal={"disorder": 0}, max_atoms=500)` | 8,722 of 12,020 (`asr`) | disordered structures, size |
+| `core-mof-2024` | `Filter(max_atoms=500)` | 1,214 of 1,371 (`asr`) | size |
+| `qm9` | `Filter(equal={"uncharacterized": 0})` | 130,831 of 133,885 | failed consistency check |
+| `zinc250k` | `Filter(equal={"mmff_converged": 1})` | 249,425 of 249,427 | relaxation not converged |
+
+These are defaults to start from, not rules: they are what the known problems of each source
+ask for. See [Filtering a dataset](../guide/datasets.md#filtering-a-dataset) for the settings.
+
 ## Format
 
 Each file stores flat concatenated arrays:
