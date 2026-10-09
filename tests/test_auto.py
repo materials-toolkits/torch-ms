@@ -530,3 +530,66 @@ class TestProbe:
 
         assert not any("structures/s" in reason for reason in loader.config.reasons)
         assert sum(len(batch.num_atoms) for batch in loader) == N
+
+
+class TestSeveralSources:
+    @pytest.fixture
+    def molecules(self, tmp_path) -> HDF5Dataset:
+        generator = torch.Generator().manual_seed(1)
+        batch = Structures.collate(
+            [
+                Structures.molecule(
+                    6.0 * torch.rand(2 + i, 3, generator=generator) - 3.0,
+                    torch.randint(1, 10, (2 + i,), generator=generator),
+                )
+                for i in range(7)
+            ]
+        )
+        batch = replace(
+            batch, properties={"homo": torch.arange(7, dtype=torch.float32)}
+        )
+        hdf5_path = tmp_path / "molecules.hdf5"
+        HDF5Dataset.from_structures(hdf5_path, batch)
+
+        return HDF5Dataset(hdf5_path)
+
+    def test_crystals_and_molecules(self, hdf5, molecules):
+        loader = auto_loader(
+            [hdf5.hdf5_file, molecules],
+            batch_size=6,
+            transform=AddRadiusGraph(3.0),
+            shuffle=True,
+            generator=torch.Generator().manual_seed(0),
+            device="cpu",
+        )
+
+        assert loader.config.storage == "ram" and len(loader.dataset) == N + 7
+
+        batches = list(loader)
+        periodic = torch.cat([batch.pbc.all(dim=1) for batch in batches])
+        homo = torch.cat([batch.properties["homo"] for batch in batches])
+
+        assert len(batches) == len(loader) == 5
+        assert periodic.sum() == N and (~periodic).sum() == 7
+        # molecules have their property, crystals do not
+        assert torch.equal(homo.isnan(), periodic)
+        assert homo[~periodic].sort().values.tolist() == list(range(7))
+        # the first batches hold both
+        assert 0 < batches[0].pbc.all(dim=1).sum() < 6
+
+        for batch in batches:
+            molecule = ~batch.pbc.all(dim=1)[batch.graph.edge_batch]
+            assert (batch.graph.edge_shift[molecule] == 0).all()
+
+    def test_split_and_empty_list(self, hdf5):
+        with pytest.raises(ValueError, match="split"):
+            auto_loader([hdf5], "train", batch_size=4, device="cpu")
+
+        with pytest.raises(ValueError, match="at least one"):
+            auto_loader([], batch_size=4, device="cpu")
+
+    def test_datasets_too_large_for_memory(self, hdf5, monkeypatch):
+        monkeypatch.setattr(auto, "RAM_SHARE", 0.0)
+
+        with pytest.raises(ValueError, match="do not fit"):
+            auto_loader([hdf5, hdf5], batch_size=4, device="cpu")

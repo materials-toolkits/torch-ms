@@ -9,7 +9,11 @@ from torchms.graph.sparse import count_by
 
 
 def cutoff(structures: Structures, radius: float, self_images: bool = False) -> Graph:
-    """Build a radius-cutoff graph for a batch of crystal structures.
+    """Build a radius-cutoff graph for a batch of structures.
+
+    A structure is connected to its periodic images only along the lattice
+    vectors along which it is periodic: the edges of a molecule are between
+    its atoms, and crystals and molecules can be in the same batch.
 
     Args:
         structures: Batched Structures object. x must be fractional coordinates,
@@ -46,14 +50,25 @@ def cutoff(structures: Structures, radius: float, self_images: bool = False) -> 
         tensor([0])
         >>> cutoff(structure, 3.5, self_images=True).num_edges
         tensor([6])
+
+        A molecule of water: its two O-H bonds, in both directions. The two
+        hydrogens are 1.51 Å apart.
+
+        >>> graph = cutoff(Structures.water(), 1.2)
+        >>> graph.edge_index
+        tensor([[0, 0, 1, 2],
+                [1, 2, 0, 0]])
+        >>> graph.edge_shift.abs().max().item()
+        0
     """
     # neighbours are searched from atoms wrapped in the cell. Edges are then
-    # expressed for the given coordinates.
-    cell = structures.x.floor()
+    # expressed for the given coordinates. Atoms are not wrapped along a
+    # lattice vector which is not periodic.
+    cell = torch.where(structures.pbc[structures.batch], structures.x.floor(), 0.0)
     wrapped = structures.x - cell
 
     source, target, shift, pair_batch = periodic_pairs(
-        wrapped, structures.lattice, structures.ptr, radius
+        wrapped, structures.lattice, structures.ptr, radius, structures.pbc
     )
 
     fractional = (wrapped[target] + shift.to(wrapped.dtype)) - wrapped[source]

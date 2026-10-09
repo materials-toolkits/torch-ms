@@ -1,7 +1,7 @@
 """Dataset of structures held in memory, on the CPU or on a GPU."""
 
 import os
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any
 
 import torch
@@ -9,7 +9,7 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset
 
 from .batching import Structures
-from .hdf5 import HDF5Dataset
+from .hdf5 import PROPERTIES_GROUP, HDF5Dataset
 
 
 class InMemoryDataset(Dataset):
@@ -19,8 +19,8 @@ class InMemoryDataset(Dataset):
     a file, and no worker is needed. On a GPU the batches are built there, and
     the transform runs there too.
 
-    The datasets published are small enough: LeMat-Bulk, the largest one, is
-    1.6 GB for 5 million structures.
+    The datasets of crystals published are small enough: LeMat-Bulk, the
+    largest one, is 1.6 GB for 5 million structures.
 
     A DataLoader batches it without sampler nor collate function, with
     num_workers=0. batches gives the same batches without the DataLoader,
@@ -92,9 +92,48 @@ class InMemoryDataset(Dataset):
             energy_above_hull=read("energy_above_hull"),
             band_gap=read("band_gap"),
             formation_energy_per_atom=read("formation_energy_per_atom"),
+            pbc=read("pbc") if dataset.has_pbc() else None,
+            properties={
+                name: read(f"{PROPERTIES_GROUP}/{name}")
+                for name in dataset.property_names()
+            },
         )
 
         return cls(structures.to(device), transform=transform)
+
+    @classmethod
+    def concat(
+        cls,
+        datasets: Sequence["InMemoryDataset"],
+        transform: Callable[[Structures], Structures] | None = None,
+    ) -> "InMemoryDataset":
+        """One dataset with the structures of several, one after the other.
+
+        The datasets can hold crystals, molecules, or both: shuffled batches
+        of the result mix them. It has every property of the datasets, NaN for
+        the structures of a dataset without this property.
+
+        Args:
+            datasets: Datasets on the same device. Their transforms are not
+                kept.
+            transform: Optional transform applied to each batch of structures.
+
+        Raises:
+            ValueError: If there is no dataset.
+
+        Examples:
+            >>> crystals = InMemoryDataset(Structures.collate([Structures.diamond()] * 3))
+            >>> molecules = InMemoryDataset(Structures.collate([Structures.water()] * 2))
+            >>> dataset = InMemoryDataset.concat([crystals, molecules])
+            >>> len(dataset), dataset[[4, 0]].pbc.all(dim=1)
+            (5, tensor([False,  True]))
+        """
+        if len(datasets) == 0:
+            raise ValueError("there must be at least one dataset")
+
+        structures = Structures.collate([dataset.structures for dataset in datasets])
+
+        return cls(structures, transform=transform)
 
     def device(self) -> torch.device:
         """Device of the structures, and of the batches."""

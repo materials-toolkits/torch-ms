@@ -18,7 +18,7 @@ import math
 import os
 import statistics
 import time
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
@@ -36,8 +36,8 @@ from .memory import InMemoryDataset
 Transform = Callable[[Structures], Structures]
 Storage = Literal["gpu", "ram", "file"]
 
-# bytes of a dataset in memory, as Structures
-BYTES_PER_STRUCTURE = 68
+# bytes of a dataset in memory, as Structures, without its named properties
+BYTES_PER_STRUCTURE = 71
 BYTES_PER_ATOM = 28
 
 # share of the free memory a dataset can take, and the graphs of a large batch
@@ -453,8 +453,12 @@ def probe_batch_size(
     return chosen, lines
 
 
+# a published dataset by its name, a file or a dataset
+Source = str | os.PathLike | HDF5Dataset | InMemoryDataset
+
+
 def resolve_source(
-    source: str | os.PathLike | HDF5Dataset | InMemoryDataset,
+    source: Source,
     split: str | None = None,
     **hub: Any,
 ) -> HDF5Dataset | InMemoryDataset:
@@ -501,10 +505,65 @@ def dataset_size(dataset: HDF5Dataset | InMemoryDataset) -> int:
     """Bytes of a dataset in memory, without reading it."""
     if isinstance(dataset, HDF5Dataset):
         n_atoms = dataset.dataset("x").shape[0]
+        n_properties = len(dataset.property_names())
     else:
         n_atoms = len(dataset.structures.z)
+        n_properties = len(dataset.structures.properties)
 
-    return BYTES_PER_STRUCTURE * len(dataset) + BYTES_PER_ATOM * n_atoms
+    per_structure = BYTES_PER_STRUCTURE + 4 * n_properties
+
+    return per_structure * len(dataset) + BYTES_PER_ATOM * n_atoms
+
+
+def resolve_sources(
+    sources: Sequence[Source],
+    batch_size: int,
+    hardware: Hardware,
+    storage: Storage | None = None,
+    **hub: Any,
+) -> InMemoryDataset:
+    """One dataset in memory from several sources, see resolve_source.
+
+    Args:
+        sources: Published datasets ("mp-20/train"), files or datasets.
+        batch_size: Number of structures of the batches given.
+        hardware: What the loader can use: the dataset is put on the GPU if
+            it fits there, in RAM otherwise.
+        storage: Where the dataset lives, if it is already decided.
+        **hub: Forwarded to huggingface_hub.hf_hub_download.
+
+    Raises:
+        ValueError: If there is no source, or if the datasets do not fit
+            together in memory.
+    """
+    if len(sources) == 0:
+        raise ValueError("there must be at least one source")
+
+    datasets = [resolve_source(source, **hub) for source in sources]
+
+    if storage is None:
+        n_structures = sum(len(dataset) for dataset in datasets)
+        size = sum(dataset_size(dataset) for dataset in datasets)
+        storage = auto_config(n_structures, size, batch_size, hardware).storage
+
+    if storage == "file":
+        raise ValueError(
+            "several datasets are loaded together in memory, where these ones "
+            "do not fit"
+        )
+
+    device = hardware.device if storage == "gpu" else torch.device("cpu")
+
+    return InMemoryDataset.concat(
+        [
+            (
+                InMemoryDataset.from_hdf5(dataset, device)
+                if isinstance(dataset, HDF5Dataset)
+                else dataset.to(device)
+            )
+            for dataset in datasets
+        ]
+    )
 
 
 def chain(*transforms: Transform | None) -> Transform | None:
@@ -676,7 +735,7 @@ def detect_config(
 
 
 def auto_loader(  # pylint: disable=too-many-arguments
-    source: str | os.PathLike | HDF5Dataset | InMemoryDataset,
+    source: Source | list[Source] | tuple[Source, ...],
     split: str | None = None,
     *,
     batch_size: int,
@@ -698,7 +757,10 @@ def auto_loader(  # pylint: disable=too-many-arguments
 
     Args:
         source: Name of a published dataset ("mp-20", or "mp-20/train"), path
-            of an HDF5 file, or a dataset without transform.
+            of an HDF5 file, or a dataset without transform. Or a list of
+            them, ["mp-20/train", "qm9"] for instance: the datasets are loaded
+            together in memory, and shuffled batches mix their structures,
+            crystals and molecules.
         split: Split of a published dataset, its first one by default.
         batch_size: Number of structures of the batches given.
         transform: Transform building the graphs (torchms.graph.transforms),
@@ -725,7 +787,8 @@ def auto_loader(  # pylint: disable=too-many-arguments
 
     Raises:
         KeyError: If the source is neither a file nor a published dataset.
-        ValueError: If the dataset has a transform.
+        ValueError: If the dataset has a transform, or if the datasets of a
+            list do not fit together in memory.
 
     Examples:
         >>> import tempfile
@@ -743,8 +806,22 @@ def auto_loader(  # pylint: disable=too-many-arguments
     if batch_size < 1:
         raise ValueError("batch_size must be positive")
 
-    dataset = resolve_source(source, split, **hub)
     hardware = detect_hardware(device if config is None else config.device)
+
+    dataset: HDF5Dataset | InMemoryDataset
+    if isinstance(source, (list, tuple)):
+        if split is not None:
+            raise ValueError("the split of each dataset of a list is given in its name")
+
+        dataset = resolve_sources(
+            source,
+            batch_size,
+            hardware,
+            None if config is None else config.storage,
+            **hub,
+        )
+    else:
+        dataset = resolve_source(source, split, **hub)
 
     if config is None:
         config = detect_config(

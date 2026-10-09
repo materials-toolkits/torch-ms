@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from jaxtyping import Float, Int
+from jaxtyping import Bool, Float, Int
 
 from torchms.data.batching import Structures
 from torchms.graph.sparse import (
@@ -36,6 +36,9 @@ def centered_supercell(
 ) -> tuple[Structures, Int[torch.Tensor, "total"]]:
     """Generate a supercell with all borders at distance >= radius from the central cell.
 
+    A structure is not repeated along a lattice vector along which it is not
+    periodic.
+
     Args:
         structures: Batched Structures object. x must be fractional coordinates.
         radius: Minimum border distance in Ångströms.
@@ -50,6 +53,7 @@ def centered_supercell(
 
     # repetitions per axis per structure: (n_struct, 3)
     n = torch.ceil(radius / lattice_heights(structures.lattice).clamp_min(1e-8)).long()
+    n = torch.where(structures.pbc, n, 0)
 
     # all shift combinations, 0-based, then centered
     sizes = 2 * n + 1  # (n_struct, 3)
@@ -94,6 +98,7 @@ def centered_supercell(
         x=supercell_x,
         z=structures.z[atom_index],
         num_atoms=num_per_struct,
+        pbc=structures.pbc,
     )
     return supercell, atom_index
 
@@ -133,6 +138,7 @@ def periodic_pairs(
     lattice: Float[torch.Tensor, "n_struct 3 3"],
     ptr: Int[torch.Tensor, "n_struct+1"],
     radius: float | Float[torch.Tensor, "n_atoms"],
+    pbc: Bool[torch.Tensor, "n_struct 3"] | None = None,
 ) -> tuple[
     Int[torch.Tensor, "n_pairs"],
     Int[torch.Tensor, "n_pairs"],
@@ -147,12 +153,18 @@ def periodic_pairs(
     radius / height along each of the three lattice vectors are listed: a box
     around the first atom, which holds every image within the radius.
 
+    Along a lattice vector along which a structure is not periodic, an atom
+    has no image: only the atom itself is listed. The pairs of a molecule are
+    the pairs of its atoms.
+
     Args:
         x: Fractional coordinates of the atoms, shape (n_atoms, 3).
         lattice: Lattice vectors as rows, shape (n_struct, 3, 3).
         ptr: Index of the first atom of each structure, shape (n_struct+1,).
         radius: Radius in Ångströms. Or a radius per atom, shape (n_atoms,):
             the radius of a pair is then the sum of the ones of its two atoms.
+        pbc: Whether each structure is periodic along each lattice vector,
+            shape (n_struct, 3). Every structure is periodic by default.
 
     Returns:
         Index of the first atom, index of the second atom, image of the second
@@ -169,6 +181,16 @@ def periodic_pairs(
         ... )
         >>> shift.shape, shift.min().item(), shift.max().item()
         (torch.Size([27, 3]), -1, 1)
+
+        The same atom without periodicity along the last lattice vector: a box
+        of 3 × 3 × 1 cells.
+
+        >>> pbc = torch.tensor([[True, True, False]])
+        >>> source, target, shift, batch = periodic_pairs(
+        ...     torch.zeros(1, 3), 3.0 * torch.eye(3)[None], torch.tensor([0, 1]), 3.5, pbc
+        ... )
+        >>> shift.shape, shift[:, 2].abs().max().item()
+        (torch.Size([9, 3]), 0)
     """
     device = x.device
 
@@ -186,6 +208,12 @@ def periodic_pairs(
     delta = x[source] - x[target]
     low = torch.ceil(delta - width).long()
     count = (torch.floor(delta + width).long() - low + 1).clamp(min=0)
+
+    if pbc is not None:
+        # no image along a lattice vector which is not periodic
+        periodic = pbc[pair_batch]
+        low = torch.where(periodic, low, 0)
+        count = torch.where(periodic, count, 1)
 
     # all the images of each pair: a flat index is a mixed-radix number
     num_images = count.prod(dim=1)

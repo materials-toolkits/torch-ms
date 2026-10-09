@@ -1,14 +1,14 @@
-"""Batching utilities for crystal structures."""
+"""Batching utilities for atomic structures: crystals, molecules, or both."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, fields, replace
-from typing import TYPE_CHECKING, Any, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 import numpy as np
 import torch
 import torch.nn.functional as F
-from jaxtyping import Float, Int
+from jaxtyping import Bool, Float, Int
 from torch.utils.data._utils.collate import default_collate_fn_map
 
 if TYPE_CHECKING:
@@ -27,11 +27,19 @@ class InvalidStructure(Exception):
 
 @dataclass(init=False)
 class Structures:  # pylint: disable=too-many-instance-attributes
-    """Container for batched crystal structures and their properties.
+    """Container for batched structures, crystals or molecules, and their properties.
+
+    The position of an atom in Å is x @ lattice, for every structure. For a
+    crystal, lattice is its cell and x its fractional coordinates. A molecule
+    has no cell: its lattice is only a frame, the identity unless it was
+    rotated, and x its coordinates in this frame, in Å. pbc says along which
+    lattice vectors a structure is periodic. Crystals and molecules can be
+    batched together.
 
     Attributes:
         lattice: Lattice vectors with shape (n_struct, 3, 3).
-        x: Atomic coordinates normalized to [0, 1) with shape (n_atoms, 3).
+        x: Atomic coordinates in the lattice with shape (n_atoms, 3): in [0, 1)
+            along a periodic lattice vector, unbounded along the others.
         z: Atomic numbers with shape (n_atoms,).
         num_atoms: Number of atoms per structure with shape (n_struct,).
         batch: Batch index for each atom with shape (n_atoms,).
@@ -41,6 +49,12 @@ class Structures:  # pylint: disable=too-many-instance-attributes
         band_gap: Band gap per structure in eV with shape (n_struct,).
         formation_energy_per_atom: Formation energy per structure in eV/atom
             with shape (n_struct,).
+        pbc: Whether each structure is periodic along each of its lattice
+            vectors, with shape (n_struct, 3). All True for a crystal, the
+            default, all False for a molecule.
+        properties: Other properties per structure, by name, each one with
+            shape (n_struct,). NaN for a structure without value. Empty by
+            default.
         graph: Graph of the atoms, None unless attached by a transform of
             torchms.graph.transforms (AddRadiusGraph, AddAtomicRadiusGraph).
             Its edges are pairs of atoms of the batch, see Graph for its fields.
@@ -92,6 +106,8 @@ class Structures:  # pylint: disable=too-many-instance-attributes
     energy_above_hull: Float[torch.Tensor, "n_struct"]
     band_gap: Float[torch.Tensor, "n_struct"]
     formation_energy_per_atom: Float[torch.Tensor, "n_struct"]
+    pbc: Bool[torch.Tensor, "n_struct 3"]
+    properties: dict[str, Float[torch.Tensor, "n_struct"]]
     graph: Graph | None
     line_graph: EdgeTuples | None
     triplets: EdgeTuples | None
@@ -114,6 +130,8 @@ class Structures:  # pylint: disable=too-many-instance-attributes
         line_graph: EdgeTuples | None = None,
         triplets: EdgeTuples | None = None,
         quadruplets: EdgeTuples | None = None,
+        pbc: TensorLike | None = None,
+        properties: Mapping[str, TensorLike] | None = None,
         _validate: bool = False,
     ):
         self.lattice = self.as_tensor("lattice", lattice, torch.float32)
@@ -156,6 +174,16 @@ class Structures:  # pylint: disable=too-many-instance-attributes
         self.formation_energy_per_atom = self.as_property(
             "formation_energy_per_atom", formation_energy_per_atom, n_struct, device
         )
+
+        if pbc is None:
+            self.pbc = torch.ones((n_struct, 3), dtype=torch.bool, device=device)
+        else:
+            self.pbc = self.as_tensor("pbc", pbc, torch.bool)
+
+        self.properties = {
+            name: self.as_tensor(name, values, torch.float32)
+            for name, values in (properties or {}).items()
+        }
 
         self.graph = graph
         self.line_graph = line_graph
@@ -211,10 +239,10 @@ class Structures:  # pylint: disable=too-many-instance-attributes
         n_atoms = len(self.z)
 
         if n_struct < 1:
-            raise InvalidStructure("must contain at least one crystal")
+            raise InvalidStructure("must contain at least one structure")
 
         if n_atoms < 1:
-            raise InvalidStructure("must contain at least one atom per crystal")
+            raise InvalidStructure("must contain at least one atom per structure")
 
         self.to_tensor(
             "lattice", dtype=torch.float32, shape=(n_struct, 3, 3), device=device
@@ -224,7 +252,7 @@ class Structures:  # pylint: disable=too-many-instance-attributes
         self.to_tensor("num_atoms", dtype=torch.int64, shape=(n_struct,), device=device)
 
         if (self.num_atoms <= 0).any():
-            raise InvalidStructure("must contain at least one atom per crystal")
+            raise InvalidStructure("must contain at least one atom per structure")
 
         self.to_tensor("batch", dtype=torch.int64, shape=(n_atoms,), device=device)
         if (self.batch[:-1] > self.batch[1:]).any():
@@ -255,6 +283,23 @@ class Structures:  # pylint: disable=too-many-instance-attributes
             shape=(n_struct,),
             device=device,
         )
+
+        self.to_tensor("pbc", dtype=torch.bool, shape=(n_struct, 3), device=device)
+
+        for name, values in self.properties.items():
+            if values.shape != (n_struct,):
+                raise InvalidStructure(
+                    f'invalid shape {values.shape} for property "{name}", '
+                    f"must be {(n_struct,)}"
+                )
+
+            if values.device != device:
+                raise InvalidStructure(
+                    f'inconsistent device for property "{name}", '
+                    f"{device}!={values.device}"
+                )
+
+            self.properties[name] = values.to(torch.float32)
 
         self.check_attached()
 
@@ -350,7 +395,11 @@ class Structures:  # pylint: disable=too-many-instance-attributes
             if isinstance(getattr(self, field.name), torch.Tensor)
         }
 
-        moved = replace(self.without_graphs(), **tensors)
+        properties = {
+            name: values.to(device) for name, values in self.properties.items()
+        }
+
+        moved = replace(self.without_graphs(), properties=properties, **tensors)
 
         if self.graph is None:
             return moved
@@ -479,6 +528,75 @@ class Structures:  # pylint: disable=too-many-instance-attributes
         )
 
     @classmethod
+    def molecule(cls, positions: TensorLike, z: TensorLike) -> Structures:
+        """Create a molecule, a structure which is not periodic.
+
+        Its lattice is the identity, x is then its positions in Å.
+
+        Args:
+            positions: Positions of the atoms in Å, shape (n_atoms, 3).
+            z: Atomic numbers, shape (n_atoms,).
+
+        Returns:
+            Structures object with one molecule.
+
+        Examples:
+            >>> molecule = Structures.molecule([[0.0, 0.0, 0.0], [0.74, 0.0, 0.0]], [1, 1])
+            >>> molecule.pbc
+            tensor([[False, False, False]])
+            >>> molecule.positions()
+            tensor([[0.0000, 0.0000, 0.0000],
+                    [0.7400, 0.0000, 0.0000]])
+        """
+        x = cls.as_tensor("x", positions, torch.float32)
+
+        return cls(
+            lattice=torch.eye(3, dtype=torch.float32, device=x.device).unsqueeze(0),
+            x=x,
+            z=z,
+            pbc=torch.zeros((1, 3), dtype=torch.bool, device=x.device),
+        )
+
+    @classmethod
+    def water(cls) -> Structures:
+        """Create a molecule of water: O-H of 0.9572 Å, H-O-H of 104.52°.
+
+        Returns:
+            Structures object with one molecule, the oxygen first.
+        """
+        return cls.molecule(
+            [[0.0, 0.0, 0.0], [0.9572, 0.0, 0.0], [-0.2400, 0.9266, 0.0]], [8, 1, 1]
+        )
+
+    def positions(self) -> Float[torch.Tensor, "n_atoms 3"]:
+        """Positions of the atoms in Å: x @ lattice, for each structure.
+
+        Returns:
+            Cartesian positions with shape (n_atoms, 3).
+
+        Examples:
+            >>> Structures.diamond(a=2.0).positions()[4]
+            tensor([0.5000, 0.5000, 0.5000])
+        """
+        # the rows of a lattice are its vectors
+        return (self.x.unsqueeze(-1) * self.lattice[self.batch]).sum(dim=1)
+
+    def _properties_of(
+        self, names: Sequence[str]
+    ) -> dict[str, Float[torch.Tensor, "n_struct"]]:
+        """The properties with these names, NaN for the ones the structures lack."""
+        n_struct = len(self.num_atoms)
+
+        return {
+            name: (
+                self.properties[name]
+                if name in self.properties
+                else self.as_property(name, None, n_struct, self.device())
+            )
+            for name in names
+        }
+
+    @classmethod
     def collate(cls, structures: list[Structures]) -> Structures:
         """Combine multiple structures into a single batched structure.
 
@@ -488,6 +606,10 @@ class Structures:  # pylint: disable=too-many-instance-attributes
         tuples by the number of edges of the elements before it: in the result,
         graph.edge_index points to the atoms of the batch, and the index of the
         tuples to the edges of the batch.
+
+        Crystals and molecules can be batched together. The batch has every
+        property of its elements, NaN for the structures of an element without
+        this property.
 
         Args:
             structures: List of Structures to batch together, each one with one
@@ -505,6 +627,12 @@ class Structures:  # pylint: disable=too-many-instance-attributes
             >>> batched = Structures.collate([struct, struct])
             >>> batched.lattice.shape
             torch.Size([2, 3, 3])
+
+            A crystal and a molecule:
+
+            >>> mixed = Structures.collate([struct, Structures.water()])
+            >>> mixed.num_atoms, mixed.pbc.all(dim=1)
+            (tensor([8, 3]), tensor([ True, False]))
 
             With a graph: 8 atoms and 32 edges per structure.
 
@@ -541,6 +669,14 @@ class Structures:  # pylint: disable=too-many-instance-attributes
         formation_energy_per_atom = torch.cat(
             [s.formation_energy_per_atom for s in structures]
         )
+        pbc = torch.cat([s.pbc for s in structures], dim=0)
+
+        # every property of an element, in the order they are met
+        names = list(dict.fromkeys(name for s in structures for name in s.properties))
+        each = [
+            s._properties_of(names) for s in structures
+        ]  # pylint: disable=protected-access
+        properties = {name: torch.cat([p[name] for p in each]) for name in names}
 
         batched = cls(
             lattice=lattice,
@@ -553,6 +689,8 @@ class Structures:  # pylint: disable=too-many-instance-attributes
             energy_above_hull=energy_above_hull,
             band_gap=band_gap,
             formation_energy_per_atom=formation_energy_per_atom,
+            pbc=pbc,
+            properties=properties,
             _validate=True,
         )
 
@@ -620,6 +758,11 @@ class Structures:  # pylint: disable=too-many-instance-attributes
                 formation_energy_per_atom=structures.formation_energy_per_atom[
                     i : i + 1
                 ],
+                pbc=structures.pbc[i : i + 1],
+                properties={
+                    name: values[i : i + 1]
+                    for name, values in structures.properties.items()
+                },
                 _validate=True,
             )
             result.append(struct)
@@ -693,6 +836,10 @@ class Structures:  # pylint: disable=too-many-instance-attributes
             energy_above_hull=self.energy_above_hull[index],
             band_gap=self.band_gap[index],
             formation_energy_per_atom=self.formation_energy_per_atom[index],
+            pbc=self.pbc[index],
+            properties={
+                name: values[index] for name, values in self.properties.items()
+            },
             _validate=True,
         )
 
@@ -759,6 +906,10 @@ class Structures:  # pylint: disable=too-many-instance-attributes
                 energy_above_hull=self.energy_above_hull[i:j],
                 band_gap=self.band_gap[i:j],
                 formation_energy_per_atom=self.formation_energy_per_atom[i:j],
+                pbc=self.pbc[i:j],
+                properties={
+                    name: values[i:j] for name, values in self.properties.items()
+                },
                 _validate=True,
             )
 
