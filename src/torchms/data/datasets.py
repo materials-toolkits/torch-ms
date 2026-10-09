@@ -36,6 +36,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
+import torch
+
 from torchms.data.batching import Structures
 from torchms.data.hdf5 import HDF5Dataset
 
@@ -209,6 +211,9 @@ def load_dataset(
     name: str,
     split: str | None = None,
     transform: Callable[[Structures], Structures] | None = None,
+    filter: (  # pylint: disable=redefined-builtin
+        Callable[[Structures], torch.Tensor] | None
+    ) = None,
     **kwargs: Any,
 ) -> HDF5Dataset:
     """Load a published dataset by its name, downloaded on the first call.
@@ -219,6 +224,9 @@ def load_dataset(
         name: Name of the dataset, or "<name>/<split>", see available_datasets.
         split: Split of the dataset, its first one by default.
         transform: Optional transform to apply to structures.
+        filter: Optional condition on the structures kept, a
+            torchms.data.filters.Filter for instance: the dataset is then a
+            subset of the one published.
         **kwargs: Forwarded to huggingface_hub.hf_hub_download (revision,
             token, cache_dir, ...).
 
@@ -226,4 +234,6 @@ def load_dataset(
         KeyError: If the dataset or the split is unknown.
     """
     repo_id, filename = resolve(name, split)
-    return HDF5Dataset.from_hub(repo_id, filename, transform=transform, **kwargs)
+    return HDF5Dataset.from_hub(
+        repo_id, filename, transform=transform, filter=filter, **kwargs
+    )

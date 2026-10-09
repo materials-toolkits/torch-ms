@@ -275,7 +275,8 @@ class EnergyEstimator:
         if len(indices) > 1 and (np.diff(indices) <= 0).any():
             raise ValueError("indices must be in ascending order")
 
-        num_atoms = dataset.dataset("num_atoms")[:][indices]
+        # the arrays of the file have a row per structure of the file
+        num_atoms = dataset.dataset("num_atoms")[:][dataset.rows(indices)]
         energy = np.zeros(len(indices), dtype=np.float64)
 
         progress_bar = tqdm.tqdm(
@@ -360,8 +361,9 @@ class EnergyEstimator:
         energy = self.predict(dataset, indices, max_atoms, progress)
 
         # atoms of the selected structures, in the same order
-        num_atoms = dataset.dataset("num_atoms")[:][indices]
-        first = dataset.dataset("ptr")[:][indices]
+        rows = dataset.rows(indices)
+        num_atoms = dataset.dataset("num_atoms")[:][rows]
+        first = dataset.dataset("ptr")[:][rows]
         start = np.cumsum(num_atoms) - num_atoms
         atoms = np.repeat(first - start, num_atoms) + np.arange(int(num_atoms.sum()))
         z = dataset.dataset("z")[:][atoms]

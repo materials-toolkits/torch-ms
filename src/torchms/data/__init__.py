@@ -11,9 +11,11 @@ from .auto import (
 from .batching import Structures
 from .cif import CifDataset, parse_cif
 from .datasets import available_datasets, dataset_url, load_dataset
+from .filters import Filter
 from .hdf5 import HDF5Dataset
 from .loader import OnDevice
-from .memory import InMemoryDataset
+from .memory import InMemoryDataset, MixedDataset, mix
+from .split import load_split, random_split, save_split, split_indices
 
 __all__ = [
     "AutoLoader",
@@ -24,11 +26,18 @@ __all__ = [
     "detect_hardware",
     "Structures",
     "CifDataset",
+    "Filter",
     "HDF5Dataset",
     "InMemoryDataset",
+    "MixedDataset",
     "OnDevice",
     "available_datasets",
     "dataset_url",
     "load_dataset",
+    "load_split",
+    "mix",
     "parse_cif",
+    "random_split",
+    "save_split",
+    "split_indices",
 ]
