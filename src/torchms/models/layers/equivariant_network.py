@@ -1,4 +1,9 @@
-"""Model of the energy with products of spherical harmonics on the pair graph."""
+"""Network of the energy with products of spherical harmonics on the pair graph.
+
+The network does not build its graph: it reads the graph attached to the
+structures, and gives the transform which attaches it,
+EquivariantNetwork.transform.
+"""
 
 from __future__ import annotations
 
@@ -6,13 +11,13 @@ import torch
 from jaxtyping import Float
 from torch import nn
 
+from torchms.data.augmentation.transforms import Compose, Transform
 from torchms.data.batching import Structures
-from torchms.graph.cutoff import cutoff
 from torchms.graph.graph import Graph
+from torchms.graph.transforms import AddRadiusGraph, attached_graph, edges_vectors
 from torchms.models.layers.basis import (
     DEGREES,
     MAX_DEGREE,
-    NUM_HARMONICS,
     BesselBasis,
     gaunt_coefficients,
     polynomial_cutoff,
@@ -40,7 +45,7 @@ class EquivariantLayer(nn.Module):
     """
 
     gaunt: torch.Tensor
-    degrees: torch.Tensor
+    degree_of_harmonic: torch.Tensor
 
     def __init__(self, correlation: int, channels: int, num_basis: int):
         super().__init__()
@@ -63,7 +68,14 @@ class EquivariantLayer(nn.Module):
         )
 
         self.register_buffer("gaunt", gaunt_coefficients(), persistent=False)
-        self.register_buffer("degrees", torch.tensor(DEGREES), persistent=False)
+        # 1 where a harmonic has a degree, shape (num_harmonics, num_degrees):
+        # a product with it sums the harmonics of each degree, a product with
+        # its transpose gives each harmonic the value of its degree
+        self.register_buffer(
+            "degree_of_harmonic",
+            nn.functional.one_hot(torch.tensor(DEGREES), NUM_DEGREES).float(),
+            persistent=False,
+        )
 
     def environment(
         self,
@@ -73,15 +85,12 @@ class EquivariantLayer(nn.Module):
         harmonics: Float[torch.Tensor, "n_edges 16"],
     ) -> Float[torch.Tensor, "n_atoms c 16"]:
         """Sum over the neighbours of radial functions times harmonics."""
-        sender = graph.edge_index[0]
-
         # (n_edges, c, 16): one weight per degree, repeated on its harmonics
         weights = self.radial(radial).view(-1, NUM_DEGREES, self.channels)
-        weights = weights[:, self.degrees].transpose(1, 2)
+        weights = weights.transpose(1, 2) @ self.degree_of_harmonic.t()
 
-        messages = (
-            weights * self.linear_up(features)[sender].unsqueeze(-1)
-        ) * harmonics.unsqueeze(1)
+        neighbours = graph.unpool_senders(self.linear_up(features))
+        messages = (weights * neighbours.unsqueeze(-1)) * harmonics.unsqueeze(1)
 
         return graph.aggregate_edges_to_nodes(messages)
 
@@ -89,14 +98,11 @@ class EquivariantLayer(nn.Module):
         self, environment: Float[torch.Tensor, "n_atoms c 16"]
     ) -> Float[torch.Tensor, "n_atoms c*k"]:
         """Invariants of the environment with one, two and three factors."""
-        n_atoms = environment.shape[0]
         result = [environment[:, :, 0]]
 
         def per_degree(values: torch.Tensor) -> torch.Tensor:
             # sum of the components of each degree: (n_atoms, c, 16) → (n_atoms, c * 4)
-            summed = values.new_zeros(n_atoms, self.channels, NUM_DEGREES)
-            index = self.degrees.expand(n_atoms, self.channels, NUM_HARMONICS)
-            return summed.scatter_add_(2, index, values).flatten(1)
+            return (values @ self.degree_of_harmonic).flatten(1)
 
         if self.correlation >= 2:
             result.append(per_degree(environment**2))
@@ -136,6 +142,10 @@ class EquivariantNetwork(nn.Module):
     number of cells in a supercell. Every contribution vanishes smoothly at
     the radius.
 
+    The network does not build graphs: it reads the graph attached to the
+    structures by its transform, which is applied when the structures are
+    loaded or to a batch. Structures without a graph are refused.
+
     Args:
         correlation: Number of factors of the products: 1 for terms on two
             atoms, 2 for three atoms, 3 for four atoms in each layer.
@@ -149,6 +159,7 @@ class EquivariantNetwork(nn.Module):
     Examples:
         >>> model = EquivariantNetwork(correlation=3, channels=16)
         >>> structures = Structures.collate([Structures.diamond(), Structures.zincblende()])
+        >>> structures = model.transform()(structures)
         >>> model(structures).shape
         torch.Size([2])
     """
@@ -179,20 +190,50 @@ class EquivariantNetwork(nn.Module):
             nn.Linear(channels, channels), nn.SiLU(), nn.Linear(channels, 1)
         )
 
-    def build_graph(self, structures: Structures) -> tuple[
+    def transform(self) -> Transform:
+        """Transform attaching the graph of the network.
+
+        Atoms closer than the radius are connected, periodic images of the
+        atom itself included. It depends on the radius of the network.
+        """
+        return Compose([AddRadiusGraph(self.radius, self_images=True)])
+
+    def check_graphs(self, structures: Structures) -> None:
+        """Check that structures have the graph of the network.
+
+        What is attached is expected to be what transform attaches: only its
+        presence is checked.
+
+        Raises:
+            ValueError: If the structures have no graph.
+        """
+        if structures.graph is None:
+            name = type(self).__name__
+            raise ValueError(
+                f"{name} needs structures with their graph: "
+                "apply the transform() of the network to the structures"
+            )
+
+    def edges(self, structures: Structures) -> tuple[
         Graph,
         Float[torch.Tensor, "n_edges b"],
         Float[torch.Tensor, "n_edges 16"],
     ]:
-        """Pairs of atoms of the model.
+        """Graph of the structures, with the bases of its edges.
+
+        The graph is the one attached to the structures by transform.
 
         Returns:
             Graph of the atoms, radial basis of the length of each edge
             with a smooth cutoff, shape (n_edges, num_basis), and spherical
             harmonics of its direction, shape (n_edges, 16).
+
+        Raises:
+            ValueError: If the structures have no graph.
         """
-        graph = cutoff(structures, self.radius, self_images=True)
-        vectors = graph.edges_vectors()
+        self.check_graphs(structures)
+        graph = attached_graph(structures, self)
+        vectors = edges_vectors(graph)
         distance = vectors.norm(dim=-1)
 
         radial = self.distance_basis(distance) * polynomial_cutoff(
@@ -202,8 +243,16 @@ class EquivariantNetwork(nn.Module):
         return graph, radial, spherical_harmonics(vectors)
 
     def forward(self, structures: Structures) -> Float[torch.Tensor, "n_struct"]:
-        """Predict the energy of each structure."""
-        graph, radial, harmonics = self.build_graph(structures)
+        """Predict the energy of each structure.
+
+        Args:
+            structures: Structures with the graph of the network, see
+                transform.
+
+        Raises:
+            ValueError: If the structures have no graph.
+        """
+        graph, radial, harmonics = self.edges(structures)
 
         features = self.atom_embedding(structures.z)
         for layer in self.layers:

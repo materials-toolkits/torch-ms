@@ -14,11 +14,16 @@ spherical harmonics, as MACE. It has no pretrained weights, and no model of the 
 from torchms.data import load_dataset
 from torchms.models.layers import EquivariantNetwork
 
-structures = load_dataset("mp-20", "train")[:32]
-
 model = EquivariantNetwork(correlation=3, radius=5.0)
-energy = model(structures)          # (32,)
+
+# the graph the network reads, attached when a structure is loaded
+dataset = load_dataset("mp-20", "train", transform=model.transform())
+energy = model(dataset[:32])        # (32,)
 ```
+
+The network does not build its graph. `model.transform()` gives the transform which attaches
+it, `AddRadiusGraph(radius, self_images=True)` for the radius of the network. Structures
+without a graph are refused.
 
 No triplet is listed. An atom sums over its neighbours a learned function of the distance
 times the spherical harmonics of the direction (l ≤ 3). `correlation` is the number of

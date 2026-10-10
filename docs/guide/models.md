@@ -100,11 +100,12 @@ model = LineGraphNetwork(order=2, radius=(5.0, 3.5))
 energy = model(model.transform()(structures))      # (32,)
 
 model = EquivariantNetwork(correlation=3, radius=5.0)
-energy = model(structures)                         # (32,)
+energy = model(model.transform()(structures))      # (32,)
 ```
 
-`LineGraphNetwork` reads the graph and the triplets of its transform, as the pretrained
-models; `EquivariantNetwork` builds its graph itself.
+Both read the graph of their transform, as the pretrained models. It is a method of the
+network, not of its class: the graph depends on its radius and, for `LineGraphNetwork`, on
+its order.
 
 Two networks written for this library, with terms on more than two atoms. They have no
 pretrained weights and there is no training loop in the library. Their energy does not

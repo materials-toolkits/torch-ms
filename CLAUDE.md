@@ -56,47 +56,90 @@ node_b = (local_t // N_t) % N_t + offset
 node_c = local_t % N_t          + offset
 ```
 
-Functions that build graph data return tuples, not dataclass instances.
+Functions that build graph data return tuples, not dataclass instances: the indices, their
+structure and their pointers, as `triplets` and `edge_pairs` in `src/torchms/graph/line_graph.py`.
 
 ## Batched cartesian product helpers
 
 `batched_cartesian_product_2` and `batched_cartesian_product_3` in
-`src/torchms/graph/scatter.py` implement the mixed-radix pattern above as reusable
-helpers. Use them instead of re-implementing the pattern inline.
+`src/torchms/graph/sparse.py` implement the mixed-radix pattern above as reusable
+helpers. Use them instead of re-implementing the pattern inline. They take **CSR pointers**,
+not sizes, and return **global** indices.
 
 ```python
-from torchms.graph.scatter import batched_cartesian_product_2, batched_cartesian_product_3
+from torchms.graph.sparse import batched_cartesian_product_2, batched_cartesian_product_3
 
-# pairs — each structure can have different sizes
-indices, batch, ptr = batched_cartesian_product_2(sizes_a, sizes_b)
-# indices: (total, 2),  indices[:, 0] = first dim,  indices[:, 1] = second dim
+# pairs (a, b) with a in [ptr_a[i], ptr_a[i+1]) and b in [ptr_b[i], ptr_b[i+1])
+indices, batch, ptr = batched_cartesian_product_2(ptr_a, ptr_b)
+# indices: (total, 2),  indices[:, 0] = first range,  indices[:, 1] = second range
 
 # triplets
-indices, batch, ptr = batched_cartesian_product_3(sizes_a, sizes_b, sizes_c)
+indices, batch, ptr = batched_cartesian_product_3(ptr_a, ptr_b, ptr_c)
 # indices: (total, 3)
 ```
 
-Indices are 0-based within each structure. To get centered shift vectors (e.g. -n..+n),
-subtract the offset after: `shifts = indices - n[batch]`.
-Device is derived from `sizes_a` internally — no need to pass it explicitly.
+For ranges which start at 0 in every structure (shifts -n..+n, say), build the pointers
+from the sizes (see "Computing ptr from counts") and subtract the offset of each structure
+after: `local = indices - ptr_a[batch].unsqueeze(1)`. Device is derived from the pointers
+internally. `batched_join` in the same module pairs the elements of two lists which share
+a key, which is how triplets and line graphs are built.
 
-## Scatter aggregation
+## Aggregation
 
-Use `scatter_sum` and `scatter_mean` from `src/torchms/graph/scatter.py` to aggregate
-tensors by index without for loops (e.g. sum atom features per structure, aggregate edge
-messages to nodes).
+Aggregate with the methods of `Graph` and `EdgeTuples` (`src/torchms/graph/graph.py`), which
+name what is done and carry their own sizes:
+
+| From → to | Method |
+|---|---|
+| atoms → edges | `graph.unpool_senders(x)`, `graph.unpool_receivers(x)` |
+| structures → atoms | `graph.unpool_structures(x)` |
+| edges → atoms | `graph.aggregate_edges_to_nodes(x, reduce, to="receiver" \| "sender")` |
+| atoms → structures | `graph.aggregate_nodes_to_structures(x, reduce)` |
+| edges → structures | `graph.aggregate_edges_to_structures(x, reduce)` |
+| edges → triplets, pairs, quadruplets | `tuples.unpool_edges(x, position)` |
+| triplets, pairs, quadruplets → edges | `tuples.aggregate_to_edges(x, reduce, position)` |
+
+They are built on `scatter(src, index, n_out, reduce)` in `src/torchms/graph/sparse.py`
+(`reduce` is "sum", "mean", "prod", "amax", "amin" or "hash"; empty slots are zero; device
+and dtype come from `src`), with `count_by(index, n_out)` for counts. Call `scatter`
+directly only in the code which builds graphs, where there is no `Graph` yet. If an
+aggregation is missing, add a method to `Graph` or `EdgeTuples` with a doctest.
 
 ```python
-from torchms.graph.scatter import scatter_sum, scatter_mean
-
-energy        = scatter_sum(atom_energies, batch, n_struct)   # (n_struct,)
-node_features = scatter_sum(messages, edge_index[1], n_atoms) # (n_atoms, F)
+energy        = graph.aggregate_nodes_to_structures(atom_energies)   # (n_struct,)
+node_features = graph.aggregate_edges_to_nodes(messages)             # (n_atoms, F)
 ```
 
-Both functions accept src of any shape `(N, *)` and a 1D `index` of shape `(N,)`.
-`new_zeros` is used internally so device and dtype are inherited from `src` automatically.
-Empty slots (no contributing elements) are zero. Built on `scatter_reduce_` with
-`include_self=False`.
+## Models and layers
+
+Everything in `src/torchms/models/` follows the same rules, pretrained models, layers and
+networks to train alike. `.claude/skills/port-model/SKILL.md` has their reasons and the
+procedure to port a model.
+
+- **A model does not build its graph.** It reads the graph and the tuples of edges attached
+  to the `Structures` and gives the transform which attaches them: a classmethod
+  `Model.transform()` when the graph is fixed by a `config.yaml`, a method when it depends on
+  the arguments of the network (`LineGraphNetwork`). It refuses structures without them and
+  names the transform.
+- **No index in the arguments of a method.** A layer takes the `Graph`, the `EdgeTuples` or
+  the `Structures` and the features, not `edge_index`, `senders`, `batch` or `ptr`.
+- **No scatter by hand** in a model: no `scatter`, `scatter_add_`, `index_add_`, `bincount`
+  or indexing with a graph index. Use the methods of the table above.
+- **No dictionary as an argument or as a return value.** Tensors which travel together are
+  the fields of a frozen dataclass (`Features` and `Geometry` in
+  `models/layers/line_graph_network.py`, `DimeNetConfig`), or separate arguments when there
+  are few. String keys are not typed, a wrong key only fails when it is read, and the
+  signature no longer says what a function needs. A dictionary is fine for what is a mapping
+  by nature: a state dict, a parsed `config.yaml`, `Structures.properties`.
+- **No hyperparameter written in the code.** A pretrained model reads every value from the
+  `config.yaml` next to its `model.py`. A layer takes its hyperparameters as arguments, and
+  a shared layer has no default taken from one model. A number which is a limit of the
+  implementation is one named constant with a comment saying so (`MAX_DEGREE` in
+  `models/layers/basis.py`).
+- **Reuse `torchms.models.layers` and `torchms.graph`** before writing a basis, a cutoff or
+  a graph. What several models could use goes there, with its own test.
+- **No new dependency.** scipy is used by the convex hull and the calibration of the
+  estimator, not by the models and the layers.
 
 ## Device consistency
 

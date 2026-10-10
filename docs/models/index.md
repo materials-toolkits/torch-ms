@@ -3,7 +3,7 @@
 `torchms.models` has supervised models, which predict the energy of a structure, generative
 models, which generate structures, and layers: what they share and what a new model can be
 built from. Every model takes a batch of `Structures` and reads the graph attached to it:
-**no pretrained model builds its graph**, each one gives the transform which does, `Model.transform()`.
+**no model builds its graph**, each one gives the transform which does, `Model.transform()`.
 
 See [Using models](../guide/models.md) to load and run them.
 
@@ -90,8 +90,8 @@ The first three take their hyperparameters as arguments and read the graph they 
 The last two were written for this library, as the two ways recent models have terms on more
 than two atoms (the first as ALIGNN, M3GNet, CHGNet or DPA-3, the second as MACE). They are
 not these models, have no pretrained weights and were not trained here: their accuracy is
-not measured. `LineGraphNetwork` reads the graph of its `transform()`, which depends on its
-order and its radii; `EquivariantNetwork` still builds its graph itself.
+not measured. Each one reads the graph of its `transform()`, which depends on its
+arguments: the radius, and the order of `LineGraphNetwork`.
 
 The other blocks of a pretrained model stay in its directory: they are named after the
 project they come from, to load its weights.
