@@ -483,6 +483,7 @@ class AddQuadruplets:
             All the edges by default. The indices still point to the edges of
             the whole graph.
         geometry: If True, the dihedral angle of each quadruplet is attached.
+        strict: If True, an edge as long as the radius is not in a chain.
 
     Examples:
         In diamond, each of the 4 neighbours of an atom has 3 other neighbours,
@@ -498,10 +499,13 @@ class AddQuadruplets:
 
     radius: float | None = None
     geometry: bool = False
+    strict: bool = False
 
     def __call__(self, structures: Structures) -> Structures:
         graph = attached_graph(structures, self)
-        index, batch, ptr = quadruplets(graph, shorter_edges(graph, self.radius))
+        index, batch, ptr = quadruplets(
+            graph, shorter_edges(graph, self.radius, self.strict)
+        )
 
         angle = None
         if self.geometry:

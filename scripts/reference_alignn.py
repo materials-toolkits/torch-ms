@@ -10,7 +10,7 @@ The structures are the ones of tests/data/orb_reference.npz. The graphs and the
 predictions are written to tests/data/alignn_reference.npz, read by
 tests/test_alignn.py. The features of the elements, which are not stored with
 the weights of the model, are written to
-src/torchms/estimator/alignn/cgcnn_features.npz.
+src/torchms/models/alignn/cgcnn_features.npz.
 """
 
 import json
@@ -114,7 +114,7 @@ def main():
         shift=np.concatenate(shifts).astype(np.int8),
     )
     np.savez_compressed(
-        ROOT / "src/torchms/estimator/alignn/cgcnn_features.npz",
+        ROOT / "src/torchms/models/alignn/cgcnn_features.npz",
         features=element_features(),
     )
     print("edges", num_edges)

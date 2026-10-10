@@ -16,17 +16,18 @@ from torchms.data.augmentation import (
     make_supercell,
     random_orthogonal,
 )
-from torchms.estimator import weights
-from torchms.estimator.mace import InvalidWeights, MaceEnergyModel
-from torchms.estimator.mace.model import (
+from torchms.models.estimator import weights
+from torchms.models.mace import InvalidWeights, MaceEnergyModel
+from torchms.models.mace.model import (
     DEGREES,
     EXPECTED,
     NUM_HARMONICS,
     PARAMETERS,
     RADIUS,
 )
-from torchms.estimator.mace.reader import Placeholder, read_model
-from torchms.models.basis import spherical_harmonics
+from torchms.models.estimator.reader import Placeholder
+from torchms.models.mace.reader import read_model
+from torchms.models.layers.basis import spherical_harmonics
 
 
 def predict(model, structures: Structures) -> torch.Tensor:

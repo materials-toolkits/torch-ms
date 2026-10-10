@@ -10,10 +10,10 @@ which loads the official weights and gives the same numbers as the original code
 original package never becomes a dependency: it is run once, outside of the project, to
 produce reference values the tests compare against.
 
-Six ports exist already: orb-v3, MACE, M3GNet, CHGNet and ALIGNN in
-`src/torchms/estimator/<name>/`, which predict an energy, and CDVAE in
-`src/torchms/models/cdvae/`, a generative model with two networks and two graphs. They
-are the worked examples of everything below. New ports go in `src/torchms/models/<name>/`.
+Six ports exist already, each in `src/torchms/models/<name>/`: orb-v3, MACE, M3GNet, CHGNet
+and ALIGNN, which predict an energy, and CDVAE, a generative model with two networks and two
+graphs. They are the worked examples of everything below. A new port is a new directory
+there; what it shares with other models goes to `src/torchms/models/layers/`.
 
 Follow the steps in order. The first three are reading, not writing: most of the bad ports
 come from writing `model.py` before knowing which weights exist and what torchms already
@@ -60,7 +60,7 @@ Then, for the weights to port:
   scratchpad and compute its SHA-256: both go to `config.yaml`.
 - Check how the file is read. A state dict or a dict of tensors loads with
   `torch.load(..., weights_only=True)`. A pickled model object cannot be loaded this way
-  and must not be unpickled normally: see `estimator/mace/reader.py`, which collects the
+  and must not be unpickled normally: see `models/mace/reader.py`, which collects the
   tensors with a restricted unpickler.
 - Read the hyperparameters stored with the weights (config json, `init_args`, hparams).
   They are what the rewrite is written for, and they are checked when weights are loaded.
@@ -75,7 +75,7 @@ their quality is not known.
 Weights from anyone are untrusted files. Before reading a file `torch.load` refuses, list
 the names its pickle would import, without running it (`pickletools.genops` on the
 `data.pkl` of the archive). Checkpoints of pytorch-lightning hold objects of omegaconf next
-to the state dict: read them with `read_pickle` of `estimator/mace/reader.py`, which builds
+to the state dict: read them with `read_pickle` of `models/estimator/reader.py`, which builds
 tensors and containers and puts a placeholder in place of everything else.
 
 ## 3. Read how the existing ports are set up
@@ -84,13 +84,13 @@ Read these before designing anything; the conventions are in the code, not all i
 
 | Read | For |
 |---|---|
-| `src/torchms/estimator/pretrained.py` | `PretrainedModel`: `transform()`, `GRAPH_FIELDS`, `check_graphs`, `from_pretrained`, `load_checkpoint`, `load_parameters`; `element_table`, `element_index`, `different_arguments` |
-| `src/torchms/estimator/config.py`, `weights.py` | `load_config(__file__)`, `download(model, name, cache)`, the SHA-256 check, the cache |
+| `src/torchms/models/estimator/pretrained.py` | `PretrainedModel`: `transform()`, `GRAPH_FIELDS`, `check_graphs`, `from_pretrained`, `load_checkpoint`, `load_parameters`; `element_table`, `element_index`, `different_arguments` |
+| `src/torchms/models/estimator/config.py`, `weights.py` | `load_config(__file__)`, `download(model, name, cache)`, the SHA-256 check, the cache |
 | the closest existing port: `model.py`, `config.yaml`, `__init__.py` | the shape of a port |
 | its `tests/test_<name>.py` and `scripts/reference_<name>.py` | the shape of its tests |
-| its section of `docs/design/estimator.md` | what is reported about a port |
+| its page `docs/models/<name>.md` | what is reported about a port |
 | `src/torchms/graph/transforms.py`, `graph.py` (docstrings) | what graphs and aggregations exist |
-| `src/torchms/models/basis.py` | radial and angular bases, cutoffs, harmonics which exist |
+| `src/torchms/models/layers/` (`basis.py`, `dimenet.py`, `gemnet.py`) | bases, cutoffs, harmonics and whole networks which exist |
 
 Closest port: angles from triplets of bonds → `m3gnet`, `chgnet`; a line graph → `alignn`;
 pairs only with spherical harmonics → `mace`, `orb`; nearest neighbours → `orb`, `alignn`;
@@ -123,17 +123,23 @@ tests/test_<name>.py
 
 Export the model class from `src/torchms/models/__init__.py`.
 
-The shared machinery stays where it is, in `torchms.estimator`. Two things to get right
-because ports used to live there:
+What loads weights is shared, in `torchms.models.estimator`: `pretrained.py`
+(`PretrainedModel`), `config.py`, `weights.py` and `reader.py`. Two things to get right:
 
-- `config_files()` in `estimator/config.py` finds the configurations of both directories,
-  and from them `weights.CHECKPOINTS`. Two places list the models by name and fail when one
-  is added: its doctest, and `test_checkpoints_are_read_from_the_configurations` in
-  `tests/test_pretrained.py`.
-- Import from the submodules (`from torchms.estimator.pretrained import PretrainedModel`,
-  `from torchms.estimator.weights import download`), never `from torchms.estimator import
-  ...`: the estimators import `torchms.models.basis`, and importing the package back from
-  `torchms.models` is a circular import.
+- `config_files()` in `models/estimator/config.py` finds the configuration of every
+  directory of `torchms.models`, and from them `weights.CHECKPOINTS`. Two places list the
+  models by name and fail when one is added: its doctest, and
+  `test_checkpoints_are_read_from_the_configurations` in `tests/test_pretrained.py`.
+- `torchms.models.estimator` also holds `EnergyEstimator`, which uses orb-v3. Its module
+  imports the model inside the function which needs it; keep it so, or importing a model
+  becomes a circular import.
+
+A network which another model could reuse (an encoder, a decoder, a known architecture as
+DimeNet++ or GemNet-T) goes to `models/layers/<name>.py`, not in the directory of the port.
+A layer reads no `config.yaml`: it takes a frozen dataclass of its hyperparameters
+(`DimeNetConfig`, `GemNetConfig`), which the port builds from its own `config.yaml`
+(`ENCODER = DimeNetConfig(out_channels=LATENT_DIM, **CONFIG["encoder"])` in
+`models/cdvae/model.py`). The names of its modules still follow upstream.
 
 ### config.yaml
 
@@ -221,7 +227,7 @@ part of the weights (`KeepNearImages`, `MirrorEdges` exist for GemNet).
 the `Structures` and the features, not `edge_index`, `senders`, `batch` or `ptr`. An index
 passed around can be the one of another graph or another batch and nothing notices; the
 object carries its own sizes and offsets. Compare the signatures of `M3GNetGraphConv` and
-`ThreeBodyInteractions` in `estimator/m3gnet/model.py`.
+`ThreeBodyInteractions` in `models/m3gnet/model.py`.
 
 **No scatter by hand.** No `scatter`, `scatter_add_`, `index_add_`, `bincount` or fancy
 indexing with an index in a model. Use the methods which name what is done:
@@ -244,12 +250,12 @@ sender and receiver once, at the top, and checked on a graph. If an aggregation 
 `scatter` directly; do not take them as a model.
 
 **Reuse before writing.** Before writing a basis, a cutoff, an MLP or a table of elements,
-look for it: `torchms.models.basis` (`BesselBasis`, `SphericalBesselBasis`,
+look for it: `torchms.models.layers` (`DimeNetPlusPlus`, `GemNetT`), its `basis` (`BesselBasis`, `SphericalBesselBasis`,
 `GaussianBasis`, `AngleBasis`, `polynomial_cutoff`, `spherical_harmonics`, `legendre`,
-`gaunt_coefficients`, `mlp`), `torchms.estimator.pretrained` (`element_table`,
+`gaunt_coefficients`, `mlp`), `torchms.models.estimator.pretrained` (`element_table`,
 `element_index`), `torchms.data.constants`, `torchms.graph`. When the original differs from
 what exists by a constant or a normalisation, give the existing function an argument rather
-than a twin. A new function several models could use goes to `models/basis.py` or
+than a twin. A new function several models could use goes to `models/layers/basis.py` or
 `torchms.graph` with its own test, not in the port.
 
 **No new library.** `pyproject.toml` is not touched. What the original takes from e3nn,
@@ -337,20 +343,23 @@ Tests have a timeout of 3 s by default: mark the slow ones
 
 ## 8. Documentation and checks
 
-- A section in `docs/design/estimator.md` under "Other pretrained models", as the existing
-  ones: what the model is, repository, license, paper, graph, the table of differences with
-  the original (version compared, largest and mean difference), behaviours kept, limits.
-  Add its row to the table of transforms. A transform added to `torchms.graph` gets its
-  row in the table of `docs/guide/graphs.md`.
+- A page `docs/models/<name>.md`, as the existing ones: the table of facts (class, what it
+  predicts, source and version, license, paper, weights, transform, largest difference),
+  a snippet, the comparison with the original (version compared, largest and mean
+  difference), behaviours kept, limits. Add it to the nav of `mkdocs.yml` and its rows to
+  the two tables of `docs/models/index.md`. A new layer gets its own page too.
+- A transform added to `torchms.graph` gets its row in the table of
+  `docs/guide/graphs.md`.
 - `docs/reference/models.md`: the `:::` entry of the new module. `docs/guide/models.md` if
-  the port is meant to be used directly.
+  the model is used another way than the ones shown there.
 - Run and fix: `uv run pytest`, `uv run pyright src`, `uv run black .`,
-  `uv run pylint src`, `uv run poe docs-test`.
+  `uv run pylint src`, `uv run poe docs-test`,
+  `uv run --group docs mkdocs build --strict`.
 
 ## 9. Report
 
 End with what the user needs to trust the port: repository and commit, weights and where
 they come from, scope and what was left out, the measured differences with the original
 (largest and mean, on how many structures, with which version), what was added to
-`torchms.graph` or `models/basis.py`, and anything which could not be reproduced. Say
+`torchms.graph` or `models/layers/basis.py`, and anything which could not be reproduced. Say
 plainly if a test was skipped or a tolerance is above 1e-5, and why.

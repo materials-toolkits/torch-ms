@@ -1,5 +1,4 @@
-# CDVAE of cdvae: weights, graphs and hyperparameters, read by model.py,
-# dimenet.py and gemnet.py.
+# CDVAE of cdvae: weights, graphs and hyperparameters, read by model.py.
 
 default_weights: cdvae-mp20-cowboys
 

@@ -11,13 +11,13 @@ crystals, metal-organic frameworks and molecules. It provides:
 - **Data augmentation**: other descriptions of the same structures, to train on.
 - **Graphs** of crystals with periodic boundary conditions and of molecules, with their angles
   and dihedral angles.
-- **Models** of the energy with terms on three atoms and more, and rewrites of pretrained
-  ones (orb, CHGNet, M3GNet, ALIGNN, MACE).
+- **Models**: rewrites of pretrained ones (orb, MACE, M3GNet, CHGNet, ALIGNN, CDVAE), models
+  of the energy to train, and the layers they share.
 - **Energy above the convex hull**, from DFT energies or estimated with a pretrained model.
 
 ```{.python notest}
 from torchms.data import load_dataset
-from torchms.estimator import EnergyEstimator
+from torchms.models.estimator import EnergyEstimator
 
 dataset = load_dataset("mp-20", "test")
 structures = dataset[:32]  # a batch of 32 crystals
@@ -39,7 +39,8 @@ energy, above_hull = estimator.predict_energy_above_hull(dataset)
 | balance datasets of different sizes | [A fixed share of each dataset](guide/datasets.md#a-fixed-share-of-each-dataset-in-every-batch) |
 | augment the structures of a dataset | [Data augmentation](guide/augmentation.md) |
 | build neighbour graphs | [Graphs](guide/graphs.md) |
-| build a model with angles or products | [Models](guide/models.md) |
+| run a pretrained model, or build one with angles or products | [Using models](guide/models.md) |
+| know what a model is and how it was checked | [Models](models/index.md) |
 | know if a crystal is stable | [Energy above the hull](guide/energy.md) |
 | convert your own CIF files | [Preprocessing your own data](guide/preprocessing.md) |
 | know what is in a dataset and what to watch for | [Datasets](datasets/index.md) |

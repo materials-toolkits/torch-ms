@@ -16,8 +16,8 @@ from torchms.data.augmentation import (
     LatticeBasisChange,
     LatticeRotation,
 )
-from torchms.estimator import weights
-from torchms.estimator.mace.reader import Placeholder, read_pickle
+from torchms.models.estimator import weights
+from torchms.models.estimator.reader import Placeholder, read_pickle
 from torchms.graph.geometry import lattice_from_parameters
 from torchms.graph.graph import Graph
 from torchms.graph.line_graph import reverse_edges

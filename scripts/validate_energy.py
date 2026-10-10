@@ -18,8 +18,8 @@ import pandas as pd
 
 from torchms.data.hdf5 import HDF5Dataset
 from torchms.data.hull import energy_above_reference, load_hull
-from torchms.estimator import EnergyEstimator
-from torchms.estimator.calibration import composition_matrix, load_correction
+from torchms.models.estimator import EnergyEstimator
+from torchms.models.estimator.calibration import composition_matrix, load_correction
 
 MAX_ENERGY = 20.0
 STABLE = 1e-6

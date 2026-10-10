@@ -155,13 +155,13 @@ the structures of the Materials Project and Alexandria.
 
 ### Estimated total energy
 
-`torchms.estimator` estimates the PBE total energy of a structure with a pretrained
+`torchms.models.estimator` estimates the PBE total energy of a structure with a pretrained
 graph network, on the scale of LeMat-Bulk, so that an energy above its convex hull can be
 computed without DFT:
 
 ```python
 from torchms.data import HDF5Dataset
-from torchms.estimator import EnergyEstimator
+from torchms.models.estimator import EnergyEstimator
 
 # model, correction and convex hull of LeMat-Bulk, needs the "hub" extra
 estimator = EnergyEstimator.from_lematerial(device="cuda")
@@ -185,10 +185,10 @@ and NaN for a structure with an element absent from the hull. `estimator(structu
 `estimator.predict(dataset)` give the total energy alone.
 
 The model is orb-v3 conservative (`orb-v3-conservative-inf-mpa`) of Orbital Materials,
-rewritten in `estimator/orb/` for the prediction of the energy only, without any new
+rewritten in `models/orb/` for the prediction of the energy only, without any new
 dependency; the official weights (102 MB) are downloaded on the first call into
 `~/.cache/torchms`. A small energy per atom of each element, fitted on LeMat-Bulk, is
-added (`estimator/calibration.py`, `energy_correction_orb.hdf5` in the LeMaterial dataset).
+added (`models/estimator/calibration.py`, `energy_correction_orb.hdf5` in the LeMaterial dataset).
 
 - The energy is the one of the structure as given: it is not relaxed. Compare relaxed
   structures with the hull.
@@ -202,6 +202,35 @@ added (`estimator/calibration.py`, `energy_correction_orb.hdf5` in the LeMateria
 uv run python scripts/build_energy_correction.py datasets  # fit the correction, test sets
 uv run python scripts/validate_energy.py datasets          # end to end validation
 ```
+
+## Models
+
+`torchms.models` has supervised models, which predict the energy of a structure, generative
+models, which generate structures, and the layers they share. The pretrained ones are models
+of other projects, rewritten with PyTorch and the graphs of the library.
+
+| | Model | Class | Output | Weights |
+|---|---|---|---|---|
+| Supervised | orb-v3 | `OrbEnergyModel` | total energy | official |
+| | MACE | `MaceEnergyModel` | total energy | official |
+| | M3GNet | `M3gnetEnergyModel` | total energy | official |
+| | CHGNet | `ChgnetEnergyModel` | total energy | official |
+| | ALIGNN | `AlignnModel` | formation energy | official |
+| Generative | CDVAE | `CdvaeModel` | crystals | third party |
+
+```python
+from torchms.data import load_dataset
+from torchms.models import M3gnetEnergyModel
+
+dataset = load_dataset("mp-20", "test", transform=M3gnetEnergyModel.transform())
+model = M3gnetEnergyModel.from_pretrained(device="cuda")
+energy = model(dataset[:32].to("cuda"))
+```
+
+A model does not build its graph: its class gives the transform which attaches it to the
+structures. `torchms.models.layers` has the bases of distances and of angles, DimeNet++,
+GemNet-T and two networks of the energy to train; `torchms.models.estimator` the estimator above. The documentation has a page for
+each model, with how it was compared with the code it comes from.
 
 ## Development
 

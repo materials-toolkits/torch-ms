@@ -5,7 +5,7 @@ import torch
 from torch import nn
 
 from torchms.data import Structures
-from torchms.estimator import (
+from torchms.models import (
     AlignnModel,
     ChgnetEnergyModel,
     M3gnetEnergyModel,
@@ -16,9 +16,9 @@ from torchms.estimator import (
     m3gnet,
     mace,
     orb,
-    weights,
 )
-from torchms.estimator.pretrained import (
+from torchms.models.estimator import weights
+from torchms.models.estimator.pretrained import (
     InvalidWeights,
     PretrainedModel,
     different_arguments,
@@ -198,7 +198,7 @@ def test_checkpoints_are_read_from_the_configurations(tmp_path):
 def test_configuration_of_a_model(cls):
     import importlib
 
-    from torchms.estimator.config import config_files, load_config
+    from torchms.models.estimator.config import config_files, load_config
 
     module = importlib.import_module(cls.__module__)
     directory = cls.__module__.split(".")[-2]

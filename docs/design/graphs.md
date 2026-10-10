@@ -152,6 +152,7 @@ the radius, for ten chains of transforms:
   structure, and the distances, angles and dihedral angles recomputed from the indices are
   the ones attached;
 - `collate(separate(batch))` is the batch;
-- the transforms give the indices and the geometry of `LineGraphNetwork.build_graph`;
+- the geometry `LineGraphNetwork` computes from what its transform attaches is the one the
+  transforms attach with `geometry=True`;
 - a `DataLoader` on an HDF5 file and on CIF files gives the graphs of the chain applied
   directly, with workers started by spawn.

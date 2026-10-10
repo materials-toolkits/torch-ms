@@ -392,7 +392,9 @@ class TestStructuresEdgeCases:
             )
 
     def test_zero_structures(self):
-        with pytest.raises(InvalidStructure, match="must contain at least one structure"):
+        with pytest.raises(
+            InvalidStructure, match="must contain at least one structure"
+        ):
             Structures(
                 lattice=torch.empty(0, 3, 3),
                 x=torch.empty(0, 3),
