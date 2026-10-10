@@ -3,13 +3,16 @@
 Derived from cdvae of Tian Xie and Xiang Fu (MIT license, see LICENSE in this
 directory): model.py is the autoencoder and its generation of structures. Its
 DimeNet++ encoder and its GemNet-T decoder are in torchms.models.layers. Its
-pretrained weights are listed in config.yaml, with its hyperparameters.
+pretrained weights are listed in config.yaml, with its hyperparameters, which
+config.py reads into a Config.
 """
 
+from torchms.models.cdvae.config import Config
 from torchms.models.cdvae.model import CDVAE, InvalidWeights, sample_composition
 
 __all__ = [
     "CDVAE",
+    "Config",
     "InvalidWeights",
     "sample_composition",
 ]

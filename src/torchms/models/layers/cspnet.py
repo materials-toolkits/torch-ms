@@ -45,7 +45,7 @@ from torchms.models.layers.basis import periodic_fourier
 
 
 @dataclass(frozen=True)
-class CSPNetConfig:
+class Config:
     """Hyperparameters of a CSPNet.
 
     Args:
@@ -145,7 +145,7 @@ class CSPNet(nn.Module):
     Examples:
         >>> from torchms.data.batching import Structures
         >>> from torchms.graph.transforms import AddCompleteGraph
-        >>> config = CSPNetConfig(
+        >>> config = Config(
         ...     latent_dim=8,
         ...     num_elements=100,
         ...     hidden_dim=16,
@@ -169,7 +169,7 @@ class CSPNet(nn.Module):
         (torch.Size([2, 3, 3]), torch.Size([11, 3]), None)
     """
 
-    def __init__(self, config: CSPNetConfig):
+    def __init__(self, config: Config):
         super().__init__()
         self.config = config
         hidden_dim = config.hidden_dim

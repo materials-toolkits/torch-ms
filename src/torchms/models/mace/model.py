@@ -36,7 +36,7 @@ from torch import nn
 
 from torchms.data.augmentation.transforms import Compose, Transform
 from torchms.data.batching import Structures
-from torchms.models.estimator.config import load_config
+from torchms.models.mace.config import Config, NetworkConfig
 from torchms.models.mace.reader import read_model
 from torchms.models.estimator.pretrained import (
     InvalidWeights,
@@ -55,22 +55,6 @@ from torchms.models.layers.basis import (
     sine_bessel,
     spherical_harmonics,
 )
-
-# every value of the model is in config.yaml, next to this module
-CONFIG = load_config(__file__)
-
-RADIUS: float = CONFIG["graph"]["radius"]
-
-NUM_CHANNELS: int = CONFIG["model"]["num_channels"]
-NUM_ELEMENTS: int = CONFIG["model"]["num_elements"]
-NUM_BESSEL: int = CONFIG["model"]["num_bessel"]
-CUTOFF_POWER: int = CONFIG["model"]["cutoff_power"]
-NUM_LAYERS: int = CONFIG["model"]["num_layers"]
-MAX_L: int = CONFIG["model"]["max_l"]
-RADIAL_HIDDEN: int = CONFIG["model"]["radial_hidden"]
-READOUT_DIM: int = CONFIG["model"]["readout_dim"]
-NUM_COUPLINGS: tuple[int, int, int] = tuple(CONFIG["model"]["num_couplings"])
-ACTIVATION: float = CONFIG["model"]["activation"]
 
 
 def weight(*shape: int) -> nn.Parameter:
@@ -92,19 +76,26 @@ class Interaction(nn.Module):
     learned for each degree l, and by the spherical harmonics of the direction.
     """
 
-    def __init__(self):
+    def __init__(self, network: NetworkConfig):
         super().__init__()
-        self.linear_up = weight(NUM_CHANNELS, NUM_CHANNELS)
+        self.num_channels, self.num_elements = (
+            network.num_channels,
+            network.num_elements,
+        )
+        self.num_degrees = network.max_l + 1
+        channels, hidden = network.num_channels, network.radial_hidden
+
+        self.linear_up = weight(channels, channels)
         self.radial = nn.ParameterList(
             [
-                weight(NUM_BESSEL, RADIAL_HIDDEN),
-                weight(RADIAL_HIDDEN, RADIAL_HIDDEN),
-                weight(RADIAL_HIDDEN, RADIAL_HIDDEN),
-                weight(RADIAL_HIDDEN, (MAX_L + 1) * NUM_CHANNELS),
+                weight(network.num_bessel, hidden),
+                weight(hidden, hidden),
+                weight(hidden, hidden),
+                weight(hidden, self.num_degrees * channels),
             ]
         )
-        self.linear = weight(MAX_L + 1, NUM_CHANNELS, NUM_CHANNELS)
-        self.skip = weight(NUM_CHANNELS, NUM_ELEMENTS, NUM_CHANNELS)
+        self.linear = weight(self.num_degrees, channels, channels)
+        self.skip = weight(channels, network.num_elements, channels)
 
     def radial_weights(
         self, radial: Float[torch.Tensor, "n_edges b"], activation: float
@@ -115,7 +106,7 @@ class Interaction(nn.Module):
             if i < len(self.radial) - 1:
                 radial = activation * nn.functional.silu(radial)
 
-        return radial.view(-1, MAX_L + 1, NUM_CHANNELS)
+        return radial.view(-1, self.num_degrees, self.num_channels)
 
     def forward(
         self,
@@ -131,7 +122,7 @@ class Interaction(nn.Module):
 
         # features of the atom itself, mixed with weights of its element
         skip = torch.einsum("bu,ubk->bk", features, self.skip[:, element]) / math.sqrt(
-            NUM_CHANNELS * NUM_ELEMENTS
+            self.num_channels * self.num_elements
         )
 
         features = linear(features, self.linear_up)
@@ -144,7 +135,7 @@ class Interaction(nn.Module):
 
         # channels are mixed with one matrix per degree
         mixed = torch.einsum("bum,muv->bvm", received, self.linear[degrees])
-        mixed = mixed / (math.sqrt(NUM_CHANNELS) * avg_num_neighbors)
+        mixed = mixed / (math.sqrt(self.num_channels) * avg_num_neighbors)
 
         return mixed, skip
 
@@ -160,8 +151,11 @@ class Product(nn.Module):
     U_matrix_2: torch.Tensor
     U_matrix_3: torch.Tensor
 
-    def __init__(self, num_couplings: tuple[int, int, int] = NUM_COUPLINGS):
+    def __init__(self, network: NetworkConfig):
         super().__init__()
+        num_couplings = network.num_couplings
+        elements, channels = network.num_elements, network.num_channels
+
         shape = (NUM_HARMONICS,)
         for order, num in enumerate(num_couplings, start=1):
             self.register_buffer(
@@ -169,10 +163,10 @@ class Product(nn.Module):
                 torch.zeros(*shape * order, num, dtype=torch.float64),
             )
 
-        self.weights_1 = weight(NUM_ELEMENTS, num_couplings[0], NUM_CHANNELS)
-        self.weights_2 = weight(NUM_ELEMENTS, num_couplings[1], NUM_CHANNELS)
-        self.weights_3 = weight(NUM_ELEMENTS, num_couplings[2], NUM_CHANNELS)
-        self.linear = weight(NUM_CHANNELS, NUM_CHANNELS)
+        self.weights_1 = weight(elements, num_couplings[0], channels)
+        self.weights_2 = weight(elements, num_couplings[1], channels)
+        self.weights_3 = weight(elements, num_couplings[2], channels)
+        self.linear = weight(channels, channels)
 
     def contract(
         self,
@@ -209,85 +203,9 @@ class Product(nn.Module):
         return linear(contracted, self.linear) + skip
 
 
-# parameters of mace → parameters of the rewrite, with their shape
-def _parameters(layer: int) -> dict[str, tuple[str, tuple[int, ...]]]:
-    interaction, product = f"interactions.{layer}.", f"products.{layer}."
-    contraction = product + "symmetric_contractions.contractions.0."
-    c, e, h, hidden = NUM_CHANNELS, NUM_ELEMENTS, NUM_HARMONICS, RADIAL_HIDDEN
-    one, two, three = NUM_COUPLINGS
-
-    return {
-        interaction + "linear_up.weight": (f"interactions.{layer}.linear_up", (c, c)),
-        interaction
-        + "conv_tp_weights.layer0.weight": (
-            f"interactions.{layer}.radial.0",
-            (NUM_BESSEL, hidden),
-        ),
-        interaction
-        + "conv_tp_weights.layer1.weight": (
-            f"interactions.{layer}.radial.1",
-            (hidden, hidden),
-        ),
-        interaction
-        + "conv_tp_weights.layer2.weight": (
-            f"interactions.{layer}.radial.2",
-            (hidden, hidden),
-        ),
-        interaction
-        + "conv_tp_weights.layer3.weight": (
-            f"interactions.{layer}.radial.3",
-            (hidden, (MAX_L + 1) * c),
-        ),
-        interaction
-        + "linear.weight": (
-            f"interactions.{layer}.linear",
-            (MAX_L + 1, c, c),
-        ),
-        interaction + "skip_tp.weight": (f"interactions.{layer}.skip", (c, e, c)),
-        contraction + "U_matrix_1": (f"products.{layer}.U_matrix_1", (h, one)),
-        contraction + "U_matrix_2": (f"products.{layer}.U_matrix_2", (h, h, two)),
-        contraction + "U_matrix_3": (f"products.{layer}.U_matrix_3", (h, h, h, three)),
-        contraction + "weights.1": (f"products.{layer}.weights_1", (e, one, c)),
-        contraction + "weights.0": (f"products.{layer}.weights_2", (e, two, c)),
-        contraction + "weights_max": (f"products.{layer}.weights_3", (e, three, c)),
-        product + "linear.weight": (f"products.{layer}.linear", (c, c)),
-    }
-
-
-PARAMETERS: dict[str, tuple[str, tuple[int, ...]]] = {
-    "atomic_numbers": ("atomic_numbers", (NUM_ELEMENTS,)),
-    "atomic_energies_fn.atomic_energies": ("atomic_energies", (NUM_ELEMENTS,)),
-    "node_embedding.linear.weight": ("embedding", (NUM_ELEMENTS, NUM_CHANNELS)),
-    "radial_embedding.bessel_fn.bessel_weights": ("bessel_weights", (NUM_BESSEL,)),
-    "readouts.0.linear.weight": ("readout_0", (NUM_CHANNELS, 1)),
-    "readouts.1.linear_1.weight": ("readout_1.0", (NUM_CHANNELS, READOUT_DIM)),
-    "readouts.1.linear_2.weight": ("readout_1.1", (READOUT_DIM, 1)),
-    "scale_shift.scale": ("scale", ()),
-    "scale_shift.shift": ("shift", ()),
-    **{
-        name: target
-        for layer in range(NUM_LAYERS)
-        for name, target in _parameters(layer).items()
-    },
-}
-
-# classes of the model of mace the rewrite is written for
-MODEL_CLASS: str = CONFIG["upstream"]["model_class"]
-INTERACTION_CLASS: str = CONFIG["upstream"]["interaction_class"]
-
-# values the rewrite relies on, checked in the weights of mace
-EXPECTED = {
-    "r_max": RADIUS,
-    "num_interactions": NUM_LAYERS,
-    "radial_embedding.cutoff_fn.p": CUTOFF_POWER,
-    "radial_embedding.cutoff_fn.r_max": RADIUS,
-    "radial_embedding.bessel_fn.r_max": RADIUS,
-}
-
-
 # one tensor per group of weights of mace
 # pylint: disable-next=too-many-instance-attributes
-class MACE(PretrainedModel):
+class MACE(PretrainedModel[Config]):
     """Total energy of crystal structures predicted by MACE-MP-0 small.
 
     The model computes in double precision, as mace.
@@ -302,7 +220,7 @@ class MACE(PretrainedModel):
         (torch.Size([2]), torch.float64)
     """
 
-    DEFAULT_WEIGHTS = CONFIG["default_weights"]
+    CONFIG = Config
 
     atomic_numbers: torch.Tensor
     atomic_energies: torch.Tensor
@@ -310,30 +228,39 @@ class MACE(PretrainedModel):
     scale: torch.Tensor
     shift: torch.Tensor
 
-    def __init__(self):
-        super().__init__()
-        self.register_buffer("atomic_numbers", torch.arange(1, NUM_ELEMENTS + 1))
+    def __init__(self, config: Config | None = None):
+        super().__init__(config)
+        network, radius = self.config.model, self.config.graph.radius
+        elements, channels = network.num_elements, network.num_channels
+
+        self.register_buffer("atomic_numbers", torch.arange(1, elements + 1))
         self.register_buffer(
-            "atomic_energies", torch.zeros(NUM_ELEMENTS, dtype=torch.float64)
+            "atomic_energies", torch.zeros(elements, dtype=torch.float64)
         )
         self.register_buffer(
             "bessel_weights",
-            math.pi / RADIUS * torch.arange(1, NUM_BESSEL + 1, dtype=torch.float64),
+            math.pi
+            / radius
+            * torch.arange(1, network.num_bessel + 1, dtype=torch.float64),
         )
         self.register_buffer("scale", torch.tensor(1.0, dtype=torch.float64))
         self.register_buffer("shift", torch.tensor(0.0, dtype=torch.float64))
 
-        self.embedding = weight(NUM_ELEMENTS, NUM_CHANNELS)
-        self.interactions = nn.ModuleList(Interaction() for _ in range(NUM_LAYERS))
-        self.products = nn.ModuleList(Product() for _ in range(NUM_LAYERS))
-        self.readout_0 = weight(NUM_CHANNELS, 1)
+        self.embedding = weight(elements, channels)
+        self.interactions = nn.ModuleList(
+            Interaction(network) for _ in range(network.num_layers)
+        )
+        self.products = nn.ModuleList(
+            Product(network) for _ in range(network.num_layers)
+        )
+        self.readout_0 = weight(channels, 1)
         self.readout_1 = nn.ParameterList(
-            [weight(NUM_CHANNELS, READOUT_DIM), weight(READOUT_DIM, 1)]
+            [weight(channels, network.readout_dim), weight(network.readout_dim, 1)]
         )
 
         # constant of the normalized activation of e3nn, and mean number of
         # neighbours of an atom in the training of the model
-        self.activation = ACTIVATION
+        self.activation = network.activation
         self.avg_num_neighbors = 1.0
 
     def load_checkpoint(
@@ -352,10 +279,13 @@ class MACE(PretrainedModel):
             for name, module in modules.items()
             if name.startswith("interactions.") and name.count(".") == 1
         ]
-        if modules[""].path != MODEL_CLASS or not interactions:
-            raise InvalidWeights(f"{modules[''].path} is not a {MODEL_CLASS}")
-        if any(module.path != INTERACTION_CLASS for module in interactions):
-            raise InvalidWeights(f"the interactions are not {INTERACTION_CLASS}")
+        upstream = self.config.upstream
+        if modules[""].path != upstream.model_class or not interactions:
+            raise InvalidWeights(f"{modules[''].path} is not a {upstream.model_class}")
+        if any(module.path != upstream.interaction_class for module in interactions):
+            raise InvalidWeights(
+                f"the interactions are not {upstream.interaction_class}"
+            )
 
         # constants of the normalized activations of e3nn
         constants = {
@@ -389,12 +319,12 @@ class MACE(PretrainedModel):
             InvalidWeights: If parameters are missing or do not have the shape
                 or the values of a MACE-MP-0 small model.
         """
-        for name, value in EXPECTED.items():
+        for name, value in self.config.expected_values().items():
             if name not in state_dict or float(state_dict[name]) != value:
                 raise InvalidWeights(f"{name} must be {value}")
 
         own = {}
-        for name, (target, shape) in PARAMETERS.items():
+        for name, (target, shape) in self.config.upstream_parameters().items():
             if name not in state_dict:
                 raise InvalidWeights(f"Missing parameter {name}")
             if state_dict[name].numel() != math.prod(shape):
@@ -416,13 +346,19 @@ class MACE(PretrainedModel):
         self.avg_num_neighbors = float(avg_num_neighbors)
 
     @classmethod
-    def transform(cls) -> Transform:
+    def transform(cls, config: Config | None = None) -> Transform:
         """Transform attaching the graph of the model.
 
-        Atoms closer than 6 Å are connected, periodic images of the atom itself
-        included.
+        Atoms closer than the radius, 6 Å, are connected, periodic images of
+        the atom itself included.
+
+        Args:
+            config: Configuration of the model the graph is for. The one of
+                config.yaml by default.
         """
-        return Compose([AddRadiusGraph(RADIUS, self_images=True)])
+        graph = (config or Config.load()).graph
+
+        return Compose([AddRadiusGraph(graph.radius, self_images=True)])
 
     def edges(
         self, structures: Structures
@@ -458,12 +394,13 @@ class MACE(PretrainedModel):
         distance = vectors.norm(dim=-1)
 
         harmonics = spherical_harmonics(vectors)
-        envelope = polynomial_cutoff(distance, RADIUS, p=CUTOFF_POWER)
+        network, radius = self.config.model, self.config.graph.radius
+        envelope = polynomial_cutoff(distance, radius, p=network.cutoff_power)
         radial = sine_bessel(
-            distance, self.bessel_weights, math.sqrt(2.0 / RADIUS)
+            distance, self.bessel_weights, math.sqrt(2.0 / radius)
         ) * envelope.unsqueeze(-1)
 
-        features = self.embedding[element] / math.sqrt(NUM_ELEMENTS)
+        features = self.embedding[element] / math.sqrt(network.num_elements)
         constants = (self.activation, self.avg_num_neighbors)
 
         per_layer = []

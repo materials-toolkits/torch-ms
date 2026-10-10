@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import Mapping, TypeVar
+from typing import Generic, Mapping, TypeVar
 
 import torch
 from jaxtyping import Int
@@ -11,8 +11,10 @@ from torch import nn
 
 from torchms.data.augmentation.transforms import Transform
 from torchms.data.batching import Structures
+from torchms.models.estimator.config import YamlConfig
 
 Model = TypeVar("Model", bound="PretrainedModel")
+ConfigT = TypeVar("ConfigT", bound=YamlConfig)
 
 
 class InvalidWeights(Exception):
@@ -135,11 +137,13 @@ def element_index(
     return element
 
 
-class PretrainedModel(nn.Module):
+class PretrainedModel(nn.Module, Generic[ConfigT]):
     """Model which loads the pretrained weights of the project it is derived from.
 
-    A model gives the name of its default weights, reads their files in
-    load_checkpoint and names the parameters of these files it does not use.
+    A model is built from its configuration, the Config of its directory, which
+    it is declared with, `class M3GNet(PretrainedModel[Config])`:
+    without argument, the one of its config.yaml, which the pretrained weights
+    are for. It reads the files of its weights in load_checkpoint.
 
     A model does not build graphs: it reads the graph and the tuples of edges
     attached to the structures, and gives the transform which attaches them.
@@ -152,24 +156,47 @@ class PretrainedModel(nn.Module):
     or to a batch, `model(Model.transform()(structures))`. Structures without
     them are refused, see check_graphs.
 
+    Args:
+        config: Configuration of the model: its hyperparameters, the name of
+            its default weights and the parameters of these weights it does
+            not have. The one of its config.yaml by default.
+
     Attributes:
-        DEFAULT_WEIGHTS: Name of the weights loaded by from_pretrained.
-        UNUSED_PARAMETERS: Prefixes of the parameters of the pretrained weights
-            which the model does not have.
+        CONFIG: Class of the configuration of the model, the Config of its
+            directory.
         GRAPH_FIELDS: Fields of Structures the model reads, set by transform:
             "graph", and "line_graph", "triplets", "quadruplets" or "bonds".
+        config: Configuration the model was built from.
     """
 
-    DEFAULT_WEIGHTS: str
-    UNUSED_PARAMETERS: tuple[str, ...] = ()
+    CONFIG: type[ConfigT]
     GRAPH_FIELDS: tuple[str, ...] = ("graph",)
 
+    def __init__(self, config: ConfigT | None = None):
+        super().__init__()
+        self.config: ConfigT = self.CONFIG.load() if config is None else config
+
+    def default_weights(self) -> str:
+        """Name of the weights loaded by from_pretrained, from the configuration."""
+        return self.config.default_weights
+
+    def unused_parameters(self) -> tuple[str, ...]:
+        """Prefixes of the parameters of the pretrained weights the model does not have.
+
+        From the configuration. They are left out by load_parameters.
+        """
+        return self.config.unused_parameters
+
     @classmethod
-    def transform(cls) -> Transform:
+    def transform(cls, config: ConfigT | None = None) -> Transform:
         """Transform attaching the graph and the tuples of edges of the model.
 
         It does not depend on the weights: it is given by the class, to build
         a dataset before a model is loaded.
+
+        Args:
+            config: Configuration of the model the graph is for. The one of
+                its config.yaml by default.
         """
         raise NotImplementedError
 
@@ -205,7 +232,7 @@ class PretrainedModel(nn.Module):
 
         Args:
             name: Name of the weights, listed in the config.yaml of the model.
-                DEFAULT_WEIGHTS by default.
+                The default_weights of its configuration by default.
             device: Device of the model.
             cache: Directory of the downloaded weights.
 
@@ -213,7 +240,7 @@ class PretrainedModel(nn.Module):
             InvalidWeights: If the weights are not the ones of the model.
         """
         model = cls()
-        model.load_checkpoint(name or cls.DEFAULT_WEIGHTS, cache)
+        model.load_checkpoint(name or model.default_weights(), cache)
 
         return model.to(device).eval().requires_grad_(False)
 
@@ -231,7 +258,7 @@ class PretrainedModel(nn.Module):
     def load_parameters(self, state_dict: Mapping[str, torch.Tensor]) -> None:
         """Load parameters, which must be the ones of the model.
 
-        Parameters whose name starts with one of UNUSED_PARAMETERS are left out.
+        Parameters whose name starts with one of unused_parameters are left out.
 
         Raises:
             InvalidWeights: If parameters are missing, unknown or do not have
@@ -240,7 +267,7 @@ class PretrainedModel(nn.Module):
         used = {
             name: values
             for name, values in state_dict.items()
-            if not name.startswith(self.UNUSED_PARAMETERS)
+            if not name.startswith(self.unused_parameters())
         }
 
         try:

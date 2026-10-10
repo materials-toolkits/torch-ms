@@ -38,6 +38,41 @@ model = OrbV3.from_pretrained("orb-v3-conservative-inf-omat", device="cuda")
 The pretrained models are rewrites: they predict what the original code predicts, without
 its package. Forces, stress and training are not included.
 
+## Configuration of a model
+
+Every value of a pretrained model (the radii of its graph, its hyperparameters, the name
+of its weights) is in the `config.yaml` of its directory. The module of the model has a
+frozen dataclass `Config` with the same fields, typed, which the model is built from:
+
+```{.python notest}
+from torchms.models import m3gnet
+
+config = m3gnet.Config.load()               # the values of config.yaml, read once
+config.graph.radius                         # 5.0
+config.model.num_blocks                     # 3
+
+model = m3gnet.M3GNet()                     # the same as m3gnet.M3GNet(config)
+model.config is config                      # True
+```
+
+The class has the same name in every model, `orb.Config`, `cdvae.Config`,
+`diffcsp.Config`, and nothing is kept in a global variable: a model and its layers read
+the object they are given. To train another network than the published one, give another
+configuration to the model and to its transform:
+
+```{.python notest}
+from dataclasses import replace
+
+small = replace(config, model=replace(config.model, num_blocks=2))
+
+model = m3gnet.M3GNet(small)
+transform = m3gnet.M3GNet.transform(small)
+```
+
+The pretrained weights are the ones of `config.yaml`: a model with other sizes refuses
+them. A file with a key the dataclass does not have, or without one it needs, is refused
+when it is read.
+
 ## Graphs are attached by a transform
 
 **A model does not build its graph.** It reads the graph and the tuples of edges attached
@@ -112,14 +147,19 @@ As the models, a layer reads the graph of the structures and aggregates with its
 
 ```{.python notest}
 from torchms.data import load_dataset
-from torchms.models.layers import EquivariantNetwork, LineGraphNetwork
+from torchms.models.layers import (
+    EquivariantNetwork,
+    LineGraphNetwork,
+    equivariant_network,
+    line_graph_network,
+)
 
 structures = load_dataset("mp-20", "train")[:32]
 
-model = LineGraphNetwork(order=2, radius=(5.0, 3.5))
+model = LineGraphNetwork(line_graph_network.Config(order=2, radius=(5.0, 3.5)))
 energy = model(model.transform()(structures))      # (32,)
 
-model = EquivariantNetwork(correlation=3, radius=5.0)
+model = EquivariantNetwork(equivariant_network.Config(correlation=3, radius=5.0))
 energy = model(model.transform()(structures))      # (32,)
 ```
 

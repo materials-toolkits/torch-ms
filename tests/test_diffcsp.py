@@ -1,5 +1,6 @@
 """Tests for the rewrite of the two models of DiffCSP."""
 
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -15,20 +16,11 @@ from torchms.data.augmentation import (
 )
 from torchms.graph.transforms import AddRadiusGraph
 from torchms.models.diffcsp import (
+    Config,
     DiffCSP,
     DiffCSPGeneration,
     GenerationNoise,
     InvalidWeights,
-)
-from torchms.models.diffcsp import model as diffcsp_model
-from torchms.models.diffcsp.model import (
-    GENERATION_UPSTREAM_ARGS,
-    NUM_ATOMS_DISTRIBUTION,
-    NUM_ELEMENTS,
-    SIGMA_BEGIN,
-    SIGMA_END,
-    TIMESTEPS,
-    UPSTREAM_ARGS,
 )
 from torchms.models.estimator import weights
 from torchms.models.layers import periodic_fourier, sinusoidal_embedding
@@ -72,8 +64,8 @@ TIMES = torch.tensor([3, 700])
 
 def test_pinned_checkpoints(tmp_path):
     assert set(weights.CHECKPOINTS["diffcsp"]) == {NAME, GENERATION_NAME}
-    assert DiffCSP.DEFAULT_WEIGHTS == NAME
-    assert DiffCSPGeneration.DEFAULT_WEIGHTS == GENERATION_NAME
+    assert Config.load().default_weights == NAME
+    assert Config.load().generation.default_weights == GENERATION_NAME
 
     for name in (NAME, GENERATION_NAME):
         for checkpoint in weights.CHECKPOINTS["diffcsp"][name]:
@@ -129,11 +121,14 @@ def test_sinusoidal_embedding():
 
 
 def test_schedules(model):
+    config = Config.load()
     beta, sigma = model.beta_scheduler, model.sigma_scheduler
 
     for values in (beta.betas, beta.alphas, beta.alphas_cumprod, beta.sigmas):
-        assert values.shape == (TIMESTEPS + 1,)
-    assert sigma.sigmas.shape == sigma.sigmas_norm.shape == (TIMESTEPS + 1,)
+        assert values.shape == (config.model.timesteps + 1,)
+    assert (
+        sigma.sigmas.shape == sigma.sigmas_norm.shape == (config.model.timesteps + 1,)
+    )
 
     # the time 0 has no noise
     assert beta.betas[0] == 0 and beta.alphas_cumprod[0] == 1 and beta.sigmas[0] == 0
@@ -144,7 +139,10 @@ def test_schedules(model):
     assert beta.alphas_cumprod[-1] < 1e-8
     assert ((beta.betas[1:] >= 1e-4) & (beta.betas[1:] <= 0.9999)).all()
 
-    assert torch.allclose(sigma.sigmas[[1, -1]], torch.tensor([SIGMA_BEGIN, SIGMA_END]))
+    assert torch.allclose(
+        sigma.sigmas[[1, -1]],
+        torch.tensor([config.model.sigma_begin, config.model.sigma_end]),
+    )
     assert (sigma.sigmas[1:] > sigma.sigmas[:-1]).all()
     ratio = sigma.sigmas[2:] / sigma.sigmas[1:-1]
     assert torch.allclose(ratio, ratio[0].expand_as(ratio), rtol=1e-5)
@@ -269,10 +267,11 @@ def test_another_graph_gives_another_output(model):
 
 def test_unknown_element(model):
     # mendelevium has no row in the embedding
+    config = Config.load()
     structures = Structures(
         lattice=torch.eye(3).unsqueeze(0) * 3.0, x=torch.zeros(1, 3), z=[101]
     )
-    assert NUM_ELEMENTS == 100
+    assert config.decoder["num_elements"] == 100
 
     with pytest.raises(ValueError, match="not supported"):
         model(model.transform()(structures), torch.tensor([1]))
@@ -352,9 +351,34 @@ def test_sample_step_moves_the_atoms_along_the_score(model):
     assert (step * score * sigmas.sigmas_norm[time].sqrt()).abs().max() > 1e-4
 
 
-def test_sample(model, monkeypatch):
-    # the last steps of the diffusion only: all of them take seconds
-    monkeypatch.setattr(diffcsp_model, "TIMESTEPS", 20)
+def short_diffusion(steps: int = 20) -> Config:
+    """Configuration of a diffusion of a few steps: all of them take seconds."""
+    config = Config.load()
+
+    return replace(config, model=replace(config.model, timesteps=steps))
+
+
+def test_a_model_follows_its_configuration():
+    config = short_diffusion()
+    torch.manual_seed(0)
+    short = DiffCSP(config)
+
+    assert short.config is config and short.timesteps == 20
+    assert short.beta_scheduler.betas.shape == (21,)
+    assert short.sigma_scheduler.sigmas.shape == (21,)
+    assert DiffCSP.transform(config) == DiffCSP.transform()
+
+    # without argument, the one of config.yaml
+    assert DiffCSP().config == Config.load()
+
+    # the weights of the model of the file do not fit
+    with pytest.raises(InvalidWeights, match="size mismatch"):
+        short.load_pretrained(dict(DiffCSP().state_dict()))
+
+
+def test_sample():
+    torch.manual_seed(0)
+    model = DiffCSP(short_diffusion()).eval().requires_grad_(False)
     z = torch.tensor([11, 17, 8])
     num_atoms = torch.tensor([2, 1])
 
@@ -376,10 +400,10 @@ def test_sample(model, monkeypatch):
 # the weights
 
 
-def upstream_hparams(
-    arguments: dict[str, dict[str, object]] = UPSTREAM_ARGS,
-) -> dict[str, object]:
+def upstream_hparams(generation: bool = False) -> dict[str, object]:
     """Configuration of the training of DiffCSP a rewrite is written for."""
+    arguments = Config.load().upstream.sections(generation)
+
     return {
         "model": {
             **arguments["model"],
@@ -490,9 +514,10 @@ def test_pretrained_schedules_are_the_ones_of_the_configuration(pretrained):
 
 def test_pretrained_network_matches_diffcsp(pretrained):
     """CSPNet of DiffCSP 7121d15, computed once outside of the project."""
+    config = Config.load()
     structures, expected = reference()
     times = expected["times"]
-    assert times[0] == 1 and times[-1] == TIMESTEPS
+    assert times[0] == 1 and times[-1] == config.model.timesteps
 
     lattice_noise, score = pretrained(pretrained.transform()(structures), times)
     assert close(lattice_noise, expected["pred_l"])
@@ -531,9 +556,10 @@ def dynamics(expected: dict[str, torch.Tensor], structures: Structures, step: in
 
 def test_pretrained_steps_match_diffcsp(pretrained):
     """Steps of the sampling of DiffCSP, each from its structures and its noise."""
+    config = Config.load()
     structures, expected = reference()
     times = expected["dynamics_times"].tolist()
-    assert times[0] == TIMESTEPS and times[-1] == 1
+    assert times[0] == config.model.timesteps and times[-1] == 1
 
     for step, time in enumerate(times):
         moved = pretrained.sample_step(
@@ -554,9 +580,14 @@ def test_pretrained_steps_match_diffcsp(pretrained):
 
 def test_pretrained_dynamics_match_diffcsp(pretrained):
     """The first steps of the sampling of DiffCSP, one after the other."""
+    config = Config.load()
     structures, expected = reference()
     times = expected["dynamics_times"].tolist()
-    assert times[:3] == [TIMESTEPS, TIMESTEPS - 1, TIMESTEPS - 2]
+    assert times[:3] == [
+        config.model.timesteps,
+        config.model.timesteps - 1,
+        config.model.timesteps - 2,
+    ]
 
     current = dynamics(expected, structures, 0)
     for step in range(3):
@@ -588,16 +619,23 @@ def generation() -> DiffCSPGeneration:
 
 def noisy_elements(model: DiffCSPGeneration, batch: Structures) -> torch.Tensor:
     """Vectors of the elements of structures, with some noise."""
-    noise = torch.randn(len(batch.z), NUM_ELEMENTS, generator=generator(2))
+    config = Config.load()
+    noise = torch.randn(
+        len(batch.z), config.decoder["num_elements"], generator=generator(2)
+    )
 
     return model.element_vectors(batch.z) + 0.3 * noise
 
 
 def test_element_vectors(generation):
+    config = Config.load()
     z = torch.tensor([1, 8, 100, 8])
     vectors = generation.element_vectors(z)
 
-    assert vectors.shape == (4, NUM_ELEMENTS) and vectors.dtype == torch.float32
+    assert (
+        vectors.shape == (4, config.decoder["num_elements"])
+        and vectors.dtype == torch.float32
+    )
     assert torch.equal(vectors.sum(dim=1), torch.ones(4))
     assert vectors[0, 0] == 1 and vectors[1, 7] == 1 and vectors[2, 99] == 1
     assert torch.equal(generation.atomic_numbers(vectors), z)
@@ -611,13 +649,14 @@ def test_element_vectors(generation):
 
 
 def test_generation_output(generation):
+    config = Config.load()
     structures = generation.transform()(make_batch())
     elements = noisy_elements(generation, structures)
     lattice_noise, score, element_noise = generation(structures, elements, TIMES)
 
     assert lattice_noise.shape == (2, 3, 3)
     assert score.shape == (len(structures.z), 3)
-    assert element_noise.shape == (len(structures.z), NUM_ELEMENTS)
+    assert element_noise.shape == (len(structures.z), config.decoder["num_elements"])
     for values in (lattice_noise, score, element_noise):
         assert values.dtype == torch.float32 and values.isfinite().all()
     assert element_noise.abs().max() > 0
@@ -690,12 +729,15 @@ def test_generation_needs_its_graph(generation):
 
 
 def generation_noise(batch: Structures, seed: int = 0) -> GenerationNoise:
+    config = Config.load()
     random = generator(seed)
 
     return GenerationNoise(
         corrector=torch.randn(batch.x.shape, generator=random),
         lattice=torch.randn(batch.lattice.shape, generator=random),
-        elements=torch.randn(len(batch.z), NUM_ELEMENTS, generator=random),
+        elements=torch.randn(
+            len(batch.z), config.decoder["num_elements"], generator=random
+        ),
         predictor=torch.randn(batch.x.shape, generator=random),
     )
 
@@ -754,7 +796,8 @@ def test_generation_sample_step(generation):
 
 
 def test_sample_num_atoms(generation):
-    distribution = torch.tensor(NUM_ATOMS_DISTRIBUTION)
+    config = Config.load()
+    distribution = torch.tensor(config.generation.num_atoms_distribution)
     assert len(distribution) == 21 and distribution[0] == 0
     assert torch.isclose(distribution.sum(), torch.tensor(1.0), atol=1e-6)
 
@@ -769,9 +812,10 @@ def test_sample_num_atoms(generation):
     assert torch.equal(again, num_atoms)
 
 
-def test_generation_sample(generation, monkeypatch):
-    # the last steps of the diffusion only: all of them take seconds
-    monkeypatch.setattr(diffcsp_model, "TIMESTEPS", 20)
+def test_generation_sample():
+    config = Config.load()
+    torch.manual_seed(1)
+    generation = DiffCSPGeneration(short_diffusion()).eval().requires_grad_(False)
     num_atoms = torch.tensor([2, 1, 4])
 
     structures = generation.sample(num_atoms, generator=generator())
@@ -780,7 +824,9 @@ def test_generation_sample(generation, monkeypatch):
     assert structures.x.shape == (7, 3) and structures.z.shape == (7,)
     assert torch.equal(structures.num_atoms, num_atoms)
     assert (structures.x >= 0).all() and (structures.x < 1).all()
-    assert ((structures.z >= 1) & (structures.z <= NUM_ELEMENTS)).all()
+    assert (
+        (structures.z >= 1) & (structures.z <= config.decoder["num_elements"])
+    ).all()
 
     # the same draws give the same structures
     again = generation.sample(num_atoms, generator=generator())
@@ -793,13 +839,14 @@ def test_generation_sample(generation, monkeypatch):
 
 
 def test_generation_load_pretrained_checks_the_parameters(generation, model):
+    config = Config.load()
     state = dict(generation.state_dict())
     assert "num_atoms_distribution" not in state
-    hparams = upstream_hparams(GENERATION_UPSTREAM_ARGS)
+    hparams = upstream_hparams(generation=True)
 
     # the checkpoint has a schedule the model does not have
-    state["type_sigma_scheduler.sigmas"] = torch.zeros(TIMESTEPS + 1)
-    state["type_sigma_scheduler.sigmas_norm"] = torch.ones(TIMESTEPS + 1)
+    state["type_sigma_scheduler.sigmas"] = torch.zeros(config.model.timesteps + 1)
+    state["type_sigma_scheduler.sigmas_norm"] = torch.ones(config.model.timesteps + 1)
 
     other = DiffCSPGeneration()
     other.load_pretrained(state, hparams)
@@ -924,9 +971,10 @@ def generation_dynamics(
 
 def test_pretrained_generation_steps_match_diffcsp(pretrained_generation):
     """Steps of the generation of DiffCSP, each from its structures and its noise."""
+    config = Config.load()
     structures, expected = generation_reference()
     times = expected["dynamics_times"].tolist()
-    assert times[0] == TIMESTEPS and times[-1] == 1
+    assert times[0] == config.model.timesteps and times[-1] == 1
     alphas = pretrained_generation.beta_scheduler.alphas
 
     for step, time in enumerate(times):
@@ -942,7 +990,7 @@ def test_pretrained_generation_steps_match_diffcsp(pretrained_generation):
         ), time
         assert close_after(elements, expected["dynamics_next_t"][step], scale), time
         assert close_in_the_cell(moved.x, expected["dynamics_next_x"][step]), time
-        if time < TIMESTEPS:
+        if time < config.model.timesteps:
             assert scale < 2.1
 
     # the last step gives the structures and the elements DiffCSP returns
@@ -953,9 +1001,10 @@ def test_pretrained_generation_steps_match_diffcsp(pretrained_generation):
 
 def test_pretrained_generation_dynamics_match_diffcsp(pretrained_generation):
     """Two steps of the generation of DiffCSP, one after the other."""
+    config = Config.load()
     structures, expected = generation_reference()
     times = expected["dynamics_times"].tolist()
-    assert times[1:3] == [TIMESTEPS - 1, TIMESTEPS - 2]
+    assert times[1:3] == [config.model.timesteps - 1, config.model.timesteps - 2]
 
     current, elements, _ = generation_dynamics(expected, structures, 1)
     for step in (1, 2):

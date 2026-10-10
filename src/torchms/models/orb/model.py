@@ -33,7 +33,7 @@ from torch import nn
 
 from torchms.data.augmentation.transforms import Compose, Transform
 from torchms.data.batching import Structures
-from torchms.models.estimator.config import load_config
+from torchms.models.orb.config import Config, NetworkConfig, RepulsionConfig
 from torchms.models.estimator.pretrained import InvalidWeights, PretrainedModel
 from torchms.models.estimator.weights import download
 from torchms.graph.graph import Graph
@@ -49,26 +49,6 @@ from torchms.models.layers.basis import (
     polynomial_cutoff,
     spherical_harmonics,
 )
-
-# every value of the model is in config.yaml, next to this module
-CONFIG = load_config(__file__)
-
-RADIUS: float = CONFIG["graph"]["radius"]
-MAX_NEIGHBORS: int = CONFIG["graph"]["max_neighbors"]
-
-LATENT_DIM: int = CONFIG["model"]["latent_dim"]
-HIDDEN_DIM: int = CONFIG["model"]["hidden_dim"]
-NUM_ELEMENTS: int = CONFIG["model"]["num_elements"]
-NUM_RADIAL: int = CONFIG["model"]["num_radial"]
-NUM_LAYERS: int = CONFIG["model"]["num_layers"]
-CUTOFF_POWER: int = CONFIG["model"]["cutoff_power"]
-
-# parameters of the pretrained weights which are not used to predict the energy
-UNUSED_PARAMETERS: tuple[str, ...] = tuple(CONFIG["unused_parameters"])
-
-# Ziegler-Biersack-Littmark repulsion, see ZBLBasis
-REPULSION = CONFIG["repulsion"]
-COVALENT_RADII: tuple[float, ...] = tuple(REPULSION["covalent_radii"])
 
 
 def build_mlp(
@@ -86,12 +66,14 @@ def build_mlp(
     return mlp
 
 
-def mlp_and_norm(input_size: int, hidden_size: int = HIDDEN_DIM) -> nn.Sequential:
+def mlp_and_norm(input_size: int, network: NetworkConfig) -> nn.Sequential:
     """Network with two hidden layers followed by a normalization."""
+    hidden = [network.hidden_dim, network.hidden_dim]
+
     return nn.Sequential(
         OrderedDict(
-            mlp=build_mlp(input_size, [hidden_size, hidden_size], LATENT_DIM),
-            layer_norm=nn.RMSNorm(LATENT_DIM),
+            mlp=build_mlp(input_size, hidden, network.latent_dim),
+            layer_norm=nn.RMSNorm(network.latent_dim),
         )
     )
 
@@ -99,9 +81,9 @@ def mlp_and_norm(input_size: int, hidden_size: int = HIDDEN_DIM) -> nn.Sequentia
 class AtomEmbedding(nn.Module):
     """Learned features of each element, indexed by atomic number."""
 
-    def __init__(self):
+    def __init__(self, network: NetworkConfig):
         super().__init__()
-        self.embeddings = nn.Embedding(NUM_ELEMENTS + 1, LATENT_DIM)
+        self.embeddings = nn.Embedding(network.num_elements + 1, network.latent_dim)
 
     def forward(
         self, z: Int[torch.Tensor, "n_atoms"]
@@ -112,10 +94,10 @@ class AtomEmbedding(nn.Module):
 class Encoder(nn.Module):
     """Initial features of atoms and edges."""
 
-    def __init__(self, num_edge_features: int):
+    def __init__(self, num_edge_features: int, network: NetworkConfig):
         super().__init__()
-        self._node_fn = mlp_and_norm(LATENT_DIM)
-        self._edge_fn = mlp_and_norm(num_edge_features)
+        self._node_fn = mlp_and_norm(network.latent_dim, network)
+        self._edge_fn = mlp_and_norm(num_edge_features, network)
 
     def forward(
         self,
@@ -133,12 +115,12 @@ class AttentionInteractionNetwork(nn.Module):
     receives.
     """
 
-    def __init__(self):
+    def __init__(self, network: NetworkConfig):
         super().__init__()
-        self._node_mlp = mlp_and_norm(3 * LATENT_DIM)
-        self._edge_mlp = mlp_and_norm(3 * LATENT_DIM)
-        self._receive_attn = nn.Linear(LATENT_DIM, 1)
-        self._send_attn = nn.Linear(LATENT_DIM, 1)
+        self._node_mlp = mlp_and_norm(3 * network.latent_dim, network)
+        self._edge_mlp = mlp_and_norm(3 * network.latent_dim, network)
+        self._receive_attn = nn.Linear(network.latent_dim, 1)
+        self._send_attn = nn.Linear(network.latent_dim, 1)
 
     def forward(
         self,
@@ -168,13 +150,16 @@ class AttentionInteractionNetwork(nn.Module):
 class MoleculeGNS(nn.Module):
     """Graph network computing the features of each atom."""
 
-    def __init__(self, num_message_passing_steps: int = NUM_LAYERS):
+    def __init__(self, config: Config):
         super().__init__()
-        self.rbf_transform = BesselBasis(RADIUS, NUM_RADIAL)
-        self.atom_emb = AtomEmbedding()
-        self._encoder = Encoder(num_edge_features=NUM_RADIAL * NUM_HARMONICS)
+        network = config.model
+        self.radius, self.cutoff_power = config.graph.radius, network.cutoff_power
+
+        self.rbf_transform = BesselBasis(self.radius, network.num_radial)
+        self.atom_emb = AtomEmbedding(network)
+        self._encoder = Encoder(network.num_radial * NUM_HARMONICS, network)
         self.gnn_stacks = nn.ModuleList(
-            AttentionInteractionNetwork() for _ in range(num_message_passing_steps)
+            AttentionInteractionNetwork(network) for _ in range(network.num_layers)
         )
 
     def forward(
@@ -184,7 +169,8 @@ class MoleculeGNS(nn.Module):
         graph: Graph,
     ) -> Float[torch.Tensor, "n_atoms d"]:
         distance = vectors.norm(dim=1)
-        envelope = polynomial_cutoff(distance, RADIUS, p=CUTOFF_POWER).unsqueeze(-1)
+        envelope = polynomial_cutoff(distance, self.radius, p=self.cutoff_power)
+        envelope = envelope.unsqueeze(-1)
 
         # outer product of the radial and the angular bases
         radial = self.rbf_transform(distance)
@@ -217,9 +203,9 @@ class ScalarNormalizer(nn.Module):
 class LinearReferenceEnergy(nn.Module):
     """Energy of a structure as a sum of an energy per atom of each element."""
 
-    def __init__(self):
+    def __init__(self, num_elements: int):
         super().__init__()
-        self.linear = nn.Linear(NUM_ELEMENTS, 1, bias=False)
+        self.linear = nn.Linear(num_elements, 1, bias=False)
 
     def forward(
         self, z: Int[torch.Tensor, "n_atoms"], graph: Graph
@@ -230,11 +216,11 @@ class LinearReferenceEnergy(nn.Module):
 class EnergyHead(nn.Module):
     """Energy of a structure from the mean of the features of its atoms."""
 
-    def __init__(self):
+    def __init__(self, network: NetworkConfig):
         super().__init__()
         self.normalizer = ScalarNormalizer()
-        self.mlp = build_mlp(LATENT_DIM, [LATENT_DIM], 1)
-        self.reference = LinearReferenceEnergy()
+        self.mlp = build_mlp(network.latent_dim, [network.latent_dim], 1)
+        self.reference = LinearReferenceEnergy(network.num_elements)
 
     def forward(
         self, nodes: Float[torch.Tensor, "n_atoms d"], graph: Graph
@@ -258,16 +244,15 @@ class ZBLBasis(nn.Module):
     d: torch.Tensor
     covalent_radii: torch.Tensor
 
-    def __init__(self):
+    def __init__(self, repulsion: RepulsionConfig):
         super().__init__()
+        self.repulsion = repulsion
         self.register_buffer(
-            "c", torch.tensor(REPULSION["coefficients"]), persistent=False
+            "c", torch.tensor(repulsion.coefficients), persistent=False
         )
+        self.register_buffer("d", torch.tensor(repulsion.exponents), persistent=False)
         self.register_buffer(
-            "d", torch.tensor(REPULSION["exponents"]), persistent=False
-        )
-        self.register_buffer(
-            "covalent_radii", torch.tensor(COVALENT_RADII), persistent=False
+            "covalent_radii", torch.tensor(repulsion.covalent_radii), persistent=False
         )
 
     def forward(
@@ -284,10 +269,11 @@ class ZBLBasis(nn.Module):
         distance = vectors.norm(dim=1)
 
         # screening length of the pair
-        power = REPULSION["screening_power"]
+        repulsion = self.repulsion
+        power = repulsion.screening_power
         length = (
-            REPULSION["screening_length"]
-            * REPULSION["bohr_radius"]
+            repulsion.screening_length
+            * repulsion.bohr_radius
             / (torch.pow(z_send, power) + torch.pow(z_receive, power))
         )
         screening = (
@@ -297,16 +283,16 @@ class ZBLBasis(nn.Module):
         radius = self.covalent_radii[z_send] + self.covalent_radii[z_receive]
         pair = (
             0.5
-            * (REPULSION["coulomb_constant"] * z_send * z_receive / distance)
+            * (repulsion.coulomb_constant * z_send * z_receive / distance)
             * screening
-            * polynomial_cutoff(distance, radius, p=REPULSION["cutoff_power"])
+            * polynomial_cutoff(distance, radius, p=repulsion.cutoff_power)
         )
 
         per_atom = graph.aggregate_edges_to_nodes(pair, to="sender")
         return graph.aggregate_nodes_to_structures(per_atom) / graph.num_atoms
 
 
-class OrbV3(PretrainedModel):
+class OrbV3(PretrainedModel[Config]):
     """Total energy of crystal structures predicted by orb-v3 conservative.
 
     Examples:
@@ -319,14 +305,13 @@ class OrbV3(PretrainedModel):
         (torch.Size([2]), torch.float64)
     """
 
-    DEFAULT_WEIGHTS = CONFIG["default_weights"]
-    UNUSED_PARAMETERS = UNUSED_PARAMETERS
+    CONFIG = Config
 
-    def __init__(self):
-        super().__init__()
-        self.model = MoleculeGNS()
-        self.heads = nn.ModuleDict({"energy": EnergyHead()})
-        self.pair_repulsion_fn = ZBLBasis()
+    def __init__(self, config: Config | None = None):
+        super().__init__(config)
+        self.model = MoleculeGNS(self.config)
+        self.heads = nn.ModuleDict({"energy": EnergyHead(self.config.model)})
+        self.pair_repulsion_fn = ZBLBasis(self.config.repulsion)
 
     def load_checkpoint(
         self, name: str, cache: str | os.PathLike | None = None
@@ -345,21 +330,29 @@ class OrbV3(PretrainedModel):
 
         reference = "heads.energy.reference.linear.weight"
         if reference in parameters:
-            parameters[reference] = parameters[reference].reshape(1, NUM_ELEMENTS)
+            parameters[reference] = parameters[reference].reshape(
+                1, self.config.model.num_elements
+            )
 
         self.load_parameters(parameters)
 
     @classmethod
-    def transform(cls) -> Transform:
+    def transform(cls, config: Config | None = None) -> Transform:
         """Transform attaching the graph of the model.
 
-        Atoms are connected to their 120 nearest neighbours closer than 6 Å,
-        periodic images of the atom itself included.
+        Atoms are connected to their nearest neighbours, 120 of them, closer
+        than the radius, 6 Å, periodic images of the atom itself included.
+
+        Args:
+            config: Configuration of the model the graph is for. The one of
+                config.yaml by default.
         """
+        graph = (config or Config.load()).graph
+
         return Compose(
             [
-                AddRadiusGraph(RADIUS, self_images=True),
-                KeepNearestNeighbors(MAX_NEIGHBORS),
+                AddRadiusGraph(graph.radius, self_images=True),
+                KeepNearestNeighbors(graph.max_neighbors),
             ]
         )
 

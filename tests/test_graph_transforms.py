@@ -32,7 +32,7 @@ from torchms.graph.transforms import (
     KeepNearestNeighbors,
     KeepRadius,
 )
-from torchms.models.layers import LineGraphNetwork
+from torchms.models.layers import LineGraphNetwork, line_graph_network
 
 
 def random_structure(generator: torch.Generator, n_atoms: int) -> Structures:
@@ -330,7 +330,9 @@ class TestTransforms:
 
     def test_same_as_line_graph_network(self):
         batch = Structures.collate([Structures.zincblende(), Structures.diamond()])
-        model = LineGraphNetwork(order=3, radius=(4.0, 3.0, 2.5))
+        model = LineGraphNetwork(
+            line_graph_network.Config(order=3, radius=(4.0, 3.0, 2.5))
+        )
         structures = model.transform()(batch)
         geometry = model.geometry(structures)
         index = {

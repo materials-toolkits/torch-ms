@@ -17,8 +17,10 @@
 The two networks of the energy were written for this library: they have no
 pretrained weights and no model of the library is built on them.
 
-DimeNet++, GemNet-T and CSPNet take their hyperparameters as arguments, a model gives
-them the values of its config.yaml, and they read the graph attached to the
+Each network takes its hyperparameters as a frozen dataclass, the Config of its
+module: dimenet.Config, gemnet.Config, cspnet.Config, line_graph_network.Config
+and equivariant_network.Config. A pretrained model builds the ones of its
+layers from its config.yaml. The networks read the graph attached to the
 structures.
 """
 
@@ -34,22 +36,19 @@ from torchms.models.layers.basis import (
     sinusoidal_embedding,
     spherical_harmonics,
 )
-from torchms.models.layers.cspnet import CSPNet, CSPNetConfig
-from torchms.models.layers.dimenet import DimeNetConfig, DimeNetPlusPlus
+from torchms.models.layers.cspnet import CSPNet
+from torchms.models.layers.dimenet import DimeNetPlusPlus
 from torchms.models.layers.equivariant_network import EquivariantNetwork
-from torchms.models.layers.gemnet import GemNetConfig, GemNetT
+from torchms.models.layers.gemnet import GemNetT
 from torchms.models.layers.line_graph_network import LineGraphNetwork
 
 __all__ = [
     "AngleBasis",
     "BesselBasis",
     "CSPNet",
-    "CSPNetConfig",
-    "DimeNetConfig",
     "DimeNetPlusPlus",
     "EquivariantNetwork",
     "GaussianBasis",
-    "GemNetConfig",
     "GemNetT",
     "LineGraphNetwork",
     "SphericalBesselBasis",

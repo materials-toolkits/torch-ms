@@ -71,11 +71,16 @@ Each pretrained model is a directory of `torchms/models/`:
 | File | Content |
 |---|---|
 | `model.py` | the network, a subclass of `PretrainedModel`. It has no value of its own |
+| `config.py` | `Config`, a frozen dataclass with the fields of `config.yaml`: what the model and its layers are built from |
 | `config.yaml` | the files of its weights with their SHA-256, the radii of its graph, its hyperparameters, and the arguments checked in the weights of the project it comes from |
 | `LICENSE` | the license of the project it is derived from |
 
 Weights are downloaded on the first use to `~/.cache/torchms` (`$TORCHMS_CACHE`) and checked
 against their SHA-256.
+
+The class is called `Config` in every model and every layer, and is named by its module:
+`m3gnet.Config`, `cdvae.Config`, `gemnet.Config`. See
+[Using models](../guide/models.md#configuration-of-a-model).
 
 ## Layers
 
@@ -91,7 +96,8 @@ from.
 | [`LineGraphNetwork`](line-graph-network.md) | network of the energy on pairs, triplets and quadruplets, with their angles and dihedral angles | no model of the library |
 | [`EquivariantNetwork`](equivariant-network.md) | network of the energy on pairs only, with products of sums of spherical harmonics | no model of the library |
 
-The first four take their hyperparameters as arguments and read the graph they are given.
+Each network takes its hyperparameters as the `Config` of its module, a frozen dataclass,
+and reads the graph it is given. The first four have no default value.
 The last two were written for this library, as the two ways recent models have terms on more
 than two atoms (the first as ALIGNN, M3GNet, CHGNet or DPA-3, the second as MACE). They are
 not these models, have no pretrained weights and were not trained here: their accuracy is

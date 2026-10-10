@@ -9,7 +9,7 @@ is the code it was compared with, not the one of its authors.
 
 | | |
 |---|---|
-| Classes | `DimeNetPlusPlus`, `DimeNetConfig` |
+| Classes | `DimeNetPlusPlus`, `dimenet.Config` |
 | Output | one vector per structure, shape `(n_struct, out_channels)` |
 | Reads | a graph of bonds and its line graph: the pairs of bonds i → j, j → k |
 | Paper, DimeNet++ | [Fast and Uncertainty-Aware Directional Message Passing for Non-Equilibrium Molecules](https://arxiv.org/abs/2011.14115), Gasteiger, Giri, Margraf and Günnemann (arXiv:2011.14115) |
@@ -26,9 +26,9 @@ bonds are summed on their atom, and the atoms are reduced over the structure.
 ```{.python notest}
 from torchms.graph.geometry import triplet_cosines
 from torchms.graph.transforms import edges_vectors
-from torchms.models.layers import DimeNetConfig, DimeNetPlusPlus
+from torchms.models.layers import DimeNetPlusPlus, dimenet
 
-config = DimeNetConfig(
+config = dimenet.Config(
     out_channels=16, hidden_dim=128, num_blocks=4, triplet_dim=64, basis_dim=8,
     output_dim=256, num_spherical=7, num_radial=6, radius=5.0, envelope_exponent=5,
     num_before_skip=1, num_after_skip=2, num_output_layers=3, readout="mean",
@@ -51,7 +51,7 @@ output = model(
 
 ## Hyperparameters
 
-Every field of `DimeNetConfig` is required: a model gives the values of its `config.yaml`.
+Every field of `dimenet.Config` is required: a model gives the values of its `config.yaml`.
 
 | Field | Meaning | In CDVAE |
 |---|---|---|

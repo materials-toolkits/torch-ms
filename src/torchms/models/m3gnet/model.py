@@ -33,7 +33,7 @@ from torch import nn
 from torchms.data.augmentation.transforms import Compose, Transform
 from torchms.data.batching import Structures
 from torchms.data.constants import symbol_to_number
-from torchms.models.estimator.config import load_config
+from torchms.models.m3gnet.config import Config, NetworkConfig
 from torchms.models.estimator.pretrained import (
     InvalidWeights,
     PretrainedModel,
@@ -57,34 +57,15 @@ from torchms.models.layers.basis import (
     polynomial_cutoff,
 )
 
-# every value of the model is in config.yaml, next to this module
-CONFIG = load_config(__file__)
-
-RADIUS: float = CONFIG["graph"]["radius"]
-THREE_BODY_RADIUS: float = CONFIG["graph"]["three_body_radius"]
-
-LATENT_DIM: int = CONFIG["model"]["latent_dim"]
-MAX_N: int = CONFIG["model"]["max_n"]
-MAX_L: int = CONFIG["model"]["max_l"]
-NUM_BLOCKS: int = CONFIG["model"]["num_blocks"]
-CUTOFF_POWER: int = CONFIG["model"]["cutoff_power"]
-COSINE_MARGIN: float = CONFIG["model"]["cosine_margin"]
-
-# atomic numbers of the elements of the model, in the order of its embedding
-ELEMENTS: tuple[int, ...] = tuple(
-    z for first, last in CONFIG["model"]["elements"] for z in range(first, last + 1)
-)
-
-# arguments of the model the rewrite is written for, as stored with the weights
-MODEL_ARGS: dict[str, object] = CONFIG["upstream"]["model_args"]
-
 
 class BondExpansion(nn.Module):
     """Radial basis of the length of a bond."""
 
-    def __init__(self):
+    def __init__(self, config: Config):
         super().__init__()
-        self.rbf = SphericalBesselBasis(MAX_L, MAX_N, RADIUS)
+        self.rbf = SphericalBesselBasis(
+            config.model.max_l, config.model.max_n, config.graph.radius
+        )
 
     def forward(
         self, distance: Float[torch.Tensor, "n"]
@@ -95,15 +76,16 @@ class BondExpansion(nn.Module):
 class SphericalBesselWithHarmonics(nn.Module):
     """Basis of an angle: Bessel functions of a length times harmonics of the angle."""
 
-    def __init__(self):
+    def __init__(self, config: Config):
         super().__init__()
-        self.sbf = SphericalBesselBasis(MAX_L, MAX_N, RADIUS)
+        self.max_l, self.max_n = config.model.max_l, config.model.max_n
+        self.sbf = SphericalBesselBasis(self.max_l, self.max_n, config.graph.radius)
 
     def forward(
         self, distance: Float[torch.Tensor, "n"], cosine: Float[torch.Tensor, "n"]
     ) -> Float[torch.Tensor, "n max_l*max_n"]:
         # the harmonic of degree l multiplies the max_n functions of degree l
-        harmonics = legendre(MAX_L, cosine).repeat_interleave(MAX_N, dim=1)
+        harmonics = legendre(self.max_l, cosine).repeat_interleave(self.max_n, dim=1)
 
         return self.sbf(distance) * harmonics
 
@@ -145,10 +127,14 @@ class GatedMLP(nn.Module):
 class EmbeddingBlock(nn.Module):
     """Initial features of atoms, from their element, and of bonds."""
 
-    def __init__(self):
+    def __init__(self, network: NetworkConfig):
         super().__init__()
-        self.layer_node_embedding = nn.Embedding(len(ELEMENTS), LATENT_DIM)
-        self.layer_edge_embedding = MLP(MAX_N * MAX_L, LATENT_DIM, nn.SiLU())
+        self.layer_node_embedding = nn.Embedding(
+            len(network.atomic_numbers()), network.latent_dim
+        )
+        self.layer_edge_embedding = MLP(
+            network.basis_dim, network.latent_dim, nn.SiLU()
+        )
 
     def forward(
         self,
@@ -161,10 +147,14 @@ class EmbeddingBlock(nn.Module):
 class ThreeBodyInteractions(nn.Module):
     """Update of the bonds from the angles they form with the other bonds."""
 
-    def __init__(self):
+    def __init__(self, network: NetworkConfig):
         super().__init__()
-        self.update_network_atom = MLP(LATENT_DIM, MAX_N * MAX_L, nn.Sigmoid())
-        self.update_network_bond = GatedMLP([MAX_N * MAX_L, LATENT_DIM], use_bias=False)
+        self.update_network_atom = MLP(
+            network.latent_dim, network.basis_dim, nn.Sigmoid()
+        )
+        self.update_network_bond = GatedMLP(
+            [network.basis_dim, network.latent_dim], use_bias=False
+        )
 
     def forward(
         self,
@@ -185,13 +175,14 @@ class ThreeBodyInteractions(nn.Module):
 class M3GNetGraphConv(nn.Module):
     """Update of the bonds from their atoms, then of the atoms from their bonds."""
 
-    def __init__(self):
+    def __init__(self, network: NetworkConfig):
         super().__init__()
-        sizes = [3 * LATENT_DIM, LATENT_DIM, LATENT_DIM, LATENT_DIM]
+        latent_dim, basis_dim = network.latent_dim, network.basis_dim
+        sizes = [3 * latent_dim, latent_dim, latent_dim, latent_dim]
         self.edge_update_func = GatedMLP(sizes)
-        self.edge_weight_func = nn.Linear(MAX_N * MAX_L, LATENT_DIM, bias=False)
+        self.edge_weight_func = nn.Linear(basis_dim, latent_dim, bias=False)
         self.node_update_func = GatedMLP(sizes)
-        self.node_weight_func = nn.Linear(MAX_N * MAX_L, LATENT_DIM, bias=False)
+        self.node_weight_func = nn.Linear(basis_dim, latent_dim, bias=False)
 
     def forward(
         self,
@@ -216,9 +207,9 @@ class M3GNetGraphConv(nn.Module):
 class M3GNetBlock(nn.Module):
     """Block of the network, a graph convolution."""
 
-    def __init__(self):
+    def __init__(self, network: NetworkConfig):
         super().__init__()
-        self.conv = M3GNetGraphConv()
+        self.conv = M3GNetGraphConv(network)
 
     def forward(
         self,
@@ -233,9 +224,9 @@ class M3GNetBlock(nn.Module):
 class WeightedReadOut(nn.Module):
     """Energy of each atom from its features."""
 
-    def __init__(self):
+    def __init__(self, network: NetworkConfig):
         super().__init__()
-        self.gated = GatedMLP([LATENT_DIM] * 4 + [1], activate_last=False)
+        self.gated = GatedMLP([network.latent_dim] * 4 + [1], activate_last=False)
 
     def forward(
         self, atoms: Float[torch.Tensor, "n_atoms d"]
@@ -246,16 +237,21 @@ class WeightedReadOut(nn.Module):
 class M3GNetNetwork(nn.Module):
     """Graph network computing the energy of each atom, before scaling."""
 
-    def __init__(self):
+    def __init__(self, config: Config):
         super().__init__()
-        self.bond_expansion = BondExpansion()
-        self.embedding = EmbeddingBlock()
-        self.basis_expansion = SphericalBesselWithHarmonics()
+        self.config = config
+        network = config.model
+
+        self.bond_expansion = BondExpansion(config)
+        self.embedding = EmbeddingBlock(network)
+        self.basis_expansion = SphericalBesselWithHarmonics(config)
         self.three_body_interactions = nn.ModuleList(
-            ThreeBodyInteractions() for _ in range(NUM_BLOCKS)
+            ThreeBodyInteractions(network) for _ in range(network.num_blocks)
         )
-        self.graph_layers = nn.ModuleList(M3GNetBlock() for _ in range(NUM_BLOCKS))
-        self.final_layer = WeightedReadOut()
+        self.graph_layers = nn.ModuleList(
+            M3GNetBlock(network) for _ in range(network.num_blocks)
+        )
+        self.final_layer = WeightedReadOut(network)
 
     def forward(
         self,
@@ -268,7 +264,11 @@ class M3GNetNetwork(nn.Module):
         basis = self.bond_expansion(distance)
 
         # an angle is weighted by the smooth cutoffs of its two bonds
-        envelope = polynomial_cutoff(distance, THREE_BODY_RADIUS, p=CUTOFF_POWER)
+        envelope = polynomial_cutoff(
+            distance,
+            self.config.graph.three_body_radius,
+            p=self.config.model.cutoff_power,
+        )
         triplet_basis = self.basis_expansion(
             angles.unpool_edges(distance, position=1), cosine
         ) * (
@@ -292,9 +292,9 @@ class AtomRef(nn.Module):
 
     property_offset: torch.Tensor
 
-    def __init__(self):
+    def __init__(self, num_elements: int):
         super().__init__()
-        self.register_buffer("property_offset", torch.zeros(len(ELEMENTS)))
+        self.register_buffer("property_offset", torch.zeros(num_elements))
 
     def forward(
         self, element: Int[torch.Tensor, "n_atoms"]
@@ -302,7 +302,7 @@ class AtomRef(nn.Module):
         return self.property_offset.double()[element]
 
 
-class M3GNet(PretrainedModel):
+class M3GNet(PretrainedModel[Config]):
     """Total energy of crystal structures predicted by the M3GNet potential.
 
     Examples:
@@ -315,23 +315,25 @@ class M3GNet(PretrainedModel):
         (torch.Size([2]), torch.float64)
     """
 
-    DEFAULT_WEIGHTS = CONFIG["default_weights"]
+    CONFIG = Config
     GRAPH_FIELDS = ("graph", "triplets")
 
     data_mean: torch.Tensor
     data_std: torch.Tensor
     element_table: torch.Tensor
 
-    def __init__(self):
-        super().__init__()
-        self.model = M3GNetNetwork()
-        self.element_refs = AtomRef()
+    def __init__(self, config: Config | None = None):
+        super().__init__(config)
+        elements = self.config.model.atomic_numbers()
+
+        self.model = M3GNetNetwork(self.config)
+        self.element_refs = AtomRef(len(elements))
         self.register_buffer("data_mean", torch.tensor(0.0))
         self.register_buffer("data_std", torch.tensor(1.0))
 
         # index of each atomic number in the embedding, -1 if it has none
         self.register_buffer(
-            "element_table", element_table(torch.tensor(ELEMENTS)), persistent=False
+            "element_table", element_table(torch.tensor(elements)), persistent=False
         )
 
     def load_checkpoint(
@@ -360,11 +362,11 @@ class M3GNet(PretrainedModel):
                 model was built with other arguments or elements.
         """
         if model_args is not None:
-            different = different_arguments(model_args, MODEL_ARGS)
+            different = different_arguments(model_args, self.config.upstream.model_args)
             elements = model_args.get("element_types")
-            if (
-                isinstance(elements, (tuple, list))
-                and tuple(symbol_to_number(symbol) for symbol in elements) != ELEMENTS
+            if isinstance(elements, (tuple, list)) and (
+                tuple(symbol_to_number(symbol) for symbol in elements)
+                != self.config.model.atomic_numbers()
             ):
                 different["element_types"] = elements
             if different:
@@ -375,17 +377,23 @@ class M3GNet(PretrainedModel):
         self.load_parameters(state_dict)
 
     @classmethod
-    def transform(cls) -> Transform:
+    def transform(cls, config: Config | None = None) -> Transform:
         """Transform attaching the bonds and the angles of the model.
 
-        Atoms closer than 5 Å are bonded, periodic images of the atom itself
-        included. Angles are the pairs of bonds of at most 4 Å starting from
-        the same atom.
+        Atoms closer than the radius, 5 Å, are bonded, periodic images of the
+        atom itself included. Angles are the pairs of bonds of at most the
+        three-body radius, 4 Å, starting from the same atom.
+
+        Args:
+            config: Configuration of the model the graph is for. The one of
+                config.yaml by default.
         """
+        graph = (config or Config.load()).graph
+
         return Compose(
             [
-                AddRadiusGraph(RADIUS, self_images=True),
-                AddTriplets(radius=THREE_BODY_RADIUS),
+                AddRadiusGraph(graph.radius, self_images=True),
+                AddTriplets(radius=graph.three_body_radius),
             ]
         )
 
@@ -411,9 +419,8 @@ class M3GNet(PretrainedModel):
 
         vectors = edges_vectors(graph)
         distance = vectors.norm(dim=-1)
-        cosine = triplet_cosines(vectors, angles).clamp(
-            -1 + COSINE_MARGIN, 1 - COSINE_MARGIN
-        )
+        margin = self.config.model.cosine_margin
+        cosine = triplet_cosines(vectors, angles).clamp(-1 + margin, 1 - margin)
 
         return graph, distance, angles, cosine
 

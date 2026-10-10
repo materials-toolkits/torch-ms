@@ -9,7 +9,7 @@ is the code it was compared with, not the one of its authors.
 
 | | |
 |---|---|
-| Classes | `GemNetT`, `GemNetConfig` |
+| Classes | `GemNetT`, `gemnet.Config` |
 | Output | features of each atom, shape `(n_atoms, hidden_dim)`, and a vector of each atom in Å, shape `(n_atoms, 3)` |
 | Reads | a symmetric graph, its triplets and its bonds, and a vector of each structure |
 | Paper | [GemNet: Universal Directional Graph Neural Networks for Molecules](https://arxiv.org/abs/2106.08903), Gasteiger, Becker and Günnemann (arXiv:2106.08903) |
@@ -27,9 +27,9 @@ of the structure.
 ```{.python notest}
 from torchms.graph.geometry import triplet_cosines
 from torchms.graph.transforms import AddBonds, edges_vectors
-from torchms.models.layers import GemNetConfig, GemNetT
+from torchms.models.layers import GemNetT, gemnet
 
-config = GemNetConfig(
+config = gemnet.Config(
     latent_dim=256, num_elements=100, radius=7.0, hidden_dim=128, num_blocks=3,
     num_spherical=7, num_radial=128, triplet_dim=64, radial_dim=16, circular_dim=16,
     bilinear_dim=64, num_before_skip=1, num_after_skip=2, num_concat=1,
@@ -54,7 +54,7 @@ features, moves = model(
 
 ## Hyperparameters
 
-Every field of `GemNetConfig` is required: a model gives the values of its `config.yaml`.
+Every field of `gemnet.Config` is required: a model gives the values of its `config.yaml`.
 
 | Field | Meaning | In CDVAE |
 |---|---|---|

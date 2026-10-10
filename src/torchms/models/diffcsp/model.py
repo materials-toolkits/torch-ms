@@ -49,7 +49,7 @@ from torch import nn
 from torchms.data.augmentation.transforms import Transform
 from torchms.data.batching import Structures
 from torchms.graph.transforms import AddCompleteGraph, attached_graph
-from torchms.models.estimator.config import load_config
+from torchms.models.diffcsp.config import Config, NetworkConfig
 from torchms.models.estimator.pretrained import (
     InvalidWeights,
     PretrainedModel,
@@ -59,46 +59,7 @@ from torchms.models.estimator.pretrained import (
 )
 from torchms.models.estimator.weights import download
 from torchms.models.layers.basis import sinusoidal_embedding
-from torchms.models.layers.cspnet import CSPNet, CSPNetConfig
-
-# every value of the models is in config.yaml, next to this module
-CONFIG = load_config(__file__)
-GENERATION = CONFIG["generation"]
-
-SELF_LOOPS: bool = CONFIG["graph"]["self_loops"]
-
-TIMESTEPS: int = CONFIG["model"]["timesteps"]
-TIME_DIM: int = CONFIG["model"]["time_dim"]
-TIME_MAX_PERIOD: float = CONFIG["model"]["time_max_period"]
-BETA_OFFSET: float = CONFIG["model"]["beta_offset"]
-BETA_MIN: float = CONFIG["model"]["beta_min"]
-BETA_MAX: float = CONFIG["model"]["beta_max"]
-SIGMA_BEGIN: float = CONFIG["model"]["sigma_begin"]
-SIGMA_END: float = CONFIG["model"]["sigma_end"]
-
-# hyperparameters of the CSPNet of each model, which reads the embedding of
-# the time
-DECODER = CSPNetConfig(latent_dim=TIME_DIM, **CONFIG["decoder"])
-GENERATION_DECODER = CSPNetConfig(
-    latent_dim=TIME_DIM, **{**CONFIG["decoder"], **GENERATION["decoder"]}
-)
-NUM_ELEMENTS: int = DECODER.num_elements
-
-STEP_SIZE: float = CONFIG["sampling"]["step_size"]
-GENERATION_STEP_SIZE: float = GENERATION["step_size"]
-NUM_ATOMS_DISTRIBUTION: tuple[float, ...] = tuple(GENERATION["num_atoms_distribution"])
-
-# configuration of the training each rewrite is written for, by section
-UPSTREAM_ARGS: dict[str, dict[str, object]] = {
-    "model": CONFIG["upstream"]["model_args"],
-    "model.decoder": CONFIG["upstream"]["decoder_args"],
-    "model.beta_scheduler": CONFIG["upstream"]["beta_scheduler_args"],
-    "model.sigma_scheduler": CONFIG["upstream"]["sigma_scheduler_args"],
-}
-GENERATION_UPSTREAM_ARGS: dict[str, dict[str, object]] = {
-    **UPSTREAM_ARGS,
-    "model": CONFIG["upstream"]["generation_model_args"],
-}
+from torchms.models.layers.cspnet import CSPNet
 
 
 class BetaScheduler(nn.Module):  # pylint: disable=abstract-method
@@ -119,17 +80,17 @@ class BetaScheduler(nn.Module):  # pylint: disable=abstract-method
     alphas_cumprod: torch.Tensor
     sigmas: torch.Tensor
 
-    def __init__(self):
+    def __init__(self, network: NetworkConfig):
         super().__init__()
-        steps = torch.linspace(0, TIMESTEPS, TIMESTEPS + 1)
+        timesteps, offset = network.timesteps, network.beta_offset
+        steps = torch.linspace(0, timesteps, timesteps + 1)
         cumprod = (
-            torch.cos(
-                (steps / TIMESTEPS + BETA_OFFSET) / (1 + BETA_OFFSET) * math.pi * 0.5
-            )
-            ** 2
+            torch.cos((steps / timesteps + offset) / (1 + offset) * math.pi * 0.5) ** 2
         )
         cumprod = cumprod / cumprod[0]
-        betas = torch.clip(1 - cumprod[1:] / cumprod[:-1], BETA_MIN, BETA_MAX)
+        betas = torch.clip(
+            1 - cumprod[1:] / cumprod[:-1], network.beta_min, network.beta_max
+        )
 
         betas = F.pad(betas, (1, 0), value=0.0)
         alphas = 1.0 - betas
@@ -159,40 +120,70 @@ class SigmaScheduler(nn.Module):  # pylint: disable=abstract-method
     sigmas: torch.Tensor
     sigmas_norm: torch.Tensor
 
-    def __init__(self):
+    def __init__(self, network: NetworkConfig):
         super().__init__()
         sigmas = torch.exp(
             torch.linspace(
-                math.log(SIGMA_BEGIN),
-                math.log(SIGMA_END),
-                TIMESTEPS,
+                math.log(network.sigma_begin),
+                math.log(network.sigma_end),
+                network.timesteps,
                 dtype=torch.float64,
             )
         ).float()
 
         self.register_buffer("sigmas", F.pad(sigmas, (1, 0), value=0.0))
-        self.register_buffer("sigmas_norm", torch.ones(TIMESTEPS + 1))
+        self.register_buffer("sigmas_norm", torch.ones(network.timesteps + 1))
 
 
-class Diffusion(PretrainedModel):  # pylint: disable=abstract-method
+class Diffusion(PretrainedModel[Config]):  # pylint: disable=abstract-method
     """What the two models of DiffCSP share: network, schedules and steps.
 
     Args:
-        decoder: Hyperparameters of the CSPNet of the model.
+        config: Configuration of the models, the one of config.yaml by default.
 
     Attributes:
-        UPSTREAM_ARGS: Configuration of the training of DiffCSP the model is
-            written for, by section.
+        GENERATION: Whether the model also generates the elements: it then
+            reads what the configuration has for the generation.
     """
 
-    UPSTREAM_ARGS: dict[str, dict[str, object]]
+    CONFIG = Config
+    GENERATION = False
     GRAPH_FIELDS = ("graph",)
 
-    def __init__(self, decoder: CSPNetConfig):
-        super().__init__()
-        self.decoder = CSPNet(decoder)
-        self.beta_scheduler = BetaScheduler()
-        self.sigma_scheduler = SigmaScheduler()
+    def __init__(self, config: Config | None = None):
+        super().__init__(config)
+        self.decoder = CSPNet(self.config.decoder_config(self.GENERATION))
+        self.beta_scheduler = BetaScheduler(self.config.model)
+        self.sigma_scheduler = SigmaScheduler(self.config.model)
+
+    @property
+    def num_elements(self) -> int:
+        """Number of elements of the network, from hydrogen."""
+        return self.decoder.config.num_elements
+
+    @property
+    def timesteps(self) -> int:
+        """Number of steps of the diffusion."""
+        return self.config.model.timesteps
+
+    def default_weights(self) -> str:
+        if self.GENERATION:
+            return self.config.generation.default_weights
+
+        return self.config.default_weights
+
+    def unused_parameters(self) -> tuple[str, ...]:
+        if self.GENERATION:
+            return self.config.generation.unused_parameters
+
+        return self.config.unused_parameters
+
+    def default_step_size(self) -> float:
+        """Step of the corrector at the lowest noise, from the configuration."""
+        if self.GENERATION:
+            return self.config.generation.step_size
+
+        return self.config.sampling.step_size
 
     # weights
 
@@ -232,20 +223,26 @@ class Diffusion(PretrainedModel):  # pylint: disable=abstract-method
                 one of the two models are refused by the other one.
         """
         if hparams is not None:
-            check_configuration(hparams, self.UPSTREAM_ARGS)
+            check_configuration(hparams, self.config.upstream.sections(self.GENERATION))
 
         self.load_parameters(state_dict)
 
     # graph
 
     @classmethod
-    def transform(cls) -> Transform:
+    def transform(cls, config: Config | None = None) -> Transform:
         """Transform attaching the complete graph of each structure.
 
         An edge goes from each atom to every atom of its structure, itself
         included. The graph only depends on the numbers of atoms.
+
+        Args:
+            config: Configuration of the model the graph is for. The one of
+                config.yaml by default.
         """
-        return AddCompleteGraph(self_loops=SELF_LOOPS)
+        graph = (config or Config.load()).graph
+
+        return AddCompleteGraph(self_loops=graph.self_loops)
 
     # what a step of the sampling is made of
 
@@ -253,7 +250,9 @@ class Diffusion(PretrainedModel):  # pylint: disable=abstract-method
         self, times: Int[torch.Tensor, "n_struct"]
     ) -> Float[torch.Tensor, "n_struct time_dim"]:
         """Embedding of the time of each structure, read by the network."""
-        return sinusoidal_embedding(times, TIME_DIM, TIME_MAX_PERIOD)
+        network = self.config.model
+
+        return sinusoidal_embedding(times, network.time_dim, network.time_max_period)
 
     def correct_coordinates(
         self,
@@ -261,7 +260,7 @@ class Diffusion(PretrainedModel):  # pylint: disable=abstract-method
         score: Float[torch.Tensor, "n_atoms 3"],
         time: int,
         noise: Float[torch.Tensor, "n_atoms 3"],
-        step_size: float,
+        step_size: float | None,
     ) -> Float[torch.Tensor, "n_atoms 3"]:
         """Langevin move of the coordinates at the level of noise of a time.
 
@@ -270,7 +269,8 @@ class Diffusion(PretrainedModel):  # pylint: disable=abstract-method
             score: Score the network gives for them.
             time: Time of the structures.
             noise: Standard normal noise.
-            step_size: Step at the lowest level of noise: the step grows as
+            step_size: Step at the lowest level of noise, default_step_size
+                if None: the step grows as
                 the square of the level.
 
         Returns:
@@ -278,7 +278,9 @@ class Diffusion(PretrainedModel):  # pylint: disable=abstract-method
         """
         sigma = self.sigma_scheduler.sigmas[time]
         score = score * torch.sqrt(self.sigma_scheduler.sigmas_norm[time])
-        step = step_size * (sigma / SIGMA_BEGIN) ** 2
+        if step_size is None:
+            step_size = self.default_step_size()
+        step = step_size * (sigma / self.config.model.sigma_begin) ** 2
 
         return x - step * score + torch.sqrt(2 * step) * noise
 
@@ -349,19 +351,15 @@ class DiffCSP(Diffusion):
         gives a lattice and coordinates to the atoms of these structures.
     """
 
-    DEFAULT_WEIGHTS = CONFIG["default_weights"]
-    UNUSED_PARAMETERS = tuple(CONFIG["unused_parameters"])
-    UPSTREAM_ARGS = UPSTREAM_ARGS
-
     elements: torch.Tensor
 
-    def __init__(self):
-        super().__init__(DECODER)
+    def __init__(self, config: Config | None = None):
+        super().__init__(config)
 
         # row of each atomic number in the embedding of the network, from hydrogen
         self.register_buffer(
             "elements",
-            element_table(torch.arange(1, NUM_ELEMENTS + 1)),
+            element_table(torch.arange(1, self.num_elements + 1)),
             persistent=False,
         )
 
@@ -412,7 +410,7 @@ class DiffCSP(Diffusion):
         corrector_noise: Float[torch.Tensor, "n_atoms 3"],
         lattice_noise: Float[torch.Tensor, "n_struct 3 3"],
         predictor_noise: Float[torch.Tensor, "n_atoms 3"],
-        step_size: float = STEP_SIZE,
+        step_size: float | None = None,
     ) -> Structures:
         """One step of the sampling, from a time to the time before.
 
@@ -431,14 +429,15 @@ class DiffCSP(Diffusion):
                 lattice, shape (n_struct, 3, 3). Zero at the time 1.
             predictor_noise: Standard normal noise of the prediction of the
                 coordinates, shape (n_atoms, 3). Zero at the time 1.
-            step_size: Step of the correction at the lowest level of noise:
+            step_size: Step of the correction at the lowest level of noise,
+                the one of the configuration by default:
                 the step grows as the square of the level.
 
         Returns:
             Structures at the time before, without graph, their coordinates
             in the cell.
         """
-        graph = attached_graph(self.transform()(structures), self)
+        graph = attached_graph(self.transform(self.config)(structures), self)
         element = element_index(structures.z, self.elements)
 
         times = torch.full(
@@ -467,7 +466,7 @@ class DiffCSP(Diffusion):
         self,
         z: Int[torch.Tensor, "n_atoms"],
         num_atoms: Int[torch.Tensor, "n_struct"],
-        step_size: float = STEP_SIZE,
+        step_size: float | None = None,
         generator: torch.Generator | None = None,
     ) -> Structures:
         """Sample the lattice and the coordinates of structures of given atoms.
@@ -480,7 +479,8 @@ class DiffCSP(Diffusion):
             z: Atomic number of each atom, the atoms of a structure together,
                 shape (n_atoms,), on the device of the model.
             num_atoms: Number of atoms of each structure, shape (n_struct,).
-            step_size: Step of the corrector at the lowest level of noise.
+            step_size: Step of the corrector at the lowest level of noise, the
+                one of the configuration by default.
             generator: Generator of the random draws, on the device of z.
 
         Returns:
@@ -498,7 +498,7 @@ class DiffCSP(Diffusion):
         x = torch.rand((len(z), 3), generator=generator, device=device)
         structures = Structures(lattice=lattice, x=x, z=z, num_atoms=num_atoms)
 
-        for time in range(TIMESTEPS, 0, -1):
+        for time in range(self.timesteps, 0, -1):
             # the last step adds no noise
             scale = 1.0 if time > 1 else 0.0
             corrector_noise, lattice_noise, predictor_noise = (
@@ -572,19 +572,17 @@ class DiffCSPGeneration(Diffusion):
         generates 8 structures.
     """
 
-    DEFAULT_WEIGHTS = GENERATION["default_weights"]
-    UNUSED_PARAMETERS = tuple(GENERATION["unused_parameters"])
-    UPSTREAM_ARGS = GENERATION_UPSTREAM_ARGS
+    GENERATION = True
 
     num_atoms_distribution: torch.Tensor
 
-    def __init__(self):
-        super().__init__(GENERATION_DECODER)
+    def __init__(self, config: Config | None = None):
+        super().__init__(config)
 
         # probability of each number of atoms, from 0
         self.register_buffer(
             "num_atoms_distribution",
-            torch.tensor(NUM_ATOMS_DISTRIBUTION),
+            torch.tensor(self.config.generation.num_atoms_distribution),
             persistent=False,
         )
 
@@ -605,11 +603,13 @@ class DiffCSPGeneration(Diffusion):
         Raises:
             ValueError: If an atom has an element after fermium.
         """
-        if ((z < 1) | (z > NUM_ELEMENTS)).any():
-            unknown = z[(z < 1) | (z > NUM_ELEMENTS)].unique().tolist()
+        outside = (z < 1) | (z > self.num_elements)
+        if outside.any():
+            unknown = z[outside].unique().tolist()
             raise ValueError(f"elements {unknown} are not supported by the model")
 
-        return F.one_hot(z - 1, NUM_ELEMENTS).float()  # pylint: disable=not-callable
+        # pylint: disable-next=not-callable
+        return F.one_hot(z - 1, self.num_elements).float()
 
     def atomic_numbers(
         self, elements: Float[torch.Tensor, "n_atoms num_elements"]
@@ -681,7 +681,7 @@ class DiffCSPGeneration(Diffusion):
         elements: Float[torch.Tensor, "n_atoms num_elements"],
         time: int,
         noise: GenerationNoise,
-        step_size: float = GENERATION_STEP_SIZE,
+        step_size: float | None = None,
     ) -> tuple[Structures, Float[torch.Tensor, "n_atoms num_elements"]]:
         """One step of the sampling, from a time to the time before.
 
@@ -697,7 +697,8 @@ class DiffCSPGeneration(Diffusion):
             time: Time of the structures, from the number of steps of the
                 diffusion down to 1.
             noise: Standard normal noise of the step.
-            step_size: Step of the correction at the lowest level of noise:
+            step_size: Step of the correction at the lowest level of noise,
+                the one of the configuration by default:
                 the step grows as the square of the level.
 
         Returns:
@@ -705,7 +706,7 @@ class DiffCSPGeneration(Diffusion):
             in the cell and their atomic numbers read from the vectors, and
             the vector of the element of each atom at the time before.
         """
-        graph = attached_graph(self.transform()(structures), self)
+        graph = attached_graph(self.transform(self.config)(structures), self)
 
         times = torch.full(
             (len(structures.num_atoms),), time, device=structures.device()
@@ -757,7 +758,7 @@ class DiffCSPGeneration(Diffusion):
     def sample(
         self,
         num_atoms: Int[torch.Tensor, "n_struct"],
-        step_size: float = GENERATION_STEP_SIZE,
+        step_size: float | None = None,
         generator: torch.Generator | None = None,
     ) -> Structures:
         """Sample structures of given numbers of atoms, with their elements.
@@ -769,7 +770,8 @@ class DiffCSPGeneration(Diffusion):
         Args:
             num_atoms: Number of atoms of each structure, shape (n_struct,),
                 on the device of the model. See sample_num_atoms.
-            step_size: Step of the corrector at the lowest level of noise.
+            step_size: Step of the corrector at the lowest level of noise, the
+                one of the configuration by default.
             generator: Generator of the random draws, on the device of
                 num_atoms.
 
@@ -784,7 +786,7 @@ class DiffCSPGeneration(Diffusion):
         )
         x = torch.rand((n_atoms, 3), generator=generator, device=device)
         elements = torch.randn(
-            (n_atoms, NUM_ELEMENTS), generator=generator, device=device
+            (n_atoms, self.num_elements), generator=generator, device=device
         )
         structures = Structures(
             lattice=lattice,
@@ -793,7 +795,7 @@ class DiffCSPGeneration(Diffusion):
             num_atoms=num_atoms,
         )
 
-        for time in range(TIMESTEPS, 0, -1):
+        for time in range(self.timesteps, 0, -1):
             # the last step adds no noise
             scale = 1.0 if time > 1 else 0.0
             noise = GenerationNoise(

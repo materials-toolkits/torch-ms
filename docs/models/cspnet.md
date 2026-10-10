@@ -7,7 +7,7 @@ of weights and gives such a vector for each atom.
 
 | | |
 |---|---|
-| Classes | `CSPNet`, `CSPNetConfig` |
+| Classes | `CSPNet`, `cspnet.Config` |
 | Output | a matrix of each structure, shape `(n_struct, 3, 3)`, a vector of each atom in fractional coordinates, shape `(n_atoms, 3)`, and with `predict_elements` a value of each element for each atom, shape `(n_atoms, num_elements)`, `None` otherwise |
 | Reads | a complete graph with self loops, fractional coordinates, lattices, and a vector of each structure |
 | Paper | [Crystal Structure Prediction by Joint Equivariant Diffusion](https://arxiv.org/abs/2309.04475), Jiao, Huang, Lin, Han, Chen, Lu and Liu (arXiv:2309.04475) |
@@ -23,9 +23,9 @@ its atoms, times its lattice: it is rotated with the lattice.
 
 ```{.python notest}
 from torchms.graph.transforms import AddCompleteGraph
-from torchms.models.layers import CSPNet, CSPNetConfig
+from torchms.models.layers import CSPNet, cspnet
 
-config = CSPNetConfig(
+config = cspnet.Config(
     latent_dim=256, num_elements=100, hidden_dim=512, num_layers=6, num_freqs=128,
     soft_elements=False, predict_elements=False,
 )
@@ -53,7 +53,7 @@ generation of DiffCSP sets both, to diffuse the elements.
 
 ## Hyperparameters
 
-Every field of `CSPNetConfig` is required: a model gives the values of its `config.yaml`.
+Every field of `cspnet.Config` is required: a model gives the values of its `config.yaml`.
 
 | Field | Meaning | In DiffCSP |
 |---|---|---|

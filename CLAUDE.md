@@ -118,24 +118,32 @@ procedure to port a model.
 
 - **A model does not build its graph.** It reads the graph and the tuples of edges attached
   to the `Structures` and gives the transform which attaches them: a classmethod
-  `Model.transform()` when the graph is fixed by a `config.yaml`, a method when it depends on
-  the arguments of the network (`LineGraphNetwork`). It refuses structures without them and
-  names the transform.
+  `Model.transform()` for a pretrained model, which takes its `Config` and uses the one of
+  `config.yaml` by default, a method for a network to train (`LineGraphNetwork`). It refuses
+  structures without them and names the transform.
 - **No index in the arguments of a method.** A layer takes the `Graph`, the `EdgeTuples` or
   the `Structures` and the features, not `edge_index`, `senders`, `batch` or `ptr`.
 - **No scatter by hand** in a model: no `scatter`, `scatter_add_`, `index_add_`, `bincount`
   or indexing with a graph index. Use the methods of the table above.
 - **No dictionary as an argument or as a return value.** Tensors which travel together are
   the fields of a frozen dataclass (`Features` and `Geometry` in
-  `models/layers/line_graph_network.py`, `DimeNetConfig`), or separate arguments when there
+  `models/layers/line_graph_network.py`, `dimenet.Config`), or separate arguments when there
   are few. String keys are not typed, a wrong key only fails when it is read, and the
   signature no longer says what a function needs. A dictionary is fine for what is a mapping
   by nature: a state dict, a parsed `config.yaml`, `Structures.properties`.
-- **No hyperparameter written in the code.** A pretrained model reads every value from the
-  `config.yaml` next to its `model.py`. A layer takes its hyperparameters as arguments, and
-  a shared layer has no default taken from one model. A number which is a limit of the
-  implementation is one named constant with a comment saying so (`MAX_DEGREE` in
-  `models/layers/basis.py`).
+- **No hyperparameter written in the code, and none in a global variable.** Every value of
+  a pretrained model is in the `config.yaml` of its directory. `config.py`, next to it, has
+  a frozen dataclass `Config` (a `YamlConfig`, see `models/estimator/config.py`) with one
+  field per section of the file and one dataclass per section; `Config.load()` reads the
+  file once, strictly. The model takes a `Config` as its optional argument and gives it, or
+  the section they need, to its sub-modules: no module does `CONFIG = load_config(...)` or
+  keeps `RADIUS = ...`. What is derived from the values is a method of the `Config`.
+- **The class is `Config` in every module**, named by its module at the call site:
+  `cdvae.Config`, `m3gnet.Config`, `gemnet.Config`, never `CdvaeConfig`. A network of
+  `models/layers` takes the `Config` of its module, a plain frozen dataclass: a shared layer
+  has no default taken from one model, a network to train (`line_graph_network.Config`) has
+  its own defaults. A number which is a limit of the implementation is one named constant
+  with a comment saying so (`MAX_DEGREE` in `models/layers/basis.py`).
 - **Reuse `torchms.models.layers` and `torchms.graph`** before writing a basis, a cutoff or
   a graph. What several models could use goes there, with its own test.
 - **No new dependency.** scipy is used by the convex hull and the calibration of the

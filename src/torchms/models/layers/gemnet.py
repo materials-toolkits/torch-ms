@@ -48,7 +48,7 @@ INV_SQRT_2 = 1.0 / math.sqrt(2.0)
 
 
 @dataclass(frozen=True)
-class GemNetConfig:  # pylint: disable=too-many-instance-attributes
+class Config:  # pylint: disable=too-many-instance-attributes
     """Hyperparameters of a GemNet-T.
 
     Args:
@@ -157,7 +157,7 @@ class ScalingFactor(nn.Module):
         return x * self.scale_factor
 
 
-def residual_mlp(units_in: int, units: int, config: GemNetConfig) -> nn.ModuleList:
+def residual_mlp(units_in: int, units: int, config: Config) -> nn.ModuleList:
     """A layer then the residual layers of the updates of the atoms."""
     scale = config.activation_scale
 
@@ -170,7 +170,7 @@ def residual_mlp(units_in: int, units: int, config: GemNetConfig) -> nn.ModuleLi
 class RadialBasis(nn.Module):
     """Gaussians of the length of an edge over the radius, with a smooth cutoff."""
 
-    def __init__(self, config: GemNetConfig):
+    def __init__(self, config: Config):
         super().__init__()
         self.config = config
         # the width of a gaussian is the distance between two centers
@@ -190,7 +190,7 @@ class RadialBasis(nn.Module):
 class CircularBasisLayer(nn.Module):
     """Bases of a triplet: gaussians of a length and harmonics of the angle."""
 
-    def __init__(self, config: GemNetConfig):
+    def __init__(self, config: Config):
         super().__init__()
         self.config = config
         self.radial_basis = RadialBasis(config)
@@ -209,7 +209,7 @@ class CircularBasisLayer(nn.Module):
 class EfficientInteractionDownProjection(nn.Module):
     """Projection of the radial basis of an edge, one per degree of the harmonics."""
 
-    def __init__(self, config: GemNetConfig):
+    def __init__(self, config: Config):
         super().__init__()
         self.weight = nn.Parameter(
             torch.empty(config.num_spherical, config.num_radial, config.circular_dim)
@@ -225,7 +225,7 @@ class EfficientInteractionDownProjection(nn.Module):
 class EfficientInteractionBilinear(nn.Module):
     """Sum over the triplets of an edge, then bilinear layer with its radial basis."""
 
-    def __init__(self, config: GemNetConfig):
+    def __init__(self, config: Config):
         super().__init__()
         self.weight = nn.Parameter(
             torch.empty(config.triplet_dim, config.circular_dim, config.bilinear_dim)
@@ -251,7 +251,7 @@ class EfficientInteractionBilinear(nn.Module):
 class AtomEmbedding(nn.Module):
     """Initial features of the atoms, from their element."""
 
-    def __init__(self, config: GemNetConfig):
+    def __init__(self, config: Config):
         super().__init__()
         self.embeddings = nn.Embedding(config.num_elements, config.hidden_dim)
 
@@ -264,7 +264,7 @@ class AtomEmbedding(nn.Module):
 class EdgeEmbedding(nn.Module):
     """Features of an edge from the ones of its two atoms and its own."""
 
-    def __init__(self, edge_features: int, config: GemNetConfig):
+    def __init__(self, edge_features: int, config: Config):
         super().__init__()
         self.dense = Dense(
             2 * config.hidden_dim + edge_features,
@@ -287,7 +287,7 @@ class EdgeEmbedding(nn.Module):
 class AtomUpdateBlock(nn.Module):
     """Features of an atom from the edges it lists."""
 
-    def __init__(self, config: GemNetConfig):
+    def __init__(self, config: Config):
         super().__init__()
         self.dense_rbf = Dense(config.radial_dim, config.hidden_dim)
         self.scale_sum = ScalingFactor()
@@ -314,7 +314,7 @@ class OutputBlock(nn.Module):
     computed: cdvae does not use it.
     """
 
-    def __init__(self, config: GemNetConfig):
+    def __init__(self, config: Config):
         super().__init__()
         # read-out of the energy, as an update of the atoms
         self.dense_rbf = Dense(config.radial_dim, config.hidden_dim)
@@ -344,7 +344,7 @@ class OutputBlock(nn.Module):
 class TripletInteraction(nn.Module):
     """Update of an edge from the other edges of its atom, and of its reverse."""
 
-    def __init__(self, config: GemNetConfig):
+    def __init__(self, config: Config):
         super().__init__()
         self.dense_ba = Dense(
             config.hidden_dim, config.hidden_dim, activation=config.activation_scale
@@ -389,7 +389,7 @@ class TripletInteraction(nn.Module):
 class InteractionBlockTripletsOnly(nn.Module):
     """Update of the edges from the triplets, then of the atoms and of the edges."""
 
-    def __init__(self, config: GemNetConfig):
+    def __init__(self, config: Config):
         super().__init__()
         self.dense_ca = Dense(
             config.hidden_dim, config.hidden_dim, activation=config.activation_scale
@@ -445,7 +445,7 @@ class InteractionBlockTripletsOnly(nn.Module):
 class GemNetT(nn.Module):
     """GemNet-T computing features and a vector for each atom."""
 
-    def __init__(self, config: GemNetConfig):
+    def __init__(self, config: Config):
         super().__init__()
         self.radial_basis = RadialBasis(config)
         self.cbf_basis3 = CircularBasisLayer(config)

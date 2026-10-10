@@ -40,7 +40,6 @@ from torchms.data.hull import energy_above_reference
 from torchms.models.estimator import EnergyEstimator
 from torchms.graph.geometry import lattice_from_parameters, lattice_heights
 from torchms.models import CDVAE
-from torchms.models.cdvae.model import LATENT_DIM
 
 # a cell thinner than this, in Å, is not decoded: it has no room for an atom,
 # and the number of its images within the radius of the graphs has no limit
@@ -97,7 +96,8 @@ def generate(
         the ones of a crystal without atom or with a flat cell.
     """
     device = model.sigmas.device
-    latent = torch.randn((num, LATENT_DIM), generator=generator, device=device)
+    latent_dim = model.config.model.latent_dim
+    latent = torch.randn((num, latent_dim), generator=generator, device=device)
 
     num_atoms = model.predict_num_atoms(latent).argmax(dim=-1)
     lattice = lattice_from_parameters(*model.predict_lattice(latent, num_atoms))

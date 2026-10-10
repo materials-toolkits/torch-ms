@@ -17,14 +17,8 @@ from torchms.data.augmentation import (
     random_orthogonal,
 )
 from torchms.models.estimator import weights
-from torchms.models.mace import InvalidWeights, MACE
-from torchms.models.mace.model import (
-    DEGREES,
-    EXPECTED,
-    NUM_HARMONICS,
-    PARAMETERS,
-    RADIUS,
-)
+from torchms.models.mace import Config, InvalidWeights, MACE
+from torchms.models.mace.model import DEGREES, NUM_HARMONICS
 from torchms.models.estimator.reader import Placeholder
 from torchms.models.mace.reader import read_model
 from torchms.models.layers.basis import spherical_harmonics
@@ -59,11 +53,15 @@ def generator(seed: int = 0) -> torch.Generator:
 
 def mace_state_dict(model: MACE) -> dict[str, torch.Tensor]:
     """Parameters of a model as mace stores them: flat weights and its own names."""
+    config = Config.load()
     own = model.state_dict()
     state_dict = {
-        name: own[target].flatten() for name, (target, _) in PARAMETERS.items()
+        name: own[target].flatten()
+        for name, (target, _) in config.upstream_parameters().items()
     }
-    state_dict.update({name: torch.tensor(value) for name, value in EXPECTED.items()})
+    state_dict.update(
+        {name: torch.tensor(value) for name, value in config.expected_values().items()}
+    )
     return state_dict
 
 
@@ -232,12 +230,13 @@ def reference_structures() -> tuple[Structures, dict[str, np.ndarray]]:
 
 def test_pretrained_matches_mace(pretrained):
     """Energies of mace 0.3.16, computed once outside of the project."""
+    config = Config.load()
     structures, data = reference_structures()
     graph, vectors = pretrained.edges(pretrained.transform()(structures))
 
     assert graph.num_edges.tolist() == data["num_edges"].tolist()
     assert vectors.dtype == torch.float64
-    assert (vectors.norm(dim=-1) <= RADIUS + 1e-5).all()
+    assert (vectors.norm(dim=-1) <= config.graph.radius + 1e-5).all()
 
     energy = predict(pretrained, structures).numpy()
     error = np.abs(energy - data["energy"]) / structures.num_atoms.numpy()

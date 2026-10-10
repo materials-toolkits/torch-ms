@@ -27,20 +27,7 @@ from torchms.graph.transforms import (
     KeepNearestNeighbors,
     KeepNearImages,
 )
-from torchms.models.cdvae import CDVAE, InvalidWeights, sample_composition
-from torchms.models.cdvae.model import (
-    CONSTANT_BUFFERS,
-    LATENT_DIM,
-    MAX_ATOMS,
-    MAX_IMAGE_SHIFT,
-    MAX_NEIGHBORS,
-    NUM_ELEMENTS,
-    NUM_NOISE_LEVELS,
-    RADIUS,
-    SIGMA_BEGIN,
-    SIGMA_END,
-    UPSTREAM_ARGS,
-)
+from torchms.models.cdvae import CDVAE, Config, InvalidWeights, sample_composition
 
 DATA = Path(__file__).parent / "data"
 NAME = "cdvae-mp20-cowboys"
@@ -75,7 +62,8 @@ def noisy(structures: Structures, seed: int = 0) -> Structures:
 
 
 def latent(n_struct: int, seed: int = 0) -> torch.Tensor:
-    return torch.randn(n_struct, LATENT_DIM, generator=generator(seed))
+    config = Config.load()
+    return torch.randn(n_struct, config.model.latent_dim, generator=generator(seed))
 
 
 @pytest.fixture(scope="module")
@@ -109,8 +97,12 @@ def test_pinned_checkpoints(tmp_path):
 
 
 def test_noise_levels(model):
-    assert model.sigmas.shape == (NUM_NOISE_LEVELS,)
-    assert torch.allclose(model.sigmas[[0, -1]], torch.tensor([SIGMA_BEGIN, SIGMA_END]))
+    config = Config.load()
+    assert model.sigmas.shape == (config.model.num_noise_levels,)
+    assert torch.allclose(
+        model.sigmas[[0, -1]],
+        torch.tensor([config.model.sigma_begin, config.model.sigma_end]),
+    )
     assert (model.sigmas[1:] < model.sigmas[:-1]).all()
 
 
@@ -118,9 +110,10 @@ def test_noise_levels(model):
 
 
 def test_encoder_output(model):
+    config = Config.load()
     mu, log_var = model(BONDS(make_batch()))
 
-    assert mu.shape == log_var.shape == (2, LATENT_DIM)
+    assert mu.shape == log_var.shape == (2, config.model.latent_dim)
     assert mu.dtype == torch.float32
     assert mu.isfinite().all() and log_var.isfinite().all()
     assert not torch.allclose(mu[0], mu[1])
@@ -176,11 +169,12 @@ def test_encoder_unknown_element(model):
 
 
 def test_decoded_quantities(model):
+    config = Config.load()
     z = latent(3)
     num_atoms = torch.tensor([1, 8, 20])
 
-    assert model.predict_num_atoms(z).shape == (3, MAX_ATOMS + 1)
-    assert model.predict_composition(z).shape == (3, NUM_ELEMENTS)
+    assert model.predict_num_atoms(z).shape == (3, config.model.max_atoms + 1)
+    assert model.predict_composition(z).shape == (3, config.model.num_elements)
 
     lengths, angles = model.predict_lattice(z, num_atoms)
     assert lengths.shape == angles.shape == (3, 3)
@@ -235,21 +229,23 @@ def decoder_graph(structures: Structures) -> Structures:
 
 
 def test_decoder_output(model):
+    config = Config.load()
     structures = decoder_graph(noisy(make_batch()))
     move, scores = model.denoise(latent(2), structures)
 
     assert move.shape == (len(structures.z), 3)
-    assert scores.shape == (len(structures.z), NUM_ELEMENTS)
+    assert scores.shape == (len(structures.z), config.model.num_elements)
     assert move.isfinite().all() and scores.isfinite().all()
     assert move.abs().max() > 0
 
 
 def test_decoder_graph():
+    config = Config.load()
     structures = decoder_graph(noisy(make_batch()))
     graph = structures.graph
 
-    assert (graph.edges_distances() <= RADIUS).all()
-    assert graph.edge_shift.abs().max() <= MAX_IMAGE_SHIFT
+    assert (graph.edges_distances() <= config.graph.decoder.radius).all()
+    assert graph.edge_shift.abs().max() <= config.graph.decoder.max_image_shift
     assert (reverse_edges(graph) >= 0).all()
 
     # every edge is in one bond, and a triplet has two edges of the same atom
@@ -301,13 +297,14 @@ def test_decoder_follows_a_rotation(model):
 
 
 def test_decoder_needs_its_graphs(model):
+    config = Config.load()
     batch = noisy(make_batch())
 
     with pytest.raises(ValueError, match="decoder_transform"):
         model.denoise(latent(2), batch)
 
     with pytest.raises(ValueError, match="triplets, bonds"):
-        model.denoise(latent(2), AddRadiusGraph(RADIUS)(batch))
+        model.denoise(latent(2), AddRadiusGraph(config.graph.decoder.radius)(batch))
 
 
 # generation with random weights
@@ -340,16 +337,17 @@ def test_langevin_step(model):
 
 
 def test_generate(model):
+    config = Config.load()
     z = latent(3)
     options = {"steps_per_level": 1, "min_sigma": 5.0}
 
     structures = model.generate(z, generator=generator(), **options)
     assert structures.lattice.shape == (3, 3, 3)
     assert len(structures.z) == int(structures.num_atoms.sum())
-    assert (structures.num_atoms <= MAX_ATOMS).all()
+    assert (structures.num_atoms <= config.model.max_atoms).all()
     assert torch.equal(structures.num_atoms, model.predict_num_atoms(z).argmax(dim=-1))
     assert (structures.x >= 0).all() and (structures.x <= 1).all()
-    assert ((structures.z >= 1) & (structures.z <= NUM_ELEMENTS)).all()
+    assert ((structures.z >= 1) & (structures.z <= config.model.num_elements)).all()
 
     # the cell is the one decoded from the latent vector
     lengths, _ = model.predict_lattice(z, structures.num_atoms)
@@ -393,24 +391,27 @@ def test_sample(model):
 
 def upstream_state(model: CDVAE) -> dict[str, torch.Tensor]:
     """Parameters of a model under the names of cdvae."""
+    config = Config.load()
     state = {
         name.replace(".rbf.centers", ".rbf.offset"): values
         for name, values in model.state_dict().items()
-        if name not in CONSTANT_BUFFERS and not name.startswith("lattice_")
+        if name not in config.upstream.constant_buffers
+        and not name.startswith("lattice_")
     }
-    state["type_sigmas"] = torch.ones(NUM_NOISE_LEVELS)
+    state["type_sigmas"] = torch.ones(config.model.num_noise_levels)
 
     return state
 
 
 def upstream_hparams() -> dict[str, object]:
     """Configuration of the training of cdvae the rewrite is written for."""
+    config = Config.load()
     return {
-        "data": dict(UPSTREAM_ARGS["data"]),
+        "data": dict(config.upstream.sections()["data"]),
         "model": {
-            **UPSTREAM_ARGS["model"],
-            "encoder": dict(UPSTREAM_ARGS["model.encoder"]),
-            "decoder": dict(UPSTREAM_ARGS["model.decoder"]),
+            **config.upstream.sections()["model"],
+            "encoder": dict(config.upstream.sections()["model.encoder"]),
+            "decoder": dict(config.upstream.sections()["model.decoder"]),
         },
     }
 
@@ -520,15 +521,18 @@ def neighbours_at_the_same_distance(structures: Structures) -> torch.Tensor:
     Returns:
         Mask of these structures, shape (n_struct,).
     """
-    near = KeepNearImages(MAX_IMAGE_SHIFT)(
-        AddRadiusGraph(RADIUS, self_images=True)(structures.without_graphs())
+    config = Config.load()
+    near = KeepNearImages(config.graph.decoder.max_image_shift)(
+        AddRadiusGraph(config.graph.decoder.radius, self_images=True)(
+            structures.without_graphs()
+        )
     )
-    graph = KeepNearestNeighbors(MAX_NEIGHBORS + 1)(near).graph
+    graph = KeepNearestNeighbors(config.graph.decoder.max_neighbors + 1)(near).graph
 
     # edges are sorted by atom then by length: the last two of each atom
     degree = count_by(graph.senders, len(structures.z))
     last = F.pad(torch.cumsum(degree, dim=0), (1, 0), value=0)[1:] - 1
-    full = degree == MAX_NEIGHBORS + 1
+    full = degree == config.graph.decoder.max_neighbors + 1
     distance = graph.edges_distances()
     tie = (distance[last[full]] - distance[last[full] - 1]).abs() < 1e-4
 
