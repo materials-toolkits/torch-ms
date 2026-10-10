@@ -13,6 +13,7 @@ from jaxtyping import Float, Int
 from torchms.data.batching import Structures
 from torchms.data.hdf5 import HDF5Dataset
 from torchms.data.hull import Hull, energy_above_reference, load_hull
+from torchms.graph.transforms import attached_graph
 from torchms.models.estimator.calibration import load_correction
 
 if TYPE_CHECKING:
@@ -260,13 +261,14 @@ class EnergyEstimator:
         """
         if structures.graph is None:
             structures = self.transform(structures)
+        graph = attached_graph(structures, self)
 
         energy = self.model(structures)
 
         if self.correction is not None:
-            energy = energy.index_add(
-                0, structures.batch, self.correction[structures.z]
-            )
+            # correction of each element, indexed by atomic number
+            per_atom = self.correction[structures.z]
+            energy = energy + graph.aggregate_nodes_to_structures(per_atom)
 
         return energy
 

@@ -9,7 +9,8 @@
 # are derived from matgl (https://github.com/materialsvirtuallab/matgl),
 # Copyright (c) 2022, Materials Virtual Lab, BSD 3-Clause license (see
 # models/m3gnet/LICENSE). They were moved here from
-# models/m3gnet/model.py.
+# models/m3gnet/model.py. The roots are found here by bisection, where matgl
+# stores a table of them.
 """Bases of the distances, of the angles and of the directions of the models."""
 
 from __future__ import annotations
@@ -21,8 +22,6 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from jaxtyping import Float
-from scipy.optimize import brentq
-from scipy.special import spherical_jn
 from torch import nn
 
 # Largest degree l of spherical_harmonics, which is written out degree by
@@ -164,34 +163,6 @@ class BesselBasis(nn.Module):
         return sine_bessel(distance, self.bessel_weights, self.prefactor)
 
 
-def spherical_bessel_roots(max_l: int, max_n: int) -> np.ndarray:
-    """First roots of the spherical Bessel functions j_0 to j_(max_l - 1).
-
-    The roots of j_l are between the ones of j_(l-1).
-
-    Returns:
-        Roots with shape (max_l, max_n).
-
-    Examples:
-        >>> spherical_bessel_roots(2, 2).round(4)
-        array([[3.1416, 6.2832],
-               [4.4934, 7.7253]])
-    """
-    zeros = np.arange(1, max_l + max_n + 1) * math.pi
-    roots = [zeros[:max_n]]
-
-    for degree in range(1, max_l):
-        zeros = np.array(
-            [
-                brentq(lambda x, v=degree: spherical_jn(v, x), low, high)
-                for low, high in zip(zeros[:-1], zeros[1:])
-            ]
-        )
-        roots.append(zeros[:max_n])
-
-    return np.array(roots)
-
-
 def spherical_bessel(
     max_l: int, x: Float[torch.Tensor, "..."]
 ) -> list[Float[torch.Tensor, "..."]]:
@@ -208,6 +179,43 @@ def spherical_bessel(
         functions.append((2 * degree + 1) / x * functions[-1] - functions[-2])
 
     return functions[: max_l + 1]
+
+
+def spherical_bessel_roots(max_l: int, max_n: int) -> np.ndarray:
+    """First roots of the spherical Bessel functions j_0 to j_(max_l - 1).
+
+    The roots of j_0 are the multiples of pi. The roots of j_l are between
+    the ones of j_(l-1): each one is found by bisection, in double precision,
+    all the roots of a degree at once.
+
+    Returns:
+        Roots with shape (max_l, max_n).
+
+    Examples:
+        >>> spherical_bessel_roots(2, 2).round(4)
+        array([[3.1416, 6.2832],
+               [4.4934, 7.7253]])
+    """
+    zeros = math.pi * torch.arange(1, max_l + max_n + 1, dtype=torch.float64)
+    roots = [zeros[:max_n]]
+
+    # an interval is halved until it is as narrow as double precision allows
+    num_bisections = torch.finfo(torch.float64).bits
+
+    for degree in range(1, max_l):
+        low, high = zeros[:-1], zeros[1:]
+        sign = torch.sign(spherical_bessel(degree, low)[degree])
+
+        for _ in range(num_bisections):
+            middle = 0.5 * (low + high)
+            same_side = torch.sign(spherical_bessel(degree, middle)[degree]) == sign
+            low = torch.where(same_side, middle, low)
+            high = torch.where(same_side, high, middle)
+
+        zeros = 0.5 * (low + high)
+        roots.append(zeros[:max_n])
+
+    return torch.stack(roots).numpy()
 
 
 def legendre(max_l: int, x: Float[torch.Tensor, "n"]) -> Float[torch.Tensor, "n max_l"]:

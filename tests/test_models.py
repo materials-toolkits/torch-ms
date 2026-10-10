@@ -219,6 +219,23 @@ def test_line_graph_network_cutoffs_of_tuples():
         assert torch.allclose(cutoff, envelope[tuples.index].prod(dim=0))
 
 
+def test_equivariant_network_does_not_build_graphs():
+    batch = make_batch()
+    model = equivariant_network(3)
+
+    with pytest.raises(ValueError, match="graph.*transform"):
+        model(batch)
+
+    structures = model.transform()(batch)
+    assert structures.triplets is None and structures.line_graph is None
+
+    graph, radial, harmonics = model.edges(structures)
+    assert graph is structures.graph
+    assert (graph.edges_distances() <= RADIUS[0]).all()
+    assert radial.shape == (int(graph.num_edges.sum()), 8)
+    assert harmonics.shape == (int(graph.num_edges.sum()), 16)
+
+
 @pytest.mark.parametrize("make_model", MODELS)
 def test_output(make_model):
     energy = run(make_model(), make_batch())

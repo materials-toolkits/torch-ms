@@ -25,7 +25,7 @@ polynomial_cutoff(distance, 6.0, p=5)       # 1 at 0, 0 at the radius and after
 | `polynomial_cutoff` | envelope from 1 at a distance of 0 to 0 at the radius, with two derivatives zero there | orb-models | every model |
 
 `spherical_bessel_roots` and `spherical_bessel` give the roots and the values of the spherical
-Bessel functions. The roots are computed once with scipy; the functions by recurrence in
+Bessel functions. The roots are found once by bisection, in double precision; the functions by recurrence in
 torch, which loses digits in single precision for a high degree and a short distance (see
 [CDVAE](cdvae.md#comparison-with-the-original)).
 

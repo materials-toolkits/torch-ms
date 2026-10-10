@@ -229,6 +229,15 @@ passed around can be the one of another graph or another batch and nothing notic
 object carries its own sizes and offsets. Compare the signatures of `M3GNetGraphConv` and
 `ThreeBodyInteractions` in `models/m3gnet/model.py`.
 
+**No dictionary as an argument or as a return value.** Tensors which travel together
+(the features of the atoms, of the bonds and of the angles; the lengths, the angles and
+their cutoffs) are the fields of a frozen dataclass, as `Features` and `Geometry` in
+`models/layers/line_graph_network.py`, or separate arguments when there are few. A
+dictionary with string keys is not typed, a wrong key only fails when it is read, and the
+signature no longer says what the layer needs. Upstream code often passes dictionaries of
+tensors around: do not carry them over. A dictionary stays right for what is a mapping by
+nature: a state dict, the parsed `config.yaml`.
+
 **No scatter by hand.** No `scatter`, `scatter_add_`, `index_add_`, `bincount` or fancy
 indexing with an index in a model. Use the methods which name what is done:
 
@@ -259,9 +268,10 @@ than a twin. A new function several models could use goes to `models/layers/basi
 `torchms.graph` with its own test, not in the port.
 
 **No new library.** `pyproject.toml` is not touched. What the original takes from e3nn,
-DGL, PyG, sympy, ASE or pymatgen is rewritten with torch (numpy and scipy are available
-for constants computed once). If this is out of reach for a part of the model, say so and
-port the variant which does not need it, as was done for the small MACE.
+DGL, PyG, sympy, ASE or pymatgen is rewritten with torch and numpy. The models and the
+layers do not import scipy: it is for a reference script or a test. If this is out of reach
+for a part of the model, say so and port the variant which does not need it, as was done
+for the small MACE.
 
 The rules of `CLAUDE.md` apply as everywhere: no Python loop over structures, `device=`
 on every new tensor, no `.to(device)` on an input.

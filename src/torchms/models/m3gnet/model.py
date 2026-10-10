@@ -6,7 +6,7 @@
 # potential of matgl, for inference only. Forces, stress, state features, the
 # other read-outs, training and the conversion from pymatgen are removed.
 # Graphs are built by torchms.graph, the spherical Bessel functions and
-# their roots are computed with torch and scipy instead of sympy, and batches
+# their roots are computed with torch instead of sympy, and batches
 # are torchms Structures. Names of modules and parameters follow matgl to
 # load its pretrained weights.
 """Energy prediction of the pretrained M3GNet potential.

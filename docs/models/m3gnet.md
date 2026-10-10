@@ -6,7 +6,7 @@
 than 5 Å are bonded; a bond is updated from the angles it forms with the other bonds of its
 atom of at most 4 Å (`triplets` with a mask), in a basis of spherical Bessel functions and
 spherical harmonics. matgl builds these functions with sympy; they are computed here with
-torch, and their roots with scipy. Forces and stress are not included.
+torch, their roots included. Forces and stress are not included.
 
 | | |
 |---|---|
