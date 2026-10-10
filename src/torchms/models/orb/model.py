@@ -306,11 +306,11 @@ class ZBLBasis(nn.Module):
         return graph.aggregate_nodes_to_structures(per_atom) / graph.num_atoms
 
 
-class OrbEnergyModel(PretrainedModel):
+class OrbV3(PretrainedModel):
     """Total energy of crystal structures predicted by orb-v3 conservative.
 
     Examples:
-        >>> model = OrbEnergyModel()
+        >>> model = OrbV3()
         >>> structures = Structures.collate([Structures.diamond(), Structures.zincblende()])
         >>> structures = model.transform()(structures)
         >>> with torch.no_grad():

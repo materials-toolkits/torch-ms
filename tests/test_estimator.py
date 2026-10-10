@@ -9,7 +9,7 @@ import pytest
 import torch
 
 from torchms.data import HDF5Dataset, Structures
-from torchms.models import OrbEnergyModel
+from torchms.models import OrbV3
 from torchms.models.estimator import EnergyEstimator
 from torchms.models.estimator import calibration
 from torchms.models.estimator import weights
@@ -210,7 +210,7 @@ def test_pair_repulsion_only_at_short_distance():
 @pytest.fixture(scope="module")
 def model():
     torch.manual_seed(0)
-    return OrbEnergyModel().double().eval().requires_grad_(False)
+    return OrbV3().double().eval().requires_grad_(False)
 
 
 def double(structures: Structures) -> Structures:
@@ -246,7 +246,7 @@ def supercell(structures: Structures) -> Structures:
     )
 
 
-def repulsion(model: OrbEnergyModel, structures: Structures) -> torch.Tensor:
+def repulsion(model: OrbV3, structures: Structures) -> torch.Tensor:
     graph, vectors = model.edges(model.transform()(structures))
     return model.pair_repulsion_fn(structures.z, vectors, graph)
 
@@ -345,7 +345,7 @@ def test_load_pretrained_checks_the_parameters(model):
         {f"{prefix}weight": torch.zeros(1) for prefix in UNUSED_PARAMETERS}
     )
 
-    other = OrbEnergyModel().double()
+    other = OrbV3().double()
     other.load_pretrained(state_dict)
     assert torch.allclose(
         predict(other, double(tilted())), predict(model, double(tilted()))
@@ -382,7 +382,7 @@ def test_pretrained_matches_orb_models(name):
         pytest.skip(f"weights of {full_name} are not in the cache")
 
     structures, data = reference_structures()
-    pretrained = OrbEnergyModel.from_pretrained(full_name, device="cpu")
+    pretrained = OrbV3.from_pretrained(full_name, device="cpu")
 
     graph, _ = pretrained.edges(pretrained.transform()(structures))
     with torch.no_grad():
@@ -407,7 +407,7 @@ def test_pretrained_is_almost_invariant_to_rotations():
         pytest.skip(f"weights of {name} are not in the cache")
 
     structures, data = reference_structures()
-    pretrained = OrbEnergyModel.from_pretrained(name, device="cpu")
+    pretrained = OrbV3.from_pretrained(name, device="cpu")
     generator = torch.Generator().manual_seed(0)
     rotation = torch.linalg.qr(torch.randn(3, 3, generator=generator))[0]
     rotated = Structures(
@@ -435,7 +435,7 @@ def test_pretrained_state_dict_is_fully_used():
     state_dict = torch.load(path, map_location="cpu", weights_only=True)
     used = {k for k in state_dict if not k.startswith(UNUSED_PARAMETERS)}
 
-    assert used == set(OrbEnergyModel().state_dict())
+    assert used == set(OrbV3().state_dict())
     assert len(state_dict) - len(used) == 17
 
 
@@ -603,7 +603,7 @@ def test_to_device():
 @pytest.fixture(scope="module")
 def float_model():
     torch.manual_seed(0)
-    return OrbEnergyModel().eval().requires_grad_(False)
+    return OrbV3().eval().requires_grad_(False)
 
 
 def test_estimator_adds_the_correction(float_model):
@@ -709,7 +709,7 @@ def test_fit_absolute_loss_ignores_outliers():
 # energy above the hull
 
 
-def hull_file(tmp_path, model: OrbEnergyModel, shift: float = 0.0):
+def hull_file(tmp_path, model: OrbV3, shift: float = 0.0):
     """Hull of zincblende ZnS, of its elements and of sodium, from the model."""
     from torchms.data.hull import save_hull
 
@@ -847,7 +847,7 @@ def test_from_pretrained_loads_correction_and_hull(tmp_path, float_model, monkey
         loaded.append((name, device))
         return float_model
 
-    monkeypatch.setattr(OrbEnergyModel, "from_pretrained", from_pretrained)
+    monkeypatch.setattr(OrbV3, "from_pretrained", from_pretrained)
 
     estimator = EnergyEstimator.from_pretrained(
         correction_file=tmp_path / "correction.hdf5", hull_file=path
@@ -886,9 +886,7 @@ def test_from_lematerial_downloads_correction_and_hull(
     fake_hub = types.ModuleType("huggingface_hub")
     fake_hub.hf_hub_download = hf_hub_download
     monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub)
-    monkeypatch.setattr(
-        OrbEnergyModel, "from_pretrained", lambda name, device=None: float_model
-    )
+    monkeypatch.setattr(OrbV3, "from_pretrained", lambda name, device=None: float_model)
 
     estimator = EnergyEstimator.from_lematerial()
 
@@ -924,9 +922,7 @@ def test_from_lematerial_downloads_correction_and_hull(
 
 def test_hull_source_of_a_file(tmp_path, float_model, monkeypatch):
     path, _ = hull_file(tmp_path, float_model)
-    monkeypatch.setattr(
-        OrbEnergyModel, "from_pretrained", lambda name, device=None: float_model
-    )
+    monkeypatch.setattr(OrbV3, "from_pretrained", lambda name, device=None: float_model)
 
     estimator = EnergyEstimator.from_pretrained(hull_file=path)
     assert estimator.hull_source == f"file {path}"

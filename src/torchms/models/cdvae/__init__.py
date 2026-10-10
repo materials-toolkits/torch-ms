@@ -6,10 +6,10 @@ DimeNet++ encoder and its GemNet-T decoder are in torchms.models.layers. Its
 pretrained weights are listed in config.yaml, with its hyperparameters.
 """
 
-from torchms.models.cdvae.model import CdvaeModel, InvalidWeights, sample_composition
+from torchms.models.cdvae.model import CDVAE, InvalidWeights, sample_composition
 
 __all__ = [
-    "CdvaeModel",
+    "CDVAE",
     "InvalidWeights",
     "sample_composition",
 ]

@@ -77,7 +77,7 @@ Every field of `GemNetConfig` is required: a model gives the values of its `conf
 
 - **The graph must be symmetric**, with the pairs of an edge and its reverse attached
   (`AddBonds`): after `KeepNearestNeighbors`, use `MirrorEdges`, as
-  `CdvaeModel.decoder_transform()` does.
+  `CDVAE.decoder_transform()` does.
 - The number of triplets grows with the square of the number of neighbours: 20 neighbours
   give 380 triplets per atom.
 - The vector of an atom points towards itself along an edge with a positive scalar: an edge

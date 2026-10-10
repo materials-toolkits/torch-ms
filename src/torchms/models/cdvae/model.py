@@ -209,7 +209,7 @@ def sample_composition(
     return z[order][rank < num_atoms[owner[order]]]
 
 
-class CdvaeModel(PretrainedModel):
+class CDVAE(PretrainedModel):
     """Crystal Diffusion Variational Autoencoder.
 
     The model does not build the graph of the bonds its encoder reads, see
@@ -220,7 +220,7 @@ class CdvaeModel(PretrainedModel):
         Latent vectors of two structures, with a graph of their atoms closer
         than 2 Å in place of the graph of CrystalNN:
 
-        >>> model = CdvaeModel().eval()
+        >>> model = CDVAE().eval()
         >>> structures = Structures.collate([Structures.diamond(), Structures.water()])
         >>> structures = model.transform()(AddRadiusGraph(2.0)(structures))
         >>> with torch.no_grad():

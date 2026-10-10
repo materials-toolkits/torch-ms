@@ -40,7 +40,7 @@ library by an exact quadrature on the sphere. They are the couplings which do no
 mirror: the model cannot distinguish a crystal from its mirror image.
 
 This is not MACE: MACE learns one weight per coupling of its symmetric contraction and keeps
-vector and tensor features between layers in its larger models. `MaceEnergyModel`, in
+vector and tensor features between layers in its larger models. `MACE`, in
 `torchms.models.estimator`, is the exact rewrite of its small model.
 
 ## What it guarantees

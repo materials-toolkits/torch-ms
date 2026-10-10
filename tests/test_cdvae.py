@@ -27,7 +27,7 @@ from torchms.graph.transforms import (
     KeepNearestNeighbors,
     KeepNearImages,
 )
-from torchms.models.cdvae import CdvaeModel, InvalidWeights, sample_composition
+from torchms.models.cdvae import CDVAE, InvalidWeights, sample_composition
 from torchms.models.cdvae.model import (
     CONSTANT_BUFFERS,
     LATENT_DIM,
@@ -49,7 +49,7 @@ NAME = "cdvae-mp20-cowboys"
 pytestmark = pytest.mark.timeout(60)
 
 # a graph of bonds for the encoder, in place of the one of CrystalNN
-BONDS = Compose([AddRadiusGraph(3.5, self_images=True), CdvaeModel.transform()])
+BONDS = Compose([AddRadiusGraph(3.5, self_images=True), CDVAE.transform()])
 
 
 def generator(seed: int = 0) -> torch.Generator:
@@ -79,10 +79,10 @@ def latent(n_struct: int, seed: int = 0) -> torch.Tensor:
 
 
 @pytest.fixture(scope="module")
-def model() -> CdvaeModel:
+def model() -> CDVAE:
     """Model with random weights, and cells of a few Å near a cube."""
     torch.manual_seed(0)
-    model = CdvaeModel().eval().requires_grad_(False)
+    model = CDVAE().eval().requires_grad_(False)
     model.lattice_means.copy_(torch.tensor([2.5, 2.5, 2.5, 90.0, 90.0, 90.0]))
     model.lattice_stds.copy_(torch.tensor([0.2, 0.2, 0.2, 5.0, 5.0, 5.0]))
 
@@ -231,7 +231,7 @@ def test_sample_composition_without_atoms():
 
 
 def decoder_graph(structures: Structures) -> Structures:
-    return CdvaeModel.decoder_transform()(structures)
+    return CDVAE.decoder_transform()(structures)
 
 
 def test_decoder_output(model):
@@ -391,7 +391,7 @@ def test_sample(model):
 # the weights
 
 
-def upstream_state(model: CdvaeModel) -> dict[str, torch.Tensor]:
+def upstream_state(model: CDVAE) -> dict[str, torch.Tensor]:
     """Parameters of a model under the names of cdvae."""
     state = {
         name.replace(".rbf.centers", ".rbf.offset"): values
@@ -419,7 +419,7 @@ def test_load_pretrained_checks_the_parameters(model):
     state = upstream_state(model)
     means, stds = torch.arange(6.0), torch.arange(1.0, 7.0)
 
-    other = CdvaeModel()
+    other = CDVAE()
     other.load_pretrained(state, means, stds, upstream_hparams())
     other.eval()
     with torch.no_grad():
@@ -546,11 +546,11 @@ def close(found: torch.Tensor, expected: torch.Tensor) -> bool:
 
 
 @pytest.fixture(scope="module")
-def pretrained() -> CdvaeModel:
+def pretrained() -> CDVAE:
     if not all(path.exists() for path in weights.checkpoint_paths("cdvae", NAME)):
         pytest.skip(f"weights of {NAME} are not in the cache")
 
-    return CdvaeModel.from_pretrained(NAME, device="cpu")
+    return CDVAE.from_pretrained(NAME, device="cpu")
 
 
 def test_pretrained_encoder_matches_cdvae(pretrained):

@@ -17,11 +17,11 @@ compared once with the original code, on the same 40 structures (253 for orb-v3)
 
 | Model | Class | Predicts | Source | Weights | Largest difference with the original |
 |---|---|---|---|---|---|
-| [orb-v3](orb.md) | `OrbEnergyModel` | total energy | orb-models 0.7.0, Apache-2.0 | official | 2.7e-5 eV/atom below 120 neighbours |
-| [MACE](mace.md) | `MaceEnergyModel` | total energy | mace 0.3.16, MIT | official | 5e-15 eV/atom, double precision |
-| [M3GNet](m3gnet.md) | `M3gnetEnergyModel` | total energy | matgl 4.1.0, BSD 3-Clause | official | 1.6e-6 eV/atom |
-| [CHGNet](chgnet.md) | `ChgnetEnergyModel` | total energy | chgnet 0.4.2, modified BSD | official | 4.1e-6 eV/atom |
-| [ALIGNN](alignn.md) | `AlignnModel` | formation energy | alignn 2026.8.11, NIST | official | 4.8e-7 eV/atom with the same 12 neighbours |
+| [orb-v3](orb.md) | `OrbV3` | total energy | orb-models 0.7.0, Apache-2.0 | official | 2.7e-5 eV/atom below 120 neighbours |
+| [MACE](mace.md) | `MACE` | total energy | mace 0.3.16, MIT | official | 5e-15 eV/atom, double precision |
+| [M3GNet](m3gnet.md) | `M3GNet` | total energy | matgl 4.1.0, BSD 3-Clause | official | 1.6e-6 eV/atom |
+| [CHGNet](chgnet.md) | `CHGNet` | total energy | chgnet 0.4.2, modified BSD | official | 4.1e-6 eV/atom |
+| [ALIGNN](alignn.md) | `ALIGNN` | formation energy | alignn 2026.8.11, NIST | official | 4.8e-7 eV/atom with the same 12 neighbours |
 
 Forces, stress, magnetic moments and training are not included. orb-v3 is the model of the
 [energy estimator](../guide/energy.md); the other ones are not used by it.
@@ -32,9 +32,9 @@ Models which generate structures.
 
 | Model | Class | Generates | Source | Weights | Largest difference with the original |
 |---|---|---|---|---|---|
-| [CDVAE](cdvae.md) | `CdvaeModel` | crystals of at most 20 atoms, from a latent vector | cdvae `f857f59`, MIT | **third party** | 4.0e-5 on the latent mean |
-| [DiffCSP](diffcsp.md) | `DiffCspModel` | the lattice and the coordinates of a crystal, from its composition | DiffCSP `7121d15`, MIT | official | 7.6e-6 on the noise of the lattice |
-| [DiffCSP](diffcsp.md) | `DiffCspGenerationModel` | crystals of given numbers of atoms, with their elements | DiffCSP `7121d15`, MIT | official | 5.7e-6 on the noise of the lattice |
+| [CDVAE](cdvae.md) | `CDVAE` | crystals of at most 20 atoms, from a latent vector | cdvae `f857f59`, MIT | **third party** | 4.0e-5 on the latent mean |
+| [DiffCSP](diffcsp.md) | `DiffCSP` | the lattice and the coordinates of a crystal, from its composition | DiffCSP `7121d15`, MIT | official | 7.6e-6 on the noise of the lattice |
+| [DiffCSP](diffcsp.md) | `DiffCSPGeneration` | crystals of given numbers of atoms, with their elements | DiffCSP `7121d15`, MIT | official | 5.7e-6 on the noise of the lattice |
 
 Both are rewrites too, compared with the original code as the supervised models. The
 weights of CDVAE were not trained by its authors, who publish none: see its page. DiffCSP

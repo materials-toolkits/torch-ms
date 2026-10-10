@@ -5,9 +5,9 @@ in this directory): model.py is the network. Its pretrained weights are
 listed in config.yaml, with its hyperparameters.
 """
 
-from torchms.models.orb.model import InvalidWeights, OrbEnergyModel
+from torchms.models.orb.model import InvalidWeights, OrbV3
 
 __all__ = [
     "InvalidWeights",
-    "OrbEnergyModel",
+    "OrbV3",
 ]

@@ -5,9 +5,9 @@ directory): model.py is the network and reader.py reads its pretrained weights
 without mace. They are listed in config.yaml, with its hyperparameters.
 """
 
-from torchms.models.mace.model import InvalidWeights, MaceEnergyModel
+from torchms.models.mace.model import InvalidWeights, MACE
 
 __all__ = [
     "InvalidWeights",
-    "MaceEnergyModel",
+    "MACE",
 ]

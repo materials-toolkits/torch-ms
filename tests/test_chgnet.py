@@ -15,7 +15,7 @@ from torchms.data.augmentation import (
     make_supercell,
 )
 from torchms.models.estimator import weights
-from torchms.models.chgnet import ChgnetEnergyModel, InvalidWeights
+from torchms.models.chgnet import CHGNet, InvalidWeights
 from torchms.models.chgnet.model import BOND_RADIUS, MODEL_ARGS, RADIUS
 from torchms.graph.line_graph import reverse_edges
 
@@ -48,13 +48,13 @@ def generator(seed: int = 0) -> torch.Generator:
 
 
 @pytest.fixture(scope="module")
-def model() -> ChgnetEnergyModel:
+def model() -> CHGNet:
     """Model with random weights."""
     torch.manual_seed(0)
-    return ChgnetEnergyModel().eval().requires_grad_(False)
+    return CHGNet().eval().requires_grad_(False)
 
 
-def per_atom(model: ChgnetEnergyModel, structures: Structures) -> torch.Tensor:
+def per_atom(model: CHGNet, structures: Structures) -> torch.Tensor:
     return predict(model, structures) / structures.num_atoms
 
 
@@ -148,7 +148,7 @@ def test_load_pretrained_checks_the_parameters(model):
     state_dict = dict(model.state_dict())
     state_dict["site_wise.weight"] = torch.zeros(1, 64)
 
-    other = ChgnetEnergyModel()
+    other = CHGNet()
     other.load_pretrained(state_dict, MODEL_ARGS)
     other.eval()
     with torch.no_grad():
@@ -182,11 +182,11 @@ def reference_structures() -> tuple[Structures, dict[str, np.ndarray]]:
 
 
 @pytest.fixture(scope="module")
-def pretrained() -> ChgnetEnergyModel:
+def pretrained() -> CHGNet:
     if not weights.checkpoint_paths("chgnet", NAME)[0].exists():
         pytest.skip(f"weights of {NAME} are not in the cache")
 
-    return ChgnetEnergyModel.from_pretrained(NAME, device="cpu")
+    return CHGNet.from_pretrained(NAME, device="cpu")
 
 
 @pytest.mark.timeout(120)

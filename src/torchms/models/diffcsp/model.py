@@ -25,8 +25,8 @@ steps, from the last time to the first. A step corrects the coordinates by a
 Langevin move, then predicts the lattice and the coordinates of the time
 before.
 
-DiffCspModel samples the structure of atoms of given elements. In
-DiffCspGenerationModel the element of an atom is a vector with one value per
+DiffCSP samples the structure of atoms of given elements. In
+DiffCSPGeneration the element of an atom is a vector with one value per
 element, which gets the noise of the lattice and is sampled with the
 structure: only the numbers of atoms are given.
 
@@ -326,7 +326,7 @@ class Diffusion(PretrainedModel):  # pylint: disable=abstract-method
         ) + self.beta_scheduler.sigmas[time] * noise
 
 
-class DiffCspModel(Diffusion):
+class DiffCSP(Diffusion):
     """DiffCSP: diffusion of the lattice and of the coordinates of a crystal.
 
     The model does not build the complete graph its network reads, see
@@ -335,7 +335,7 @@ class DiffCspModel(Diffusion):
     Examples:
         The network on two structures, at the times 1 and 1000:
 
-        >>> model = DiffCspModel().eval()
+        >>> model = DiffCSP().eval()
         >>> structures = Structures.collate(
         ...     [Structures.diamond(), Structures.zincblende()]
         ... )
@@ -540,7 +540,7 @@ class GenerationNoise:
     predictor: Float[torch.Tensor, "n_atoms 3"]
 
 
-class DiffCspGenerationModel(Diffusion):
+class DiffCSPGeneration(Diffusion):
     """DiffCSP which also generates the elements of the atoms.
 
     The element of an atom is a vector of one value per element, from hydrogen,
@@ -555,7 +555,7 @@ class DiffCspGenerationModel(Diffusion):
     Examples:
         The network on two structures without noise, at the times 1 and 1000:
 
-        >>> model = DiffCspGenerationModel().eval()
+        >>> model = DiffCSPGeneration().eval()
         >>> structures = Structures.collate(
         ...     [Structures.diamond(), Structures.zincblende()]
         ... )

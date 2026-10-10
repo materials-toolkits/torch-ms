@@ -31,9 +31,9 @@ src/torchms/models/diffcsp/config.yaml: the cache of torchms after a first
 from_pretrained(). The script is run once for each model, and finds which one
 it is given:
 
-* "~/.cache/torchms/diffcsp/diffcsp-mp20", of DiffCspModel: the result is
+* "~/.cache/torchms/diffcsp/diffcsp-mp20", of DiffCSP: the result is
   written to tests/data/diffcsp_reference.npz;
-* "~/.cache/torchms/diffcsp/diffcsp-gen-mp20", of DiffCspGenerationModel: the
+* "~/.cache/torchms/diffcsp/diffcsp-gen-mp20", of DiffCSPGeneration: the
   result is written to tests/data/diffcsp_generation_reference.npz.
 
 The structures are the ones of tests/data/orb_reference.npz. The results are

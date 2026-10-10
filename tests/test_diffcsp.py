@@ -15,8 +15,8 @@ from torchms.data.augmentation import (
 )
 from torchms.graph.transforms import AddRadiusGraph
 from torchms.models.diffcsp import (
-    DiffCspGenerationModel,
-    DiffCspModel,
+    DiffCSP,
+    DiffCSPGeneration,
     GenerationNoise,
     InvalidWeights,
 )
@@ -57,10 +57,10 @@ def make_batch() -> Structures:
 
 
 @pytest.fixture(scope="module")
-def model() -> DiffCspModel:
+def model() -> DiffCSP:
     """Model with random weights, and scores scaled as the ones of small noise."""
     torch.manual_seed(0)
-    model = DiffCspModel().eval().requires_grad_(False)
+    model = DiffCSP().eval().requires_grad_(False)
     sigmas = model.sigma_scheduler.sigmas
     model.sigma_scheduler.sigmas_norm[1:] = 1.0 / sigmas[1:] ** 2
 
@@ -72,8 +72,8 @@ TIMES = torch.tensor([3, 700])
 
 def test_pinned_checkpoints(tmp_path):
     assert set(weights.CHECKPOINTS["diffcsp"]) == {NAME, GENERATION_NAME}
-    assert DiffCspModel.DEFAULT_WEIGHTS == NAME
-    assert DiffCspGenerationModel.DEFAULT_WEIGHTS == GENERATION_NAME
+    assert DiffCSP.DEFAULT_WEIGHTS == NAME
+    assert DiffCSPGeneration.DEFAULT_WEIGHTS == GENERATION_NAME
 
     for name in (NAME, GENERATION_NAME):
         for checkpoint in weights.CHECKPOINTS["diffcsp"][name]:
@@ -254,7 +254,7 @@ def test_coordinates_outside_of_the_cell(model):
 
 
 def test_needs_its_graph(model):
-    with pytest.raises(ValueError, match=r"apply DiffCspModel.transform\(\)"):
+    with pytest.raises(ValueError, match=r"apply DiffCSP.transform\(\)"):
         model(make_batch(), TIMES)
 
 
@@ -394,7 +394,7 @@ def test_load_pretrained_checks_the_parameters(model):
     state = dict(model.state_dict())
     assert "elements" not in state
 
-    other = DiffCspModel()
+    other = DiffCSP()
     other.load_pretrained(state, upstream_hparams())
     other.eval()
     with torch.no_grad():
@@ -462,16 +462,16 @@ def close_in_the_cell(found: torch.Tensor, expected: torch.Tensor) -> bool:
 
 
 @pytest.fixture(scope="module")
-def pretrained() -> DiffCspModel:
+def pretrained() -> DiffCSP:
     if not all(path.exists() for path in weights.checkpoint_paths("diffcsp", NAME)):
         pytest.skip(f"weights of {NAME} are not in the cache")
 
-    return DiffCspModel.from_pretrained(NAME, device="cpu")
+    return DiffCSP.from_pretrained(NAME, device="cpu")
 
 
 def test_pretrained_schedules_are_the_ones_of_the_configuration(pretrained):
     """The schedules of the weights are the ones computed from config.yaml."""
-    computed = DiffCspModel()
+    computed = DiffCSP()
 
     for name in ("betas", "alphas", "alphas_cumprod", "sigmas"):
         found = getattr(pretrained.beta_scheduler, name)
@@ -576,17 +576,17 @@ def test_pretrained_dynamics_match_diffcsp(pretrained):
 
 
 @pytest.fixture(scope="module")
-def generation() -> DiffCspGenerationModel:
+def generation() -> DiffCSPGeneration:
     """Model with random weights, and scores scaled as the ones of small noise."""
     torch.manual_seed(1)
-    model = DiffCspGenerationModel().eval().requires_grad_(False)
+    model = DiffCSPGeneration().eval().requires_grad_(False)
     sigmas = model.sigma_scheduler.sigmas
     model.sigma_scheduler.sigmas_norm[1:] = 1.0 / sigmas[1:] ** 2
 
     return model
 
 
-def noisy_elements(model: DiffCspGenerationModel, batch: Structures) -> torch.Tensor:
+def noisy_elements(model: DiffCSPGeneration, batch: Structures) -> torch.Tensor:
     """Vectors of the elements of structures, with some noise."""
     noise = torch.randn(len(batch.z), NUM_ELEMENTS, generator=generator(2))
 
@@ -682,7 +682,7 @@ def test_generation_follows_a_permutation_and_a_translation(generation):
 def test_generation_needs_its_graph(generation):
     batch = make_batch()
 
-    with pytest.raises(ValueError, match=r"apply DiffCspGenerationModel.transform\(\)"):
+    with pytest.raises(ValueError, match=r"apply DiffCSPGeneration.transform\(\)"):
         generation(batch, noisy_elements(generation, batch), TIMES)
 
 
@@ -801,7 +801,7 @@ def test_generation_load_pretrained_checks_the_parameters(generation, model):
     state["type_sigma_scheduler.sigmas"] = torch.zeros(TIMESTEPS + 1)
     state["type_sigma_scheduler.sigmas_norm"] = torch.ones(TIMESTEPS + 1)
 
-    other = DiffCspGenerationModel()
+    other = DiffCSPGeneration()
     other.load_pretrained(state, hparams)
     other.eval()
     with torch.no_grad():
@@ -816,13 +816,13 @@ def test_generation_load_pretrained_checks_the_parameters(generation, model):
         other.load_pretrained(state, upstream_hparams())
     assert "model._target_" in str(error.value)
     with pytest.raises(InvalidWeights, match="another configuration"):
-        DiffCspModel().load_pretrained(dict(model.state_dict()), hparams)
+        DiffCSP().load_pretrained(dict(model.state_dict()), hparams)
 
     # and by their parameters
     with pytest.raises(InvalidWeights, match="type_out|node_embedding"):
         other.load_pretrained(dict(model.state_dict()))
     with pytest.raises(InvalidWeights, match="type_out|node_embedding"):
-        DiffCspModel().load_pretrained(state)
+        DiffCSP().load_pretrained(state)
 
     del state["decoder.type_out.weight"]
     with pytest.raises(InvalidWeights, match="Missing"):
@@ -856,12 +856,12 @@ def close_after(found: torch.Tensor, expected: torch.Tensor, scale: float) -> bo
 
 
 @pytest.fixture(scope="module")
-def pretrained_generation() -> DiffCspGenerationModel:
+def pretrained_generation() -> DiffCSPGeneration:
     paths = weights.checkpoint_paths("diffcsp", GENERATION_NAME)
     if not all(path.exists() for path in paths):
         pytest.skip(f"weights of {GENERATION_NAME} are not in the cache")
 
-    return DiffCspGenerationModel.from_pretrained(GENERATION_NAME, device="cpu")
+    return DiffCSPGeneration.from_pretrained(GENERATION_NAME, device="cpu")
 
 
 def test_pretrained_generation_schedules(pretrained_generation, pretrained):

@@ -6,9 +6,9 @@ listed in config.yaml, with its hyperparameters. cgcnn_features.npz holds the
 features of the elements, from jarvis-tools.
 """
 
-from torchms.models.alignn.model import AlignnModel, InvalidWeights
+from torchms.models.alignn.model import ALIGNN, InvalidWeights
 
 __all__ = [
-    "AlignnModel",
+    "ALIGNN",
     "InvalidWeights",
 ]

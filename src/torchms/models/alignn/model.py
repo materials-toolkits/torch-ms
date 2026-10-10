@@ -198,13 +198,13 @@ def element_features() -> Float[torch.Tensor, "119 92"]:
         return torch.from_numpy(data["features"]).float()
 
 
-class AlignnModel(PretrainedModel):
+class ALIGNN(PretrainedModel):
     """Property of crystal structures predicted by ALIGNN.
 
     The pretrained model predicts the formation energy in eV/atom.
 
     Examples:
-        >>> model = AlignnModel()
+        >>> model = ALIGNN()
         >>> structures = Structures.collate([Structures.diamond(), Structures.zincblende()])
         >>> structures = model.transform()(structures)
         >>> with torch.no_grad():

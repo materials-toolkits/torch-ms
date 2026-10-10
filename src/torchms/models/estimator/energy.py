@@ -17,7 +17,7 @@ from torchms.graph.transforms import attached_graph
 from torchms.models.estimator.calibration import load_correction
 
 if TYPE_CHECKING:
-    from torchms.models.orb import OrbEnergyModel
+    from torchms.models.orb import OrbV3
 
 DEFAULT_MODEL = "orb-v3-conservative-inf-mpa"
 
@@ -119,7 +119,7 @@ class EnergyEstimator:
 
     def __init__(
         self,
-        model: OrbEnergyModel,
+        model: OrbV3,
         correction: Float[np.ndarray, "128"] | None = None,
         hull: Hull | None = None,
         hull_source: str | None = None,
@@ -175,10 +175,10 @@ class EnergyEstimator:
         # the models import this package to load their weights: the model of
         # the estimator is imported when it is needed
         from torchms.models.orb import (  # pylint: disable=import-outside-toplevel
-            OrbEnergyModel,
+            OrbV3,
         )
 
-        model = OrbEnergyModel.from_pretrained(name or DEFAULT_MODEL, device=device)
+        model = OrbV3.from_pretrained(name or DEFAULT_MODEL, device=device)
 
         return cls(model, correction, hull, hull_source)
 

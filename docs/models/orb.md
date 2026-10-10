@@ -4,7 +4,7 @@ Total energy of a structure predicted by orb-v3 conservative, the model of the [
 
 | | |
 |---|---|
-| Class | `torchms.models.OrbEnergyModel` |
+| Class | `torchms.models.OrbV3` |
 | Predicts | total energy in eV, one per structure, in double precision |
 | Source | [orb-models](https://github.com/orbital-materials/orb-models) 0.7.0, Orbital Materials |
 | License | Apache-2.0 |
@@ -15,10 +15,10 @@ Total energy of a structure predicted by orb-v3 conservative, the model of the [
 
 ```{.python notest}
 from torchms.data import load_dataset
-from torchms.models import OrbEnergyModel
+from torchms.models import OrbV3
 
-dataset = load_dataset("mp-20", "test", transform=OrbEnergyModel.transform())
-model = OrbEnergyModel.from_pretrained(device="cuda")
+dataset = load_dataset("mp-20", "test", transform=OrbV3.transform())
+model = OrbV3.from_pretrained(device="cuda")
 energy = model(dataset[:32].to("cuda"))        # (32,), eV
 ```
 

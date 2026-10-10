@@ -17,7 +17,7 @@ from torchms.data.augmentation import (
     make_supercell,
 )
 from torchms.models.estimator import weights
-from torchms.models.m3gnet import InvalidWeights, M3gnetEnergyModel
+from torchms.models.m3gnet import InvalidWeights, M3GNet
 from torchms.models.m3gnet.model import (
     ELEMENTS,
     MAX_L,
@@ -62,10 +62,10 @@ def generator(seed: int = 0) -> torch.Generator:
 
 
 @pytest.fixture(scope="module")
-def model() -> M3gnetEnergyModel:
+def model() -> M3GNet:
     """Model with random weights."""
     torch.manual_seed(0)
-    return M3gnetEnergyModel().eval().requires_grad_(False)
+    return M3GNet().eval().requires_grad_(False)
 
 
 def test_pinned_checkpoints(tmp_path):
@@ -206,7 +206,7 @@ def test_model_unknown_element(model):
 def test_load_pretrained_checks_the_parameters(model):
     state_dict = dict(model.state_dict())
 
-    other = M3gnetEnergyModel()
+    other = M3GNet()
     other.load_pretrained(state_dict, MODEL_ARGS)
     other.eval()
     with torch.no_grad():
@@ -249,11 +249,11 @@ def test_bessel_roots_match_matgl():
 
 
 @pytest.fixture(scope="module")
-def pretrained() -> M3gnetEnergyModel:
+def pretrained() -> M3GNet:
     if not all(path.exists() for path in weights.checkpoint_paths("m3gnet", NAME)):
         pytest.skip(f"weights of {NAME} are not in the cache")
 
-    return M3gnetEnergyModel.from_pretrained(NAME, device="cpu")
+    return M3GNet.from_pretrained(NAME, device="cpu")
 
 
 @pytest.mark.timeout(120)

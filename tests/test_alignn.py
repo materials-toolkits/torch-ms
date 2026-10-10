@@ -18,7 +18,7 @@ from torchms.data.augmentation import (
     make_supercell,
 )
 from torchms.models.estimator import weights
-from torchms.models.alignn import AlignnModel, InvalidWeights
+from torchms.models.alignn import ALIGNN, InvalidWeights
 from torchms.models.estimator.weights import Checkpoint, sha256
 from torchms.models.alignn.model import (
     GRAPH_ARGS,
@@ -77,10 +77,10 @@ def generator(seed: int = 0) -> torch.Generator:
 
 
 @pytest.fixture(scope="module")
-def model() -> AlignnModel:
+def model() -> ALIGNN:
     """Model with random weights."""
     torch.manual_seed(0)
-    return AlignnModel().eval().requires_grad_(False)
+    return ALIGNN().eval().requires_grad_(False)
 
 
 def test_pinned_checkpoints(tmp_path):
@@ -198,7 +198,7 @@ def test_model_with_a_given_graph(model):
         model(attach_graph(batch, graph, False))
 
 
-def state_and_config(model: AlignnModel) -> tuple[dict, dict]:
+def state_and_config(model: ALIGNN) -> tuple[dict, dict]:
     state_dict = dict(model.state_dict())
     state_dict["_species_table"] = torch.zeros(120, 92)
     return state_dict, {**GRAPH_ARGS, "model": dict(MODEL_ARGS)}
@@ -207,7 +207,7 @@ def state_and_config(model: AlignnModel) -> tuple[dict, dict]:
 def test_load_pretrained_checks_the_parameters(model):
     state_dict, config = state_and_config(model)
 
-    other = AlignnModel()
+    other = ALIGNN()
     other.load_pretrained(state_dict, config)
     other.eval()
     with torch.no_grad():
@@ -244,7 +244,7 @@ def test_from_pretrained_reads_the_archive(model, tmp_path, monkeypatch):
     checkpoint = Checkpoint(archive.as_uri(), sha256(archive), "model.zip")
     monkeypatch.setitem(weights.CHECKPOINTS["alignn"], "local", (checkpoint,))
 
-    loaded = AlignnModel.from_pretrained("local", cache=tmp_path / "cache")
+    loaded = ALIGNN.from_pretrained("local", cache=tmp_path / "cache")
     assert torch.allclose(predict(loaded, make_batch()), predict(model, make_batch()))
 
 
@@ -289,11 +289,11 @@ def edges_of(graph: Graph) -> list[set[tuple[int, ...]]]:
 
 
 @pytest.fixture(scope="module")
-def pretrained() -> AlignnModel:
+def pretrained() -> ALIGNN:
     if not weights.checkpoint_paths("alignn", NAME)[0].exists():
         pytest.skip(f"weights of {NAME} are not in the cache")
 
-    return AlignnModel.from_pretrained(NAME, device="cpu")
+    return ALIGNN.from_pretrained(NAME, device="cpu")
 
 
 @pytest.mark.timeout(120)

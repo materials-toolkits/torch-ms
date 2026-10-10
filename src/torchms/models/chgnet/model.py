@@ -340,11 +340,11 @@ class AtomRef(nn.Module):
 
 # one module per module of chgnet
 # pylint: disable-next=too-many-instance-attributes
-class ChgnetEnergyModel(PretrainedModel):
+class CHGNet(PretrainedModel):
     """Total energy of crystal structures predicted by CHGNet 0.3.0.
 
     Examples:
-        >>> model = ChgnetEnergyModel()
+        >>> model = CHGNet()
         >>> structures = Structures.collate([Structures.diamond(), Structures.zincblende()])
         >>> structures = model.transform()(structures)
         >>> with torch.no_grad():

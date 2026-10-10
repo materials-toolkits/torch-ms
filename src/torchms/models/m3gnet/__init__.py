@@ -5,9 +5,9 @@ LICENSE in this directory): model.py is the network. Its pretrained weights are
 listed in config.yaml, with its hyperparameters.
 """
 
-from torchms.models.m3gnet.model import InvalidWeights, M3gnetEnergyModel
+from torchms.models.m3gnet.model import InvalidWeights, M3GNet
 
 __all__ = [
     "InvalidWeights",
-    "M3gnetEnergyModel",
+    "M3GNet",
 ]

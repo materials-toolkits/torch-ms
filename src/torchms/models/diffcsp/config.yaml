@@ -1,6 +1,6 @@
 # DiffCSP: weights, graph and hyperparameters, read by model.py. The directory
-# has two models: DiffCspModel, which predicts a structure from its
-# composition, and DiffCspGenerationModel, which also generates the elements.
+# has two models: DiffCSP, which predicts a structure from its
+# composition, and DiffCSPGeneration, which also generates the elements.
 # What is only for the second one is in the section "generation".
 
 default_weights: diffcsp-mp20

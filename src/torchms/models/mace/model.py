@@ -287,13 +287,13 @@ EXPECTED = {
 
 # one tensor per group of weights of mace
 # pylint: disable-next=too-many-instance-attributes
-class MaceEnergyModel(PretrainedModel):
+class MACE(PretrainedModel):
     """Total energy of crystal structures predicted by MACE-MP-0 small.
 
     The model computes in double precision, as mace.
 
     Examples:
-        >>> model = MaceEnergyModel()
+        >>> model = MACE()
         >>> structures = Structures.collate([Structures.diamond(), Structures.zincblende()])
         >>> structures = model.transform()(structures)
         >>> with torch.no_grad():

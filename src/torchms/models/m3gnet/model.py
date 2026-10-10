@@ -243,7 +243,7 @@ class WeightedReadOut(nn.Module):
         return self.gated(atoms).squeeze(-1)
 
 
-class M3GNet(nn.Module):
+class M3GNetNetwork(nn.Module):
     """Graph network computing the energy of each atom, before scaling."""
 
     def __init__(self):
@@ -302,11 +302,11 @@ class AtomRef(nn.Module):
         return self.property_offset.double()[element]
 
 
-class M3gnetEnergyModel(PretrainedModel):
+class M3GNet(PretrainedModel):
     """Total energy of crystal structures predicted by the M3GNet potential.
 
     Examples:
-        >>> model = M3gnetEnergyModel()
+        >>> model = M3GNet()
         >>> structures = Structures.collate([Structures.diamond(), Structures.zincblende()])
         >>> structures = model.transform()(structures)
         >>> with torch.no_grad():
@@ -324,7 +324,7 @@ class M3gnetEnergyModel(PretrainedModel):
 
     def __init__(self):
         super().__init__()
-        self.model = M3GNet()
+        self.model = M3GNetNetwork()
         self.element_refs = AtomRef()
         self.register_buffer("data_mean", torch.tensor(0.0))
         self.register_buffer("data_std", torch.tensor(1.0))

@@ -19,10 +19,10 @@ To know how far a structure is from the convex hull, use the
 
 ```{.python notest}
 from torchms.data import load_dataset
-from torchms.models import M3gnetEnergyModel
+from torchms.models import M3GNet
 
-dataset = load_dataset("mp-20", "test", transform=M3gnetEnergyModel.transform())
-model = M3gnetEnergyModel.from_pretrained(device="cuda")
+dataset = load_dataset("mp-20", "test", transform=M3GNet.transform())
+model = M3GNet.from_pretrained(device="cuda")
 
 energy = model(dataset[:32].to("cuda"))     # (32,), total energy in eV
 ```
@@ -32,7 +32,7 @@ energy = model(dataset[:32].to("cuda"))     # (32,), total energy in eV
 in evaluation mode, without gradients. A model can have several weights, listed on its page:
 
 ```{.python notest}
-model = OrbEnergyModel.from_pretrained("orb-v3-conservative-inf-omat", device="cuda")
+model = OrbV3.from_pretrained("orb-v3-conservative-inf-omat", device="cuda")
 ```
 
 The pretrained models are rewrites: they predict what the original code predicts, without
@@ -46,7 +46,7 @@ is the expensive part of a prediction: as a transform it runs in the workers of 
 once per structure, or on the GPU for a whole batch, as you choose.
 
 ```{.python notest}
-transform = M3gnetEnergyModel.transform()
+transform = M3GNet.transform()
 
 dataset = load_dataset("mp-20", "test", transform=transform)   # when a structure is loaded
 structures = transform(structures)                             # or on a batch
@@ -62,32 +62,32 @@ attach, and its decoder builds its own at each step of the generation.
 ## A generative model
 
 ```{.python notest}
-from torchms.models import CdvaeModel
+from torchms.models import CDVAE
 
-model = CdvaeModel.from_pretrained(device="cuda")
+model = CDVAE.from_pretrained(device="cuda")
 structures = model.sample(64)               # 64 crystals, 5000 steps of dynamics
 ```
 
 The weights of CDVAE were trained by a third party: read
 [its page](../models/cdvae.md) before using what it generates.
 
-[DiffCSP](../models/diffcsp.md) has two models. `DiffCspModel` predicts a structure from
+[DiffCSP](../models/diffcsp.md) has two models. `DiffCSP` predicts a structure from
 its composition: it is given the atomic numbers of the atoms and the number of atoms of
-each structure. `DiffCspGenerationModel` also generates the elements: it is only given the
+each structure. `DiffCSPGeneration` also generates the elements: it is only given the
 numbers of atoms, which it can draw as the ones of MP-20.
 
 ```{.python notest}
 import torch
 
-from torchms.models import DiffCspGenerationModel, DiffCspModel
+from torchms.models import DiffCSP, DiffCSPGeneration
 
-model = DiffCspModel.from_pretrained(device="cuda")
+model = DiffCSP.from_pretrained(device="cuda")
 
 z = torch.tensor([11, 17, 38, 22, 8, 8, 8], device="cuda")   # NaCl and SrTiO3
 num_atoms = torch.tensor([2, 5], device="cuda")
 structures = model.sample(z, num_atoms)     # 1000 steps of diffusion
 
-generation = DiffCspGenerationModel.from_pretrained(device="cuda")
+generation = DiffCSPGeneration.from_pretrained(device="cuda")
 structures = generation.sample(generation.sample_num_atoms(64))
 ```
 

@@ -6,11 +6,11 @@ from torch import nn
 
 from torchms.data import Structures
 from torchms.models import (
-    AlignnModel,
-    ChgnetEnergyModel,
-    M3gnetEnergyModel,
-    MaceEnergyModel,
-    OrbEnergyModel,
+    ALIGNN,
+    CHGNet,
+    M3GNet,
+    MACE,
+    OrbV3,
     alignn,
     chgnet,
     m3gnet,
@@ -111,11 +111,11 @@ def test_from_pretrained(tmp_path):
 
 
 MODELS = (
-    AlignnModel,
-    ChgnetEnergyModel,
-    M3gnetEnergyModel,
-    MaceEnergyModel,
-    OrbEnergyModel,
+    ALIGNN,
+    CHGNet,
+    M3GNet,
+    MACE,
+    OrbV3,
 )
 
 

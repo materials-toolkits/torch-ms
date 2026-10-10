@@ -5,12 +5,12 @@ DiffCSP is the diffusion model of crystals of Jiao, Huang, Lin, Han, Chen, Lu an
 [arXiv:2309.04475](https://arxiv.org/abs/2309.04475)), in `torchms/models/diffcsp/`. It has
 two models, with two sets of weights:
 
-- `DiffCspModel` gives a lattice and fractional coordinates to atoms of given elements: the
+- `DiffCSP` gives a lattice and fractional coordinates to atoms of given elements: the
   prediction of a structure from its composition;
-- `DiffCspGenerationModel` also generates the elements: it is only given the number of atoms
+- `DiffCSPGeneration` also generates the elements: it is only given the number of atoms
   of each structure.
 
-| | `DiffCspModel` | `DiffCspGenerationModel` |
+| | `DiffCSP` | `DiffCSPGeneration` |
 |---|---|---|
 | Does | samples the lattice and the coordinates of a crystal from its composition | samples the elements, the lattice and the coordinates of a crystal from its number of atoms |
 | Source | [DiffCSP](https://github.com/jiaor17/DiffCSP), commit `7121d15`, `diffusion.py` | the same, `diffusion_w_type.py` |
@@ -23,10 +23,10 @@ two models, with two sets of weights:
 ```{.python notest}
 import torch
 
-from torchms.models import DiffCspGenerationModel, DiffCspModel
+from torchms.models import DiffCSP, DiffCSPGeneration
 
 # from a composition: NaCl and SrTiO3, the atoms of a structure together
-model = DiffCspModel.from_pretrained(device="cuda")
+model = DiffCSP.from_pretrained(device="cuda")
 z = torch.tensor([11, 17, 38, 22, 8, 8, 8], device="cuda")
 num_atoms = torch.tensor([2, 5], device="cuda")
 
@@ -35,7 +35,7 @@ structures.lattice                            # (2, 3, 3), in Å
 structures.x                                  # (7, 3), fractional coordinates
 
 # without composition: 64 structures, with numbers of atoms as the ones of MP-20
-generation = DiffCspGenerationModel.from_pretrained(device="cuda")
+generation = DiffCSPGeneration.from_pretrained(device="cuda")
 num_atoms = generation.sample_num_atoms(64)   # or any numbers of atoms
 
 structures = generation.sample(num_atoms)
@@ -63,7 +63,7 @@ the diffusion, from the last time. `sample_step` is one of them, with its noise 
 arguments: a Langevin correction of the coordinates, then the prediction of the lattice and
 of the coordinates of the time before. `model(structures, times)` is the network alone.
 
-**With the elements.** In `DiffCspGenerationModel` the element of an atom is a vector of
+**With the elements.** In `DiffCSPGeneration` the element of an atom is a vector of
 100 values, one per element from hydrogen: 1 for its element and 0 elsewhere
 (`element_vectors`). This vector gets the noise of the lattice, with the same schedule, the
 network reads it in place of the element and also gives its noise. The vectors start from
@@ -103,7 +103,7 @@ adds the noise it drew: a sampling is never compared through a seed.
 
 ### From a composition
 
-| `DiffCspModel`, weights `diffcsp-mp20` | |
+| `DiffCSP`, weights `diffcsp-mp20` | |
 |---|---|
 | Schedules of the noise computed from `config.yaml`, against the ones of the weights | identical, up to 6e-8 |
 | Noise of the lattice, structures as they are, times from 1 to 1000: largest difference (values up to 17.9) | 7.6e-6 |
@@ -119,7 +119,7 @@ adds the noise it drew: a sampling is never compared through a seed.
 
 ### With the elements
 
-| `DiffCspGenerationModel`, weights `diffcsp-gen-mp20` | |
+| `DiffCSPGeneration`, weights `diffcsp-gen-mp20` | |
 |---|---|
 | Schedules of the noise | the ones of the first model |
 | Noise of the lattice on structures with the noise of their time, times from 1 to 1000: largest and mean difference (values up to 20.2) | 5.7e-6, 2.3e-7 |

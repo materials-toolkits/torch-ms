@@ -5,9 +5,9 @@ this directory): model.py is the network. Its pretrained weights are listed in
 config.yaml, with its hyperparameters.
 """
 
-from torchms.models.chgnet.model import ChgnetEnergyModel, InvalidWeights
+from torchms.models.chgnet.model import CHGNet, InvalidWeights
 
 __all__ = [
-    "ChgnetEnergyModel",
+    "CHGNet",
     "InvalidWeights",
 ]
