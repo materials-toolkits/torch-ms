@@ -8,8 +8,8 @@ has a page for each one.
 |---|---|---|
 | Supervised | total energy, pretrained | [orb-v3](../models/orb.md), [MACE](../models/mace.md), [M3GNet](../models/m3gnet.md), [CHGNet](../models/chgnet.md) |
 | | formation energy, pretrained | [ALIGNN](../models/alignn.md) |
-| Generative | crystals, pretrained | [CDVAE](../models/cdvae.md) |
-| Layers | bases and networks | [bases](../models/bases.md), [DimeNet++](../models/dimenet.md), [GemNet-T](../models/gemnet.md) |
+| Generative | crystals, pretrained | [CDVAE](../models/cdvae.md), [DiffCSP](../models/diffcsp.md) |
+| Layers | bases and networks | [bases](../models/bases.md), [DimeNet++](../models/dimenet.md), [GemNet-T](../models/gemnet.md), [CSPNet](../models/cspnet.md) |
 | | networks of the energy, to train | [`LineGraphNetwork`](../models/line-graph-network.md), [`EquivariantNetwork`](../models/equivariant-network.md) |
 
 To know how far a structure is from the convex hull, use the
@@ -70,6 +70,26 @@ structures = model.sample(64)               # 64 crystals, 5000 steps of dynamic
 
 The weights of CDVAE were trained by a third party: read
 [its page](../models/cdvae.md) before using what it generates.
+
+[DiffCSP](../models/diffcsp.md) has two models. `DiffCspModel` predicts a structure from
+its composition: it is given the atomic numbers of the atoms and the number of atoms of
+each structure. `DiffCspGenerationModel` also generates the elements: it is only given the
+numbers of atoms, which it can draw as the ones of MP-20.
+
+```{.python notest}
+import torch
+
+from torchms.models import DiffCspGenerationModel, DiffCspModel
+
+model = DiffCspModel.from_pretrained(device="cuda")
+
+z = torch.tensor([11, 17, 38, 22, 8, 8, 8], device="cuda")   # NaCl and SrTiO3
+num_atoms = torch.tensor([2, 5], device="cuda")
+structures = model.sample(z, num_atoms)     # 1000 steps of diffusion
+
+generation = DiffCspGenerationModel.from_pretrained(device="cuda")
+structures = generation.sample(generation.sample_num_atoms(64))
+```
 
 ## Layers for your own model
 

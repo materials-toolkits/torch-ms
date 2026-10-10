@@ -63,7 +63,7 @@ def config_files() -> dict[str, Path]:
 
     Examples:
         >>> sorted(config_files())
-        ['alignn', 'cdvae', 'chgnet', 'm3gnet', 'mace', 'orb']
+        ['alignn', 'cdvae', 'chgnet', 'diffcsp', 'm3gnet', 'mace', 'orb']
     """
     directory = Path(__file__).parent.parent
 

@@ -33,10 +33,13 @@ Models which generate structures.
 | Model | Class | Generates | Source | Weights | Largest difference with the original |
 |---|---|---|---|---|---|
 | [CDVAE](cdvae.md) | `CdvaeModel` | crystals of at most 20 atoms, from a latent vector | cdvae `f857f59`, MIT | **third party** | 4.0e-5 on the latent mean |
+| [DiffCSP](diffcsp.md) | `DiffCspModel` | the lattice and the coordinates of a crystal, from its composition | DiffCSP `7121d15`, MIT | official | 7.6e-6 on the noise of the lattice |
+| [DiffCSP](diffcsp.md) | `DiffCspGenerationModel` | crystals of given numbers of atoms, with their elements | DiffCSP `7121d15`, MIT | official | 5.7e-6 on the noise of the lattice |
 
-CDVAE is a rewrite too, compared with the original code as the supervised models. Its
-weights were not trained by its authors, who publish none: see its page. Its training is
-not included.
+Both are rewrites too, compared with the original code as the supervised models. The
+weights of CDVAE were not trained by its authors, who publish none: see its page. DiffCSP
+has two models with their own weights, one which is given the elements and one which
+generates them. Their training is not included.
 
 ## Pretrained models
 
@@ -56,6 +59,7 @@ nearest neighbours, which is not defined when several neighbours are at the same
 | ALIGNN | `AddRadiusGraph(5.0)`, `KeepNearestNeighbors(12)`, `AddLineGraph(radius=3.5, backtrack=True)` |
 | CDVAE, encoder | a graph of bonds given with the structures, then `AddLineGraph(backtrack=True, same_atom=False)` |
 | CDVAE, decoder | `AddRadiusGraph(7.0)`, `KeepNearImages(1)`, `KeepNearestNeighbors(20)`, `MirrorEdges()`, `AddTriplets()`, `AddBonds()` |
+| DiffCSP | `AddCompleteGraph(self_loops=True)` |
 
 Every radius graph has `self_images=True`. See [Graphs](../guide/graphs.md) for the
 transforms.
@@ -80,13 +84,14 @@ from.
 
 | Layer | Content | Used by |
 |---|---|---|
-| [Bases](bases.md) | radial bases, bases of angles, spherical harmonics, smooth cutoffs | every model |
+| [Bases](bases.md) | radial bases, bases of angles, of fractional coordinates and of a time, spherical harmonics, smooth cutoffs | every model |
+| [CSPNet](cspnet.md) ([arXiv:2309.04475](https://arxiv.org/abs/2309.04475)) | network on every pair of atoms of a structure and their fractional coordinates, one vector per atom and one matrix per structure | DiffCSP |
 | [DimeNet++](dimenet.md) ([arXiv:2011.14115](https://arxiv.org/abs/2011.14115)) | network on the bonds of a graph and their angles, one vector per structure | CDVAE (encoder) |
 | [GemNet-T](gemnet.md) ([arXiv:2106.08903](https://arxiv.org/abs/2106.08903)) | network on the edges of a symmetric graph and their triplets, one vector per atom | CDVAE (decoder) |
 | [`LineGraphNetwork`](line-graph-network.md) | network of the energy on pairs, triplets and quadruplets, with their angles and dihedral angles | no model of the library |
 | [`EquivariantNetwork`](equivariant-network.md) | network of the energy on pairs only, with products of sums of spherical harmonics | no model of the library |
 
-The first three take their hyperparameters as arguments and read the graph they are given.
+The first four take their hyperparameters as arguments and read the graph they are given.
 The last two were written for this library, as the two ways recent models have terms on more
 than two atoms (the first as ALIGNN, M3GNet, CHGNet or DPA-3, the second as MACE). They are
 not these models, have no pretrained weights and were not trained here: their accuracy is

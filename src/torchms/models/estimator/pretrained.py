@@ -46,6 +46,54 @@ def different_arguments(
     }
 
 
+def check_configuration(
+    found: Mapping[str, object], expected: Mapping[str, Mapping[str, object]]
+) -> None:
+    """Check the configuration of a training against the one a rewrite is written for.
+
+    For the weights published with the configuration of their training, a
+    file of nested sections (hparams.yaml of hydra).
+
+    Args:
+        found: Configuration stored with the weights.
+        expected: Arguments of the rewrite, by section. A section inside
+            another one is named with dots: "model.decoder".
+
+    Raises:
+        InvalidWeights: If a section is missing, or if one of its arguments
+            has another value than the expected one, see different_arguments.
+
+    Examples:
+        >>> expected = {"model": {"radius": 7.0}, "model.decoder": {"layers": 3}}
+        >>> check_configuration({"model": {"radius": 7.0, "decoder": {}}}, expected)
+        >>> check_configuration({"model": {"decoder": {"layers": 4}}}, expected)
+        Traceback (most recent call last):
+        ...
+        torchms.models.estimator.pretrained.InvalidWeights: weights of a model with \
+another configuration: {'model.decoder.layers': 4}
+    """
+    different: dict[str, object] = {}
+
+    for section, arguments in expected.items():
+        values: object = found
+        for key in section.split("."):
+            values = values.get(key) if isinstance(values, Mapping) else None
+        if not isinstance(values, Mapping):
+            raise InvalidWeights(f"the configuration has no {section}")
+
+        different.update(
+            {
+                f"{section}.{key}": value
+                for key, value in different_arguments(values, arguments).items()
+            }
+        )
+
+    if different:
+        raise InvalidWeights(
+            f"weights of a model with another configuration: {different}"
+        )
+
+
 def element_table(
     atomic_numbers: Int[torch.Tensor, "n_elements"],
 ) -> Int[torch.Tensor, "119"]:

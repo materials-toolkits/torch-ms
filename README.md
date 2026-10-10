@@ -217,6 +217,8 @@ of other projects, rewritten with PyTorch and the graphs of the library.
 | | CHGNet | `ChgnetEnergyModel` | total energy | official |
 | | ALIGNN | `AlignnModel` | formation energy | official |
 | Generative | CDVAE | `CdvaeModel` | crystals | third party |
+| | DiffCSP | `DiffCspModel` | a crystal from its composition | official |
+| | DiffCSP | `DiffCspGenerationModel` | crystals, with their elements | official |
 
 ```python
 from torchms.data import load_dataset

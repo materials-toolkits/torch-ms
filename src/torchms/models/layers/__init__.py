@@ -2,6 +2,8 @@
 
 * basis: bases of the distances, of the angles and of the directions, and
   smooth cutoffs;
+* cspnet: CSPNet, a network on the complete graph of a structure, which reads
+  fractional coordinates;
 * dimenet: DimeNet++, a network on the bonds of a graph and their angles;
 * gemnet: GemNet-T, a network on the edges of a symmetric graph and their
   triplets;
@@ -15,7 +17,7 @@
 The two networks of the energy were written for this library: they have no
 pretrained weights and no model of the library is built on them.
 
-DimeNet++ and GemNet-T take their hyperparameters as arguments, a model gives
+DimeNet++, GemNet-T and CSPNet take their hyperparameters as arguments, a model gives
 them the values of its config.yaml, and they read the graph attached to the
 structures.
 """
@@ -27,9 +29,12 @@ from torchms.models.layers.basis import (
     SphericalBesselBasis,
     gaunt_coefficients,
     legendre,
+    periodic_fourier,
     polynomial_cutoff,
+    sinusoidal_embedding,
     spherical_harmonics,
 )
+from torchms.models.layers.cspnet import CSPNet, CSPNetConfig
 from torchms.models.layers.dimenet import DimeNetConfig, DimeNetPlusPlus
 from torchms.models.layers.equivariant_network import EquivariantNetwork
 from torchms.models.layers.gemnet import GemNetConfig, GemNetT
@@ -38,6 +43,8 @@ from torchms.models.layers.line_graph_network import LineGraphNetwork
 __all__ = [
     "AngleBasis",
     "BesselBasis",
+    "CSPNet",
+    "CSPNetConfig",
     "DimeNetConfig",
     "DimeNetPlusPlus",
     "EquivariantNetwork",
@@ -48,6 +55,8 @@ __all__ = [
     "SphericalBesselBasis",
     "gaunt_coefficients",
     "legendre",
+    "periodic_fourier",
     "polynomial_cutoff",
+    "sinusoidal_embedding",
     "spherical_harmonics",
 ]

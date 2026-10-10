@@ -1,0 +1,134 @@
+# DiffCSP: weights, graph and hyperparameters, read by model.py. The directory
+# has two models: DiffCspModel, which predicts a structure from its
+# composition, and DiffCspGenerationModel, which also generates the elements.
+# What is only for the second one is in the section "generation".
+
+default_weights: diffcsp-mp20
+
+# The two models trained on MP-20 by the authors of DiffCSP ("mp_csp" and
+# "mp_gen" in the folder of checkpoints linked by their README). They publish
+# them on Google Drive: the URL has the identifier of a file, which its owner
+# can replace, and the SHA-256 tells if it was. For each one, the checkpoint
+# of pytorch-lightning and the configuration of the training.
+# files of the pretrained weights, by name: where a file is downloaded, its
+# expected SHA-256 and its name in the cache, the last part of the URL by default
+checkpoints:
+  diffcsp-mp20:
+    - url: https://drive.usercontent.google.com/download?id=1pIpTMmqt4vxvwrKM0KwmtwjJDp61ezmO&export=download&confirm=t
+      sha256: c06719217c940718823f7c67b58c74a0fcfba4c3e4312b23cdd22b7a15ea6b5f
+      filename: last.ckpt
+    - url: https://drive.usercontent.google.com/download?id=1X12-mwa3obpAYebYnQ93Nblcn_hDGXda&export=download&confirm=t
+      sha256: 7e8afc601276abed9a112d93156aa6657ff78c3fe8634d412ccf684952e292a0
+      filename: hparams.yaml
+  diffcsp-gen-mp20:
+    - url: https://drive.usercontent.google.com/download?id=1FF3nZ8TvkoE9zvAw0gypmahYT5u2kD0B&export=download&confirm=t
+      sha256: 82c0b98040c364a61ec92b9740f8a078ec54353e83949dd5a0c7462177e8b711
+      filename: last.ckpt
+    - url: https://drive.usercontent.google.com/download?id=1ATZmS3Yrp0C1pRdANyCWogdWapn3H5Hg&export=download&confirm=t
+      sha256: b495b2ae0504801541cbb83e9902792d1d0dddacca30e12eccb2dfd1ba6277d3
+      filename: hparams.yaml
+
+unused_parameters: []
+
+graph:
+  # every pair of atoms of a structure, and each atom with itself. No radius:
+  # the network reads the differences of the fractional coordinates
+  self_loops: true
+
+model:
+  timesteps: 1000                        # steps of the diffusion
+  time_dim: &time_dim 256                # embedding of the time
+  time_max_period: 10000.0               # inverse of its lowest frequency
+  # noise of the lattice: cosine schedule of arXiv:2102.09672
+  beta_offset: 0.008                     # its offset s
+  beta_min: 1.0e-4                       # the betas are clipped
+  beta_max: 0.9999
+  # noise of the fractional coordinates, in cells, from the first to the last time
+  sigma_begin: &sigma_begin 0.005
+  sigma_end: &sigma_end 0.5
+
+# CSPNet
+decoder:
+  num_elements: &num_elements 100        # rows of the embedding, from hydrogen
+  hidden_dim: &hidden_dim 512            # features of the atoms and of the messages
+  num_layers: &num_layers 6
+  num_freqs: &num_freqs 128              # frequencies of the basis of the coordinates
+  # the elements are indices read in a table, and are not predicted
+  soft_elements: false
+  predict_elements: false
+
+# predictor and corrector, as in scripts/evaluate.py of DiffCSP
+sampling:
+  step_size: 1.0e-5                      # of the corrector at the lowest noise, for MP-20
+
+# the model which also generates the elements: the same network, which reads
+# the element of an atom as a vector of weights and gives its noise
+generation:
+  default_weights: diffcsp-gen-mp20
+  unused_parameters:
+    # a schedule of noise the checkpoint has and the code of DiffCSP does not
+    - type_sigma_scheduler.
+  decoder:
+    soft_elements: true
+    predict_elements: true
+  # as in scripts/generation.py of DiffCSP
+  step_size: 5.0e-6                      # of the corrector at the lowest noise, for MP-20
+  # probability of each number of atoms, from 0: the one of the training set
+  # of MP-20, written in scripts/generation.py
+  num_atoms_distribution:
+    - 0.0
+    - 0.0021742334905660377
+    - 0.021079009433962265
+    - 0.019826061320754717
+    - 0.15271226415094338
+    - 0.047132959905660375
+    - 0.08464770047169812
+    - 0.021079009433962265
+    - 0.07808814858490566
+    - 0.03434551886792453
+    - 0.0972877358490566
+    - 0.013303360849056603
+    - 0.09669811320754718
+    - 0.02155807783018868
+    - 0.06522700471698113
+    - 0.014372051886792452
+    - 0.06703272405660378
+    - 0.00972877358490566
+    - 0.053176591981132074
+    - 0.010576356132075472
+    - 0.08995430424528301
+
+upstream:
+  # configuration of the training the rewrite is written for (hparams.yaml)
+  model_args:
+    _target_: diffcsp.pl_modules.diffusion.CSPDiffusion
+    time_dim: *time_dim
+    latent_dim: 0
+    # a cost of zero would keep the lattice or the coordinates fixed
+    cost_coord: 1.0
+    cost_lattice: 1.0
+  generation_model_args:
+    _target_: diffcsp.pl_modules.diffusion_w_type.CSPDiffusion
+    time_dim: *time_dim
+    latent_dim: 0
+    cost_coord: 1.0
+    cost_lattice: 1.0
+  decoder_args:
+    _target_: diffcsp.pl_modules.cspnet.CSPNet
+    hidden_dim: *hidden_dim
+    latent_dim: 0
+    max_atoms: *num_elements
+    num_layers: *num_layers
+    act_fn: silu
+    dis_emb: sin
+    num_freqs: *num_freqs
+    edge_style: fc
+    ln: true
+    ip: true
+  beta_scheduler_args:
+    _target_: diffcsp.pl_modules.diff_utils.BetaScheduler
+    scheduler_mode: cosine
+  sigma_scheduler_args:
+    _target_: diffcsp.pl_modules.diff_utils.SigmaScheduler
+    sigma_begin: *sigma_begin
+    sigma_end: *sigma_end

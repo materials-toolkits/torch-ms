@@ -30,11 +30,19 @@
 
 ::: torchms.models.cdvae.model
 
+### DiffCSP
+
+::: torchms.models.diffcsp.model
+
 ## Layers
 
 ### Bases
 
 ::: torchms.models.layers.basis
+
+### CSPNet
+
+::: torchms.models.layers.cspnet
 
 ### DimeNet++
 

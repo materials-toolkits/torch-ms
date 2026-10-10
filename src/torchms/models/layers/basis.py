@@ -11,6 +11,10 @@
 # models/m3gnet/LICENSE). They were moved here from
 # models/m3gnet/model.py. The roots are found here by bisection, where matgl
 # stores a table of them.
+#
+# periodic_fourier and sinusoidal_embedding are derived from DiffCSP
+# (https://github.com/jiaor17/DiffCSP), Copyright (c) 2023 Rui Jiao, MIT
+# license (see models/diffcsp/LICENSE).
 """Bases of the distances, of the angles and of the directions of the models."""
 
 from __future__ import annotations
@@ -21,7 +25,7 @@ import math
 import numpy as np
 import torch
 import torch.nn.functional as F
-from jaxtyping import Float
+from jaxtyping import Float, Int
 from torch import nn
 
 # Largest degree l of spherical_harmonics, which is written out degree by
@@ -326,6 +330,70 @@ class GaussianBasis(nn.Module):
         self, value: Float[torch.Tensor, "n"]
     ) -> Float[torch.Tensor, "n num_basis"]:
         return torch.exp(-self.gamma * (value.unsqueeze(1) - self.centers) ** 2)
+
+
+def periodic_fourier(
+    x: Float[torch.Tensor, "n d"], num_frequencies: int
+) -> Float[torch.Tensor, "n 2*d*num_frequencies"]:
+    """Fourier basis of period 1: sin(2 pi k x) and cos(2 pi k x).
+
+    The frequencies k are the whole numbers under num_frequencies. For
+    fractional coordinates and their differences: the basis does not change
+    when a coordinate moves by a whole number of cells.
+
+    Args:
+        x: Coordinates, shape (n, d).
+        num_frequencies: Number of frequencies k, from 0.
+
+    Returns:
+        The sines then the cosines, each by coordinate then by frequency,
+        shape (n, 2 d num_frequencies).
+
+    Examples:
+        >>> x = torch.tensor([[0.25, 0.5]])
+        >>> periodic_fourier(x, 2).round(decimals=4) + 0.0
+        tensor([[ 0.,  1.,  0.,  0.,  1.,  0.,  1., -1.]])
+        >>> moved = periodic_fourier(x + 1.0, 2)
+        >>> torch.allclose(moved, periodic_fourier(x, 2), atol=1e-5)
+        True
+    """
+    frequencies = (
+        2 * math.pi * torch.arange(num_frequencies, dtype=x.dtype, device=x.device)
+    )
+    angle = (x.unsqueeze(-1) * frequencies).reshape(len(x), -1)
+
+    return torch.cat([angle.sin(), angle.cos()], dim=-1)
+
+
+def sinusoidal_embedding(
+    time: Int[torch.Tensor, "n"] | Float[torch.Tensor, "n"], dim: int, max_period: float
+) -> Float[torch.Tensor, "n dim"]:
+    """Embedding of a time by sines and cosines of geometric frequencies.
+
+    The positional encoding of "Attention is all you need", used for the time
+    of a diffusion: sin(time f) and cos(time f) for dim / 2 frequencies f from
+    1 down to 1 / max_period.
+
+    Args:
+        time: Time of each element, shape (n,).
+        dim: Size of the embedding, an even number larger than 2.
+        max_period: Inverse of the lowest frequency.
+
+    Returns:
+        The sines then the cosines, shape (n, dim).
+
+    Examples:
+        >>> embedding = sinusoidal_embedding(torch.tensor([0, 1]), 4, 10000.0)
+        >>> embedding
+        tensor([[0.0000e+00, 0.0000e+00, 1.0000e+00, 1.0000e+00],
+                [8.4147e-01, 1.0000e-04, 5.4030e-01, 1.0000e+00]])
+    """
+    half = dim // 2
+    rate = math.log(max_period) / (half - 1)
+    frequencies = torch.exp(torch.arange(half, device=time.device) * -rate)
+    angle = time.unsqueeze(1) * frequencies
+
+    return torch.cat([angle.sin(), angle.cos()], dim=-1)
 
 
 def mlp(input_size: int, hidden_size: int, output_size: int) -> nn.Sequential:

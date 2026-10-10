@@ -42,7 +42,7 @@ from torchms.models.estimator.reader import read_pickle
 from torchms.models.estimator.pretrained import (
     InvalidWeights,
     PretrainedModel,
-    different_arguments,
+    check_configuration,
     element_index,
     element_table,
 )
@@ -329,24 +329,7 @@ class CdvaeModel(PretrainedModel):
                 model was trained with another configuration.
         """
         if hparams is not None:
-            different: dict[str, object] = {}
-            for section, expected in UPSTREAM_ARGS.items():
-                found: object = hparams
-                for key in section.split("."):
-                    found = found.get(key) if isinstance(found, Mapping) else None
-                if not isinstance(found, Mapping):
-                    raise InvalidWeights(f"the configuration has no {section}")
-
-                different.update(
-                    {
-                        f"{section}.{key}": value
-                        for key, value in different_arguments(found, expected).items()
-                    }
-                )
-            if different:
-                raise InvalidWeights(
-                    f"weights of a model with another configuration: {different}"
-                )
+            check_configuration(hparams, UPSTREAM_ARGS)
 
         parameters: dict[str, torch.Tensor] = {}
         for name, values in state_dict.items():

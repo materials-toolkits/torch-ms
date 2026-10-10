@@ -3,9 +3,11 @@ Licenses of the files of this directory.
 dimenet.py and gemnet.py are derived from cdvae, under the MIT license below,
 with the notices of the projects cdvae adapted them from.
 
-basis.py is derived from orb-models (Apache License 2.0, see ../orb/LICENSE)
-and from matgl (BSD 3-Clause license, see ../m3gnet/LICENSE), as its header
-details.
+cspnet.py is derived from DiffCSP (MIT license, see ../diffcsp/LICENSE).
+
+basis.py is derived from orb-models (Apache License 2.0, see ../orb/LICENSE),
+from matgl (BSD 3-Clause license, see ../m3gnet/LICENSE) and from DiffCSP (MIT
+license, see ../diffcsp/LICENSE), as its header details.
 
 --------------------------------------------------------------------------------
 
