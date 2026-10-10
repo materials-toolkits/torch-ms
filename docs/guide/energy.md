@@ -17,7 +17,7 @@ it to the convex hull of LeMat-Bulk.
 
 ```{.python notest}
 from torchms.data import load_dataset
-from torchms.estimator import EnergyEstimator
+from torchms.models.estimator import EnergyEstimator
 
 estimator = EnergyEstimator.from_lematerial(device="cuda")
 print(estimator.hull_source)

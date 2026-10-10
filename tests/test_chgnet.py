@@ -14,9 +14,9 @@ from torchms.data.augmentation import (
     LatticeRotation,
     make_supercell,
 )
-from torchms.estimator import weights
-from torchms.estimator.chgnet import ChgnetEnergyModel, InvalidWeights
-from torchms.estimator.chgnet.model import BOND_RADIUS, MODEL_ARGS, RADIUS
+from torchms.models.estimator import weights
+from torchms.models.chgnet import ChgnetEnergyModel, InvalidWeights
+from torchms.models.chgnet.model import BOND_RADIUS, MODEL_ARGS, RADIUS
 from torchms.graph.line_graph import reverse_edges
 
 

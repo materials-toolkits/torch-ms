@@ -42,12 +42,12 @@ Filtering and splitting are optional: a name can go straight to `auto_loader`.
 
 | Name | Kind | Splits (default first) | Structures | Page |
 |---|---|---|---|---|
-| `perov-5` | crystals | `train`, `val`, `test` | 18,928 | [Perov-5](../datasets/perov-5.md) |
-| `carbon-24` | crystals | `train`, `val`, `test` | 10,153 | [Carbon-24](../datasets/carbon-24.md) |
-| `mp-20` | crystals | `train`, `val`, `test` | 45,229 | [MP-20](../datasets/mp-20.md) |
-| `materials-project` | crystals | `all` | 271,325 | [Materials Project](../datasets/materials-project.md) |
-| `oqmd` | crystals | `all`, `unique` | 1,407,269 / 1,259,553 | [OQMD](../datasets/oqmd.md) |
-| `lematerial` | crystals | `all`, `unique` | 5,335,299 / 4,927,038 | [LeMat-Bulk](../datasets/lematerial.md) |
+| `perov-5` | inorganic materials | `train`, `val`, `test` | 18,928 | [Perov-5](../datasets/perov-5.md) |
+| `carbon-24` | inorganic materials | `train`, `val`, `test` | 10,153 | [Carbon-24](../datasets/carbon-24.md) |
+| `mp-20` | inorganic materials | `train`, `val`, `test` | 45,229 | [MP-20](../datasets/mp-20.md) |
+| `materials-project` | inorganic materials | `all` | 271,325 | [Materials Project](../datasets/materials-project.md) |
+| `oqmd` | inorganic materials | `all`, `unique` | 1,407,269 / 1,259,553 | [OQMD](../datasets/oqmd.md) |
+| `lematerial` | inorganic materials | `all`, `unique` | 5,335,299 / 4,927,038 | [LeMat-Bulk](../datasets/lematerial.md) |
 | `qmof` | MOFs | `all` | 20,372 | [QMOF](../datasets/qmof.md) |
 | `core-mof` | MOFs | `asr`, `fsr` | 12,020 / 7,061 | [CoRE MOF 2019](../datasets/core-mof.md) |
 | `core-mof-2024` | MOFs | `asr`, `fsr`, `ion`, `ncr` | 1,371 / 1,191 / 100 / 1,826 | [CoRE MOF 2024](../datasets/core-mof-2024.md) |

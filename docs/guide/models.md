@@ -1,101 +1,114 @@
-# Models
+# Using models
 
-`torchms.models` has two trainable models of the energy with terms on more than two
-atoms. They follow the two ways recent models do it:
+`torchms.models` has supervised models, which predict the energy of a structure,
+generative models, which generate structures, and layers to build your own. This page shows how to use them; the [Models](../models/index.md) section
+has a page for each one.
 
-| Model | Graph | Terms on three atoms and more | As in |
-|---|---|---|---|
-| `LineGraphNetwork` | pairs, triplets, quadruplets | angles and dihedral angles | ALIGNN, M3GNet, CHGNet, DPA-3 |
-| `EquivariantNetwork` | pairs only | products of sums of spherical harmonics | MACE |
+| | | Models |
+|---|---|---|
+| Supervised | total energy, pretrained | [orb-v3](../models/orb.md), [MACE](../models/mace.md), [M3GNet](../models/m3gnet.md), [CHGNet](../models/chgnet.md) |
+| | formation energy, pretrained | [ALIGNN](../models/alignn.md) |
+| Generative | crystals, pretrained | [CDVAE](../models/cdvae.md) |
+| Layers | bases and networks | [bases](../models/bases.md), [DimeNet++](../models/dimenet.md), [GemNet-T](../models/gemnet.md) |
+| | networks of the energy, to train | [`LineGraphNetwork`](../models/line-graph-network.md), [`EquivariantNetwork`](../models/equivariant-network.md) |
 
-Both take a batch of `Structures` and return one energy per structure. There is no training
-loop in the library: they are `torch.nn.Module`.
+To know how far a structure is from the convex hull, use the
+[energy estimator](energy.md), which wraps orb-v3: it is one call.
+
+## A supervised model
 
 ```{.python notest}
 from torchms.data import load_dataset
-from torchms.models import EquivariantNetwork, LineGraphNetwork
+from torchms.models import M3gnetEnergyModel
 
-structures = load_dataset("mp-20", "train")[:32]
+dataset = load_dataset("mp-20", "test", transform=M3gnetEnergyModel.transform())
+model = M3gnetEnergyModel.from_pretrained(device="cuda")
 
-model = LineGraphNetwork(order=2, radius=(5.0, 3.5))
-energy = model(structures)          # (32,)
-
-model = EquivariantNetwork(correlation=3, radius=5.0)
-energy = model(structures)          # (32,)
+energy = model(dataset[:32].to("cuda"))     # (32,), total energy in eV
 ```
 
-## What both guarantee
+`from_pretrained` downloads the weights on the first call, to `~/.cache/torchms`
+(`$TORCHMS_CACHE`), checks them against a SHA-256 written in the library, and gives a model
+in evaluation mode, without gradients. A model can have several weights, listed on its page:
 
-The energy does not depend on the description of the crystal, and it is checked in the tests
-with the transforms of [data augmentation](augmentation.md):
+```{.python notest}
+model = OrbEnergyModel.from_pretrained("orb-v3-conservative-inf-omat", device="cuda")
+```
 
-- same energy after a permutation of the atoms, a rotation or a reflection of the cell, a
-  translation of the atoms and a change of basis of the lattice;
-- energy multiplied by the number of cells in a supercell;
-- same energy for a structure alone and in a batch;
-- every term vanishes smoothly at its radius.
+The pretrained models are rewrites: they predict what the original code predicts, without
+its package. Forces, stress and training are not included.
 
-## LineGraphNetwork
+## Graphs are attached by a transform
 
-Features live on the atoms and on the bonds, the pairs of atoms closer than the first radius.
-`order` adds the higher terms:
+**A model does not build its graph.** It reads the graph and the tuples of edges attached
+to the structures, and its class gives the transform which attaches them. Building a graph
+is the expensive part of a prediction: as a transform it runs in the workers of a loader,
+once per structure, or on the GPU for a whole batch, as you choose.
 
-| `order` | Adds | Initialized from | Radius |
-|---|---|---|---|
-| 1 | — | — | `radius[0]` |
-| 2 | triplets: two bonds around an atom | their angle | `radius[1]` |
-| 3 | quadruplets: chains of three bonds | their dihedral angle | `radius[2]` |
+```{.python notest}
+transform = M3gnetEnergyModel.transform()
 
-A layer updates from the highest order down: a dihedral angle updates its middle bond, an
-angle its first bond, a bond its atom. Each order has its own radius because the number of
-triplets grows with the square of the number of neighbours and the number of quadruplets with
-its cube: M3GNet uses 5 Å for the bonds and 4 Å for the angles, CHGNet 6 Å and 3 Å.
+dataset = load_dataset("mp-20", "test", transform=transform)   # when a structure is loaded
+structures = transform(structures)                             # or on a batch
+```
 
-`chiral=True` gives the sines of the dihedral angles to the model, which then distinguishes a
-crystal from its mirror image. It is no longer invariant to reflections: use
-`LatticeRotation(proper=True)` to augment its data.
+A model refuses structures without what it reads, and names the transform to apply. The
+transform of each model is in the [table of the models](../models/index.md#graphs); see
+[Graphs](graphs.md) for the transforms themselves.
 
-## EquivariantNetwork
+[CDVAE](../models/cdvae.md) has two graphs: its encoder completes a graph of bonds you
+attach, and its decoder builds its own at each step of the generation.
 
-No triplet is listed. An atom sums over its neighbours a learned function of the distance
-times the spherical harmonics of the direction (l ≤ 3). `correlation` is the number of
-factors of the products of this sum with itself:
-
-| `correlation` | Invariants of each channel | Atoms in a term |
-|---|---|---|
-| 1 | the constant part of the sum | 2 |
-| 2 | its squared norm in each degree l | 3 |
-| 3 | the scalar product of the sum with its own square, in each degree l | 4 |
-
-The square is taken with the Gaunt coefficients (`gaunt_coefficients`), computed in the
-library by an exact quadrature on the sphere. They are the couplings which do not change in a
-mirror: the model cannot distinguish a crystal from its mirror image.
-
-This is not MACE: MACE learns one weight per coupling of its symmetric contraction and keeps
-vector and tensor features between layers in its larger models. `MaceEnergyModel`, in
-`torchms.estimator`, is the exact rewrite of its small model.
-
-## Which one
-
-- Terms near the radius are small in both models, because of the smooth cutoff. The terms of
-  `LineGraphNetwork` on three atoms carry the cutoff of two bonds and are smaller still: use a
-  radius of the angles well above the bond lengths of the crystal.
-- The cost of `LineGraphNetwork` grows with the number of triplets; the one of
-  `EquivariantNetwork` with the number of pairs.
-
-Neither model was trained here: their accuracy is not measured.
-
-## Pretrained models of other projects
-
-`CdvaeModel` is the rewrite of CDVAE, a generative model of crystal structures, with
-pretrained weights downloaded on the first use:
+## A generative model
 
 ```{.python notest}
 from torchms.models import CdvaeModel
 
 model = CdvaeModel.from_pretrained(device="cuda")
-structures = model.sample(64)
+structures = model.sample(64)               # 64 crystals, 5000 steps of dynamics
 ```
 
-Its weights were trained by a third party, and its encoder reads a graph of bonds
-which torchms does not build: see [the design note](../design/estimator.md#cdvae).
+The weights of CDVAE were trained by a third party: read
+[its page](../models/cdvae.md) before using what it generates.
+
+## Layers for your own model
+
+`torchms.models.layers` has the bases of distances and of angles of the models, and two
+networks which take their hyperparameters as arguments:
+
+```python
+from torchms.models.layers import BesselBasis, polynomial_cutoff
+
+distance = torch.tensor([1.0, 3.0, 6.0])
+features = BesselBasis(r_max=6.0, num_bases=8)(distance)       # (3, 8)
+features = features * polynomial_cutoff(distance, 6.0, p=5).unsqueeze(-1)
+```
+
+As the models, a layer reads the graph of the structures and aggregates with its methods
+(`graph.aggregate_edges_to_nodes`, `graph.aggregate_nodes_to_structures`): see
+[Graphs](graphs.md) and the pages of the [layers](../models/index.md#layers).
+
+### Networks of the energy to train
+
+```{.python notest}
+from torchms.data import load_dataset
+from torchms.models.layers import EquivariantNetwork, LineGraphNetwork
+
+structures = load_dataset("mp-20", "train")[:32]
+
+model = LineGraphNetwork(order=2, radius=(5.0, 3.5))
+energy = model(model.transform()(structures))      # (32,)
+
+model = EquivariantNetwork(correlation=3, radius=5.0)
+energy = model(structures)                         # (32,)
+```
+
+`LineGraphNetwork` reads the graph and the triplets of its transform, as the pretrained
+models; `EquivariantNetwork` builds its graph itself.
+
+Two networks written for this library, with terms on more than two atoms. They have no
+pretrained weights and there is no training loop in the library. Their energy does not
+depend on the description of the crystal and grows with the size of its cell, which is
+checked in the tests with the transforms of [data augmentation](augmentation.md). Their
+pages say what each one computes and
+[which one to use](../models/line-graph-network.md#compared-with-equivariantnetwork).

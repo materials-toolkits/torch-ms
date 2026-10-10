@@ -30,7 +30,7 @@ from torchms.graph.transforms import (
     KeepNearestNeighbors,
     KeepRadius,
 )
-from torchms.models import LineGraphNetwork
+from torchms.models.layers import LineGraphNetwork
 
 
 def random_structure(generator: torch.Generator, n_atoms: int) -> Structures:
@@ -328,7 +328,13 @@ class TestTransforms:
     def test_same_as_line_graph_network(self):
         batch = Structures.collate([Structures.zincblende(), Structures.diamond()])
         model = LineGraphNetwork(order=3, radius=(4.0, 3.0, 2.5))
-        index, geometry, _ = model.build_graph(batch)
+        structures = model.transform()(batch)
+        geometry = model.geometry(structures)
+        index = {
+            "bonds": structures.graph.edge_index,
+            "triplets": structures.triplets.index,
+            "quadruplets": structures.quadruplets.index,
+        }
 
         chain = Compose(
             [
@@ -340,12 +346,12 @@ class TestTransforms:
         result = chain(batch)
 
         assert torch.equal(result.graph.edge_index, index["bonds"])
-        assert torch.allclose(result.graph.edge_distance, geometry["bonds"])
+        assert torch.allclose(result.graph.edge_distance, geometry.distance)
         assert torch.equal(result.triplets.index, index["triplets"])
         # the model keeps the cosines away from ±1, for its gradient
-        assert torch.allclose(result.triplets.angle, geometry["triplets"], atol=5e-3)
+        assert torch.allclose(result.triplets.angle, geometry.angle, atol=5e-3)
         assert torch.equal(result.quadruplets.index, index["quadruplets"])
-        assert torch.allclose(result.quadruplets.angle, geometry["quadruplets"])
+        assert torch.allclose(result.quadruplets.angle, geometry.dihedral)
 
     @pytest.mark.parametrize(
         "transform",

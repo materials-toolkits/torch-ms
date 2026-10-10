@@ -4,6 +4,12 @@ All datasets share one format and are **complete and unfiltered**: nothing of th
 removed beyond what each page states. Failed calculations and duplicates of the sources are
 kept, so that you choose your own filters.
 
+The datasets are of three kinds. See [Loading datasets](../guide/datasets.md) to load them.
+
+## Inorganic materials
+
+Crystals, periodic along their three lattice vectors.
+
 | Name | Source | Structures | Atoms per structure | Labels |
 |---|---|---|---|---|
 | [`perov-5`](perov-5.md) | CDVAE | 18,928 | 5 | formation energy, band gap |
@@ -12,19 +18,32 @@ kept, so that you choose your own filters.
 | [`materials-project`](materials-project.md) | Materials Project 2026.09.28 | 271,325 | 1–444 | all four |
 | [`oqmd`](oqmd.md) | OQMD v1.8 | 1,407,269 | 1–312 | all four |
 | [`lematerial`](lematerial.md) | LeMat-Bulk `compatible_pbe` | 5,335,299 | 1–444 | total energy, energy above hull |
+
+## MOFs
+
+Metal-organic frameworks, computed (`qmof`) and experimental (`core-mof`, `core-mof-2024`).
+They are crystals too, with much larger cells.
+
+| Name | Source | Structures | Atoms per structure | Labels |
+|---|---|---|---|---|
 | [`qmof`](qmof.md) | QMOF Database v18 | 20,372 | 17–500 | total energy, band gap, 9 properties |
 | [`core-mof`](core-mof.md) | CoRE MOF 2019 | 12,020 / 7,061 | 10–10,560 | 13 properties, no energy |
 | [`core-mof-2024`](core-mof-2024.md) | CoRE MOF 2024, public part | 1,371 / 1,191 / 100 / 1,826 | 10–11,696 | 16 properties, no energy |
+
+The MOFs of the Cambridge Structural Database are not published as files: see
+[Datasets to build yourself](local.md#mofs-of-the-cambridge-structural-database).
+
+## Molecules
+
+Organic molecules, which are not periodic.
+
+| Name | Source | Structures | Atoms per structure | Labels |
+|---|---|---|---|---|
 | [`qm9`](qm9.md) | QM9 | 133,885 | 3–29 | total energy, band gap, 17 properties |
 | [`zinc250k`](zinc250k.md) | ZINC250k, positions from RDKit | 249,427 | 9–83 | 4 properties, no energy |
 
-The first six are inorganic crystals. `qmof`, `core-mof` and `core-mof-2024` hold metal-organic
-frameworks, computed and experimental. `qm9` and `zinc250k` hold organic molecules, which are not periodic.
-
-ZINC20 in 3D and the MOFs of the Cambridge Structural Database are not published as files:
-see [Datasets to build yourself](local.md).
-
-See [Loading datasets](../guide/datasets.md) to load them.
+ZINC20 in 3D is not published as a file: see
+[Datasets to build yourself](local.md#zinc20-molecules-in-3d).
 
 ## Recommended filters
 

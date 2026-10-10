@@ -2,11 +2,11 @@
 # Tian Xie, Xiang Fu, MIT license (see LICENSE in this directory).
 #
 # Changes: this file is a rewrite of the model of cdvae
-# (cdvae/pl_modules/model.py), for inference only: encoding, decoding of the
-# number of atoms, of the cell and of the composition, and generation by
-# annealed Langevin dynamics. The losses, the training, the prediction of a
-# property from the latent vector, the optimization of a property, the
-# datasets and the conversion from pymatgen are removed. Graphs are built by
+# (cdvae/pl_modules/model.py and decoder.py), for inference only: encoding,
+# decoding of the number of atoms, of the cell and of the composition, and
+# generation by annealed Langevin dynamics. The losses, the training, the
+# prediction of a property from the latent vector, the optimization of a
+# property, the datasets and the conversion from pymatgen are removed. Graphs are built by
 # torchms.graph, batches are torchms Structures, and the composition of a
 # batch is drawn without a loop over its structures. Names of modules and
 # parameters follow cdvae to load its weights.
@@ -37,17 +37,18 @@ from torch import nn
 
 from torchms.data.augmentation.transforms import Compose, Transform
 from torchms.data.batching import Structures
-from torchms.estimator.config import load_config
-from torchms.estimator.mace.reader import read_pickle
-from torchms.estimator.pretrained import (
+from torchms.models.estimator.config import load_config
+from torchms.models.estimator.reader import read_pickle
+from torchms.models.estimator.pretrained import (
     InvalidWeights,
     PretrainedModel,
     different_arguments,
     element_index,
     element_table,
 )
-from torchms.estimator.weights import download
+from torchms.models.estimator.weights import download
 from torchms.graph.geometry import cartesian, lattice_from_parameters, triplet_cosines
+from torchms.graph.graph import EdgeTuples, Graph
 from torchms.graph.transforms import (
     AddBonds,
     AddLineGraph,
@@ -60,9 +61,8 @@ from torchms.graph.transforms import (
     attached_tuples,
     edges_vectors,
 )
-from torchms.models.cdvae.dimenet import DimeNetPlusPlus
-from torchms.models.cdvae.dimenet import NUM_ELEMENTS as NUM_ENCODER_ELEMENTS
-from torchms.models.cdvae.gemnet import GemNetTDecoder
+from torchms.models.layers.dimenet import DimeNetConfig, DimeNetPlusPlus
+from torchms.models.layers.gemnet import GemNetConfig, GemNetT
 
 # every value of the model is in config.yaml, next to this module
 CONFIG = load_config(__file__)
@@ -81,6 +81,15 @@ NUM_ELEMENTS: int = CONFIG["model"]["num_elements"]
 SIGMA_BEGIN: float = CONFIG["model"]["sigma_begin"]
 SIGMA_END: float = CONFIG["model"]["sigma_end"]
 NUM_NOISE_LEVELS: int = CONFIG["model"]["num_noise_levels"]
+
+# hyperparameters of the DimeNet++ encoder and of the GemNet-T decoder
+ENCODER = DimeNetConfig(out_channels=LATENT_DIM, **CONFIG["encoder"])
+DECODER = GemNetConfig(
+    latent_dim=LATENT_DIM,
+    num_elements=NUM_ELEMENTS,
+    radius=RADIUS,
+    **CONFIG["decoder"],
+)
 
 STEPS_PER_LEVEL: int = CONFIG["sampling"]["steps_per_level"]
 STEP_SIZE: float = CONFIG["sampling"]["step_size"]
@@ -111,6 +120,32 @@ def build_mlp(output_size: int) -> nn.Sequential:
     layers.append(nn.Linear(HIDDEN_DIM, output_size))
 
     return nn.Sequential(*layers)
+
+
+class GemNetTDecoder(nn.Module):
+    """Move and element of each atom of noisy structures, from their latent vector."""
+
+    def __init__(self):
+        super().__init__()
+        self.gemnet = GemNetT(DECODER)
+        self.fc_atom = nn.Linear(DECODER.hidden_dim, NUM_ELEMENTS)
+
+    def forward(
+        self,
+        latent: Float[torch.Tensor, "n_struct latent_dim"],
+        element: Int[torch.Tensor, "n_atoms"],
+        graph: Graph,
+        angles: EdgeTuples,
+        bonds: EdgeTuples,
+        vectors: Float[torch.Tensor, "n_edges 3"],
+        cosine: Float[torch.Tensor, "n_triplets"],
+    ) -> tuple[
+        Float[torch.Tensor, "n_atoms 3"], Float[torch.Tensor, "n_atoms num_elements"]
+    ]:
+        """Vector in Å and scores of the elements of each atom, see GemNetT."""
+        h, move = self.gemnet(latent, element, graph, angles, bonds, vectors, cosine)
+
+        return move, self.fc_atom(h)
 
 
 def sample_composition(
@@ -208,7 +243,7 @@ class CdvaeModel(PretrainedModel):
 
     def __init__(self):
         super().__init__()
-        self.encoder = DimeNetPlusPlus(LATENT_DIM)
+        self.encoder = DimeNetPlusPlus(ENCODER)
         self.decoder = GemNetTDecoder()
 
         self.fc_mu = nn.Linear(LATENT_DIM, LATENT_DIM)
@@ -237,7 +272,7 @@ class CdvaeModel(PretrainedModel):
         # by the atomic number, and of the decoder, from hydrogen
         self.register_buffer(
             "encoder_elements",
-            element_table(torch.arange(NUM_ENCODER_ELEMENTS)),
+            element_table(torch.arange(ENCODER.num_elements)),
             persistent=False,
         )
         self.register_buffer(
@@ -255,7 +290,7 @@ class CdvaeModel(PretrainedModel):
 
         The checkpoint and the scaler of the cells are pickles of objects of
         pytorch-lightning, omegaconf and cdvae: they are read without
-        importing or running anything, see torchms.estimator.mace.reader.
+        importing or running anything, see torchms.models.estimator.reader.
         """
         checkpoint_path, scaler_path, hparams_path = download("cdvae", name, cache)
 

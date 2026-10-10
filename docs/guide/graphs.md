@@ -76,7 +76,7 @@ The transforms, with the function each one calls, described in
 | `MirrorEdges` | — | `graph` | `graph`, symmetric | `line_graph`, `triplets`, `quadruplets`, `bonds` | `mirror_edges` |
 | `AddLineGraph` | `radius=None`, `backtrack=False`, `geometry=False`, `same_atom=True` | `graph` | `line_graph` | — | `edge_pairs` |
 | `AddTriplets` | `radius=None`, `geometry=False` | `graph` | `triplets` | — | `triplets` |
-| `AddQuadruplets` | `radius=None`, `geometry=False` | `graph` | `quadruplets` | — | `quadruplets` |
+| `AddQuadruplets` | `radius=None`, `geometry=False`, `strict=False` | `graph` | `quadruplets` | — | `quadruplets` |
 
 - **Add** transforms attach a field, **Keep** transforms remove edges of the graph.
 - A transform which needs a graph raises a `ValueError` when the structures have none.

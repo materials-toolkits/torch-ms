@@ -17,10 +17,10 @@ from torchms.data.augmentation import (
     LatticeRotation,
     make_supercell,
 )
-from torchms.estimator import weights
-from torchms.estimator.alignn import AlignnModel, InvalidWeights
-from torchms.estimator.weights import Checkpoint, sha256
-from torchms.estimator.alignn.model import (
+from torchms.models.estimator import weights
+from torchms.models.alignn import AlignnModel, InvalidWeights
+from torchms.models.estimator.weights import Checkpoint, sha256
+from torchms.models.alignn.model import (
     GRAPH_ARGS,
     MAX_NEIGHBORS,
     MODEL_ARGS,

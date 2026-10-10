@@ -13,14 +13,14 @@ from torchms.data.augmentation import (
     random_orthogonal,
     rotate_lattice,
 )
-from torchms.models.basis import spherical_harmonics
-from torchms.models import (
+from torchms.models.layers.basis import spherical_harmonics
+from torchms.models.layers import (
     AngleBasis,
     EquivariantNetwork,
     LineGraphNetwork,
     gaunt_coefficients,
 )
-from torchms.models.basis import DEGREES
+from torchms.models.layers.basis import DEGREES
 
 pytestmark = pytest.mark.timeout(30)
 
@@ -47,6 +47,15 @@ def line_graph_network(order: int, chiral: bool = False) -> LineGraphNetwork:
     return LineGraphNetwork(
         order=order, radius=RADIUS, hidden=16, num_layers=2, chiral=chiral
     ).eval()
+
+
+def run(model, structures: Structures) -> torch.Tensor:
+    """Energy of structures without graph: a network which reads a graph is
+    given the one of its transform."""
+    if hasattr(model, "transform"):
+        structures = model.transform()(structures)
+
+    return model(structures)
 
 
 def equivariant_network(correlation: int) -> EquivariantNetwork:
@@ -148,25 +157,71 @@ def test_line_graph_network_orders():
     batch = make_batch()
 
     for order in (1, 2, 3):
-        index, geometry, weights = line_graph_network(order).build_graph(batch)
-        names = ["bonds", "triplets", "quadruplets"][:order]
+        model = line_graph_network(order)
+        structures = model.transform()(batch)
+        geometry = model.geometry(structures)
 
-        assert list(index) == list(geometry) == list(weights) == names
-        for name, radius in zip(names, RADIUS):
-            assert index[name].shape[1] > 0
-            assert geometry[name].shape == (index[name].shape[1],)
-            assert weights[name].shape == (index[name].shape[1], 1)
-            assert (weights[name] > -1e-6).all() and (weights[name] <= 1).all()
+        # the transform attaches what the order of the network reads, no more
+        attached = [structures.graph, structures.triplets, structures.quadruplets]
+        assert [item is not None for item in attached] == [n < order for n in range(3)]
 
-            bonds = (
-                index[name] if name != "bonds" else torch.arange(len(geometry["bonds"]))
-            )
-            assert (geometry["bonds"][bonds] <= radius).all()
+        values = [geometry.distance, geometry.angle, geometry.dihedral]
+        cutoffs = [
+            geometry.bond_cutoff,
+            geometry.triplet_cutoff,
+            geometry.quadruplet_cutoff,
+        ]
+        assert [item is not None for item in values] == [n < order for n in range(3)]
+        assert [item is not None for item in cutoffs] == [n < order for n in range(3)]
+
+        index = [torch.arange(len(geometry.distance)).unsqueeze(0)]
+        index += [item.index for item in attached[1:order]]
+
+        for n in range(order):
+            assert index[n].shape[1] > 0
+            assert values[n].shape == (index[n].shape[1],)
+            assert cutoffs[n].shape == (index[n].shape[1], 1)
+            assert (cutoffs[n] > -1e-6).all() and (cutoffs[n] <= 1).all()
+            # the bonds of each order are within its radius
+            assert (geometry.distance[index[n]] <= RADIUS[n]).all()
+
+
+def test_line_graph_network_does_not_build_graphs():
+    from torchms.graph.transforms import AddRadiusGraph
+
+    batch = make_batch()
+    model = line_graph_network(3)
+
+    with pytest.raises(ValueError, match="graph, triplets, quadruplets"):
+        model(batch)
+
+    # a graph alone is not completed with the tuples of edges of the network
+    with pytest.raises(ValueError, match="triplets, quadruplets.*transform"):
+        model(AddRadiusGraph(RADIUS[0], self_images=True)(batch))
+
+    # a network of a lower order reads less
+    structures = line_graph_network(2).transform()(batch)
+    assert structures.quadruplets is None
+    assert line_graph_network(2)(structures).shape == (2,)
+
+
+def test_line_graph_network_cutoffs_of_tuples():
+    """The cutoff of a triplet or a quadruplet is the product of its bonds'."""
+    model = line_graph_network(3)
+    structures = model.transform()(make_batch())
+    geometry = model.geometry(structures)
+
+    for tuples, cutoff, radius in (
+        (structures.triplets, geometry.triplet_cutoff, RADIUS[1]),
+        (structures.quadruplets, geometry.quadruplet_cutoff, RADIUS[2]),
+    ):
+        envelope = model.envelope(geometry.distance, radius)
+        assert torch.allclose(cutoff, envelope[tuples.index].prod(dim=0))
 
 
 @pytest.mark.parametrize("make_model", MODELS)
 def test_output(make_model):
-    energy = make_model()(make_batch())
+    energy = run(make_model(), make_batch())
 
     assert energy.shape == (2,)
     assert energy.dtype == torch.float32
@@ -177,9 +232,9 @@ def test_output(make_model):
 def test_batch_equals_single(make_model):
     model = make_model()
     with torch.no_grad():
-        alone = torch.cat([model(structure) for structure in make_structures()])
+        alone = torch.cat([run(model, structure) for structure in make_structures()])
 
-        assert torch.allclose(model(make_batch()), alone, rtol=1e-4, atol=1e-4)
+        assert torch.allclose(run(model, make_batch()), alone, rtol=1e-4, atol=1e-4)
 
 
 @pytest.mark.parametrize("make_model", MODELS)
@@ -192,10 +247,10 @@ def test_invariances(make_model, transform):
     batch = make_batch()
 
     with torch.no_grad():
-        expected = model(batch)
+        expected = run(model, batch)
         for seed in range(2):
             augmented = transform(generator=generator(seed))(batch)
-            assert torch.allclose(model(augmented), expected, rtol=1e-3, atol=1e-3)
+            assert torch.allclose(run(model, augmented), expected, rtol=1e-3, atol=1e-3)
 
 
 @pytest.mark.parametrize("make_model", MODELS)
@@ -205,8 +260,8 @@ def test_energy_of_a_supercell(make_model):
     repeat = torch.tensor([[2, 1, 1], [1, 1, 2]])
 
     with torch.no_grad():
-        energy = model(make_supercell(batch, repeat))
-        expected = model(batch) * repeat.prod(dim=1)
+        energy = run(model, make_supercell(batch, repeat))
+        expected = run(model, batch) * repeat.prod(dim=1)
 
     assert torch.allclose(energy, expected, rtol=1e-3, atol=1e-3)
 
@@ -219,13 +274,15 @@ def test_depends_on_the_structure(make_model):
     strained.lattice = batch.lattice * torch.tensor([1.05, 1.0, 1.0]).view(1, 3, 1)
 
     with torch.no_grad():
-        assert not torch.allclose(model(strained), model(batch), rtol=1e-3, atol=1e-3)
+        assert not torch.allclose(
+            run(model, strained), run(model, batch), rtol=1e-3, atol=1e-3
+        )
 
 
 @pytest.mark.parametrize("make_model", MODELS)
 def test_gradients_reach_every_parameter(make_model):
     model = make_model().train()
-    model(make_batch()).sum().backward()
+    run(model, make_batch()).sum().backward()
 
     for name, parameter in model.named_parameters():
         assert parameter.grad is not None, name
@@ -260,7 +317,7 @@ def test_higher_orders_see_more():
 
     with torch.no_grad():
         for name, model, same in models():
-            difference = (model.eval()(corner) - model(line)).abs().item()
+            difference = (run(model.eval(), corner) - run(model, line)).abs().item()
             if same:
                 assert difference < 1e-6, name
             else:
@@ -277,13 +334,40 @@ def test_chiral_model_sees_mirror_images():
 
     with torch.no_grad():
         for model in (achiral, chiral):
-            rotated = model(rotate_lattice(batch, proper))
-            assert torch.allclose(rotated, model(batch), rtol=1e-3, atol=1e-3)
+            rotated = run(model, rotate_lattice(batch, proper))
+            assert torch.allclose(rotated, run(model, batch), rtol=1e-3, atol=1e-3)
 
         mirrored = rotate_lattice(batch, mirror)
-        assert torch.allclose(achiral(mirrored), achiral(batch), rtol=1e-3, atol=1e-3)
+        assert torch.allclose(
+            run(achiral, mirrored), run(achiral, batch), rtol=1e-3, atol=1e-3
+        )
 
         # zincblende is its own mirror image, the triclinic cell is not
-        difference = (chiral(mirrored) - chiral(batch)).abs()
+        difference = (run(chiral, mirrored) - run(chiral, batch)).abs()
         assert difference[0] < 1e-4
         assert difference[1] > 1e-3
+
+
+def test_networks_hyperparameters():
+    """The number of elements and the cutoff are arguments of the networks."""
+    batch = make_batch()
+
+    for make in (
+        lambda **kwargs: LineGraphNetwork(order=2, radius=RADIUS, hidden=16, **kwargs),
+        lambda **kwargs: EquivariantNetwork(radius=RADIUS[0], channels=16, **kwargs),
+    ):
+        torch.manual_seed(0)
+        default = make().eval()
+        assert default.atom_embedding.num_embeddings == 119
+        assert default.cutoff_power == 4
+
+        torch.manual_seed(0)
+        other = make(num_elements=60, cutoff_power=6).eval()
+        assert other.atom_embedding.num_embeddings == 61
+        assert other.cutoff_power == 6
+
+        # the same weights with another cutoff give another energy
+        other = make(cutoff_power=6).eval()
+        other.load_state_dict(default.state_dict())
+        with torch.no_grad():
+            assert not torch.allclose(run(other, batch), run(default, batch))

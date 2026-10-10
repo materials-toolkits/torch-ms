@@ -5,7 +5,6 @@ docs_dir: docs
 theme:
   name: material
   features:
-    - navigation.sections
     - navigation.top
     - content.code.copy
     - toc.follow
@@ -67,23 +66,42 @@ nav:
       - Structures: guide/structures.md
       - Data augmentation: guide/augmentation.md
       - Graphs: guide/graphs.md
-      - Models: guide/models.md
+      - Using models: guide/models.md
       - Energy above the hull: guide/energy.md
       - Preprocessing your own data: guide/preprocessing.md
   - Datasets:
       - Overview: datasets/index.md
-      - Perov-5: datasets/perov-5.md
-      - Carbon-24: datasets/carbon-24.md
-      - MP-20: datasets/mp-20.md
-      - Materials Project: datasets/materials-project.md
-      - OQMD: datasets/oqmd.md
-      - LeMat-Bulk: datasets/lematerial.md
-      - QMOF: datasets/qmof.md
-      - CoRE MOF 2019: datasets/core-mof.md
-      - CoRE MOF 2024: datasets/core-mof-2024.md
-      - QM9: datasets/qm9.md
-      - ZINC250k: datasets/zinc250k.md
+      - Inorganic materials:
+          - Perov-5: datasets/perov-5.md
+          - Carbon-24: datasets/carbon-24.md
+          - MP-20: datasets/mp-20.md
+          - Materials Project: datasets/materials-project.md
+          - OQMD: datasets/oqmd.md
+          - LeMat-Bulk: datasets/lematerial.md
+      - MOFs:
+          - QMOF: datasets/qmof.md
+          - CoRE MOF 2019: datasets/core-mof.md
+          - CoRE MOF 2024: datasets/core-mof-2024.md
+      - Molecules:
+          - QM9: datasets/qm9.md
+          - ZINC250k: datasets/zinc250k.md
       - To build yourself: datasets/local.md
+  - Models:
+      - Overview: models/index.md
+      - Supervised models:
+          - orb-v3: models/orb.md
+          - MACE: models/mace.md
+          - M3GNet: models/m3gnet.md
+          - CHGNet: models/chgnet.md
+          - ALIGNN: models/alignn.md
+      - Generative models:
+          - CDVAE: models/cdvae.md
+      - Layers:
+          - Bases: models/bases.md
+          - DimeNet++: models/dimenet.md
+          - GemNet-T: models/gemnet.md
+          - LineGraphNetwork: models/line-graph-network.md
+          - EquivariantNetwork: models/equivariant-network.md
   - Design notes:
       - Batching convention: design/batching.md
       - Graph conventions: design/graphs.md
@@ -95,5 +113,4 @@ nav:
       - torchms.data: reference/data.md
       - torchms.graph: reference/graph.md
       - torchms.models: reference/models.md
-      - torchms.estimator: reference/estimator.md
   - Development: development.md

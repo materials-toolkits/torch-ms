@@ -37,7 +37,7 @@ import torch
 
 from torchms.data import HDF5Dataset, Structures
 from torchms.data.hull import energy_above_reference
-from torchms.estimator import EnergyEstimator
+from torchms.models.estimator import EnergyEstimator
 from torchms.graph.geometry import lattice_from_parameters, lattice_heights
 from torchms.models import CdvaeModel
 from torchms.models.cdvae.model import LATENT_DIM

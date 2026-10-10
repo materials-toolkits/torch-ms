@@ -9,11 +9,12 @@ import pytest
 import torch
 
 from torchms.data import HDF5Dataset, Structures
-from torchms.estimator import EnergyEstimator, OrbEnergyModel
-from torchms.estimator import calibration
-from torchms.estimator import weights
-from torchms.estimator.energy import atom_batches, to_device
-from torchms.estimator.orb.model import (
+from torchms.models import OrbEnergyModel
+from torchms.models.estimator import EnergyEstimator
+from torchms.models.estimator import calibration
+from torchms.models.estimator import weights
+from torchms.models.estimator.energy import atom_batches, to_device
+from torchms.models.orb.model import (
     COVALENT_RADII,
     MAX_NEIGHBORS,
     RADIUS,
@@ -23,7 +24,11 @@ from torchms.estimator.orb.model import (
     build_mlp,
 )
 from torchms.graph.graph import Graph
-from torchms.models.basis import BesselBasis, polynomial_cutoff, spherical_harmonics
+from torchms.models.layers.basis import (
+    BesselBasis,
+    polynomial_cutoff,
+    spherical_harmonics,
+)
 
 
 def predict(model, structures: Structures) -> torch.Tensor:
@@ -150,7 +155,7 @@ def test_spherical_harmonics_rotation():
 
 
 def test_bessel_basis():
-    basis = BesselBasis()
+    basis = BesselBasis(r_max=6.0, num_bases=8)
     distance = torch.tensor([1.0, 3.0, 6.0])
     values = basis(distance)
 

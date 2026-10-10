@@ -28,8 +28,8 @@ import pyarrow.parquet as pq
 from lematerial_to_cif import REPO, REVISION, parquet_files
 from torchms.data.hdf5 import HDF5Dataset
 from torchms.data.hull import energy_above_reference, load_hull
-from torchms.estimator import EnergyEstimator
-from torchms.estimator.calibration import (
+from torchms.models.estimator import EnergyEstimator
+from torchms.models.estimator.calibration import (
     apply_element_correction,
     composition_matrix,
     error_report,

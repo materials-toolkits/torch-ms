@@ -121,8 +121,8 @@ def test_equivalent_partition_false_same_counts():
 
 def test_equivalent_partition_batched():
     # graph 0: equivalent, graph 1: not equivalent
-    a = torch.tensor([0, 0, 1,  0, 0, 1])
-    b = torch.tensor([5, 5, 9,  5, 9, 9])
+    a = torch.tensor([0, 0, 1, 0, 0, 1])
+    b = torch.tensor([5, 5, 9, 5, 9, 9])
     batch = torch.tensor([0, 0, 0, 1, 1, 1])
     result = equivalent_partition(a, b, batch)
     assert result.tolist() == [True, False]

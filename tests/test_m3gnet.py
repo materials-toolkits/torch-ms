@@ -16,9 +16,9 @@ from torchms.data.augmentation import (
     LatticeRotation,
     make_supercell,
 )
-from torchms.estimator import weights
-from torchms.estimator.m3gnet import InvalidWeights, M3gnetEnergyModel
-from torchms.estimator.m3gnet.model import (
+from torchms.models.estimator import weights
+from torchms.models.m3gnet import InvalidWeights, M3gnetEnergyModel
+from torchms.models.m3gnet.model import (
     ELEMENTS,
     MAX_L,
     MAX_N,
@@ -26,7 +26,7 @@ from torchms.estimator.m3gnet.model import (
     RADIUS,
     THREE_BODY_RADIUS,
 )
-from torchms.models.basis import (
+from torchms.models.layers.basis import (
     SphericalBesselBasis,
     legendre,
     spherical_bessel,
