@@ -84,3 +84,18 @@ vector and tensor features between layers in its larger models. `MaceEnergyModel
   `EquivariantNetwork` with the number of pairs.
 
 Neither model was trained here: their accuracy is not measured.
+
+## Pretrained models of other projects
+
+`CdvaeModel` is the rewrite of CDVAE, a generative model of crystal structures, with
+pretrained weights downloaded on the first use:
+
+```{.python notest}
+from torchms.models import CdvaeModel
+
+model = CdvaeModel.from_pretrained(device="cuda")
+structures = model.sample(64)
+```
+
+Its weights were trained by a third party, and its encoder reads a graph of bonds
+which torchms does not build: see [the design note](../design/estimator.md#cdvae).

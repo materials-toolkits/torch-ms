@@ -8,6 +8,14 @@
 
 ::: torchms.models.equivariant_network
 
+## CDVAE
+
+::: torchms.models.cdvae.model
+
+::: torchms.models.cdvae.dimenet
+
+::: torchms.models.cdvae.gemnet
+
 ## Bases
 
 ::: torchms.models.basis

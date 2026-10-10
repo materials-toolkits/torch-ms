@@ -1,7 +1,7 @@
 """Configuration of the pretrained models: one YAML file per model.
 
-Each model of torchms.estimator has a file config.yaml next to its module
-model.py, with:
+Each pretrained model, in torchms.estimator or in torchms.models, has a file
+config.yaml next to its module model.py, with:
 
 * default_weights: name of the weights loaded by default;
 * checkpoints: files of each of its pretrained weights, see
@@ -59,12 +59,17 @@ def load_config(module_file: str | os.PathLike) -> dict[str, Any]:
 def config_files() -> dict[str, Path]:
     """File of the configuration of each model, by name of its directory.
 
+    The models are the directories of torchms.estimator and of torchms.models
+    with a configuration.
+
     Examples:
         >>> sorted(config_files())
-        ['alignn', 'chgnet', 'm3gnet', 'mace', 'orb']
+        ['alignn', 'cdvae', 'chgnet', 'm3gnet', 'mace', 'orb']
     """
-    directory = Path(__file__).parent
+    package = Path(__file__).parent.parent
 
     return {
-        path.parent.name: path for path in sorted(directory.glob(f"*/{CONFIG_NAME}"))
+        path.parent.name: path
+        for directory in (package / "estimator", package / "models")
+        for path in sorted(directory.glob(f"*/{CONFIG_NAME}"))
     }

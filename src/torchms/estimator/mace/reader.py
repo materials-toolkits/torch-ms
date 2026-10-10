@@ -107,6 +107,27 @@ def _load(file: Any, **kwargs: Any) -> Any:
 _PICKLE = types.SimpleNamespace(__name__="pickle", Unpickler=Unpickler, load=_load)
 
 
+def read_pickle(file_name: str | os.PathLike) -> Any:
+    """Read a file written by torch.save without importing any class.
+
+    For the files which torch.load refuses with weights_only=True: checkpoints
+    with objects of other libraries next to their tensors.
+
+    Args:
+        file_name: File written by torch.save.
+
+    Returns:
+        What the file holds, with tensors and containers as they are and a
+        Placeholder in place of every other object.
+    """
+    return torch.load(
+        file_name,
+        map_location="cpu",
+        pickle_module=_PICKLE,
+        weights_only=False,
+    )
+
+
 def _collect(
     module: Placeholder,
     prefix: str,
@@ -147,12 +168,7 @@ def read_model(
     Raises:
         pickle.UnpicklingError: If the file is not a pickled torch module.
     """
-    model = torch.load(
-        file_name,
-        map_location="cpu",
-        pickle_module=_PICKLE,
-        weights_only=False,
-    )
+    model = read_pickle(file_name)
     if not isinstance(model, Placeholder) or "_modules" not in model.attributes():
         raise pickle.UnpicklingError(f"{file_name} is not a pickled torch module")
 

@@ -31,7 +31,7 @@ from jaxtyping import Bool, Float
 
 from torchms.data.batching import Structures
 from torchms.graph.atomic_radius import atomic_radius
-from torchms.graph.cutoff import cutoff, nearest_neighbors
+from torchms.graph.cutoff import cutoff, mirror_edges, near_images, nearest_neighbors
 from torchms.graph.geometry import dihedral_angles, pair_cosines, triplet_cosines
 from torchms.graph.graph import EdgeTuples, Graph
 from torchms.graph.line_graph import (
@@ -247,6 +247,68 @@ class KeepNearestNeighbors:
 
 
 @dataclass
+class KeepNearImages:
+    """Keep the edges to the nearest periodic images.
+
+    For the models whose graphs only look at the cells around the cell of an
+    atom. See torchms.graph.cutoff.near_images.
+
+    Fields:
+        Replaces structures.graph: fewer edges, in the same order. The geometry
+        of the edges kept is kept. Removes structures.line_graph, triplets and
+        quadruplets, which pointed to the edges of the graph replaced: add
+        them after this step.
+
+    Args:
+        max_shift: Largest number of cells, along each lattice vector, between
+            the cell of the sender and the image of the receiver.
+
+    Examples:
+        >>> lattice = 3.0 * torch.eye(3).unsqueeze(0)
+        >>> cube = Structures(lattice=lattice, x=[[0.0, 0.0, 0.0]], z=[29])
+        >>> structures = AddRadiusGraph(7.0, self_images=True)(cube)
+        >>> KeepNearImages()(structures).graph.num_edges
+        tensor([26])
+    """
+
+    max_shift: int = 1
+
+    def __call__(self, structures: Structures) -> Structures:
+        graph = near_images(attached_graph(structures, self), self.max_shift)
+
+        return attach_graph(structures, graph, False)
+
+
+@dataclass
+class MirrorEdges:
+    """Make the graph symmetric from its edges going to an atom of lower index.
+
+    After KeepNearestNeighbors an edge can be kept without its reverse. Here
+    the edges going to an atom of lower index are kept and get their reverse,
+    the other ones are removed: every edge has its reverse, and an atom can
+    have more or fewer edges than before. See torchms.graph.cutoff.mirror_edges.
+
+    Fields:
+        Replaces structures.graph: other edges, ordered by structure, without
+        geometry. Removes structures.line_graph, triplets, quadruplets and
+        bonds: add them after this step.
+
+    Examples:
+        >>> structures = AddRadiusGraph(4.0)(Structures.diamond())
+        >>> structures = MirrorEdges()(KeepNearestNeighbors(4)(structures))
+        >>> structures.graph.num_edges
+        tensor([32])
+        >>> AddBonds()(structures).bonds.num_tuples
+        tensor([16])
+    """
+
+    def __call__(self, structures: Structures) -> Structures:
+        graph = mirror_edges(attached_graph(structures, self))
+
+        return attach_graph(structures, graph, False)
+
+
+@dataclass
 class KeepRadius:
     """Keep the edges not longer than a radius.
 
@@ -303,6 +365,8 @@ class AddLineGraph:
             the whole graph.
         backtrack: If False, an edge is not followed by its reverse: the pair
             u→v, v→u is not listed.
+        same_atom: If False, a pair u→v, v→w where w is the atom u or one of
+            its images is not listed.
         geometry: If True, the angle of each pair is attached.
 
     Examples:
@@ -317,11 +381,12 @@ class AddLineGraph:
     radius: float | None = None
     backtrack: bool = False
     geometry: bool = False
+    same_atom: bool = True
 
     def __call__(self, structures: Structures) -> Structures:
         graph = attached_graph(structures, self)
         index, batch, ptr = edge_pairs(
-            graph, shorter_edges(graph, self.radius), self.backtrack
+            graph, shorter_edges(graph, self.radius), self.backtrack, self.same_atom
         )
 
         angle = None
@@ -498,6 +563,8 @@ __all__ = [
     "AddQuadruplets",
     "AddRadiusGraph",
     "AddTriplets",
+    "KeepNearImages",
     "KeepNearestNeighbors",
     "KeepRadius",
+    "MirrorEdges",
 ]

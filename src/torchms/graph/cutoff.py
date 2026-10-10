@@ -135,3 +135,91 @@ def nearest_neighbors(graph: Graph, k: int) -> Graph:
     rank = torch.arange(len(order), device=device) - source_ptr[source[order]]
 
     return graph.select_edges(order[rank < k])
+
+
+def near_images(graph: Graph, max_shift: int = 1) -> Graph:
+    """Keep the edges to the nearest periodic images.
+
+    Args:
+        graph: Graph of the atoms.
+        max_shift: Largest number of cells, along each lattice vector, between
+            the cell of the sender and the image of the receiver.
+
+    Returns:
+        Graph with the edges whose shift is at most max_shift in absolute
+        value along each lattice vector, in the same order.
+
+    Examples:
+        One atom in a cubic cell of 3 Å: its images up to 7 Å, then the ones
+        of the 26 cells around its own.
+
+        >>> from torchms.data.batching import Structures
+        >>> lattice = 3.0 * torch.eye(3).unsqueeze(0)
+        >>> cube = Structures(lattice=lattice, x=[[0.0, 0.0, 0.0]], z=[29])
+        >>> graph = cutoff(cube, 7.0, self_images=True)
+        >>> graph.num_edges, near_images(graph).num_edges
+        (tensor([56]), tensor([26]))
+    """
+    near = (graph.edge_shift.abs() <= max_shift).all(dim=1)
+
+    return graph.select_edges(near.nonzero().squeeze(1))
+
+
+def mirror_edges(graph: Graph) -> Graph:
+    """Make a graph symmetric from the edges going to an atom of lower index.
+
+    An edge is kept if its receiver has a lower index than its sender, or, for
+    an edge between an atom and one of its images, if the first non-zero
+    component of its shift is negative. The reverse of each edge kept is
+    added. After nearest_neighbors, where an edge can be kept without its
+    reverse, such an edge gets its reverse if it is kept and is removed
+    otherwise. This is how GemNet makes its graphs symmetric.
+
+    Args:
+        graph: Graph of the atoms.
+
+    Returns:
+        Graph where every edge has its reverse, ordered by structure, without
+        geometry.
+
+    Examples:
+        Edges 1 → 0, kept and mirrored, and 1 → 2, removed.
+
+        >>> from torchms.data.batching import Structures
+        >>> structures = Structures.water()
+        >>> graph = Graph.from_edges(
+        ...     structures,
+        ...     structures.num_atoms,
+        ...     torch.tensor([[1, 1], [0, 2]]),
+        ...     torch.zeros(2, 3, dtype=torch.int64),
+        ...     edge_batch=torch.zeros(2, dtype=torch.int64),
+        ... )
+        >>> mirror_edges(graph).edge_index
+        tensor([[1, 0],
+                [0, 1]])
+    """
+    sender, receiver = graph.edge_index
+    shift = graph.edge_shift
+
+    # first non-zero component of the shift negative
+    earlier = (
+        (shift[:, 0] < 0)
+        | ((shift[:, 0] == 0) & (shift[:, 1] < 0))
+        | ((shift[:, 0] == 0) & (shift[:, 1] == 0) & (shift[:, 2] < 0))
+    )
+    kept = ((receiver < sender) | ((receiver == sender) & earlier)).nonzero().squeeze(1)
+
+    edge_index = graph.edge_index[:, kept]
+    edge_index = torch.cat([edge_index, edge_index.flip(0)], dim=1)
+    edge_shift = torch.cat([shift[kept], -shift[kept]])
+    edge_batch = graph.edge_batch[kept].repeat(2)
+
+    order = torch.argsort(edge_batch, stable=True)
+
+    return Graph.from_edges(
+        graph.structures,
+        graph.num_atoms,
+        edge_index[:, order],
+        edge_shift[order],
+        edge_batch=edge_batch[order],
+    )

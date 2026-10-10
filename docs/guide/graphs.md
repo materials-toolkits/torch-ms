@@ -72,7 +72,9 @@ The transforms, with the function each one calls, described in
 | `AddAtomicRadiusGraph` | `scaling=2.0`, `ensure_gap=0.5`, `geometry=False` | — | `graph` | `line_graph`, `triplets`, `quadruplets` | `atomic_radius` |
 | `KeepNearestNeighbors` | `k` | `graph` | `graph`, with fewer edges | `line_graph`, `triplets`, `quadruplets` | `nearest_neighbors` |
 | `KeepRadius` | `radius` | `graph` | `graph`, with fewer edges | `line_graph`, `triplets`, `quadruplets` | — |
-| `AddLineGraph` | `radius=None`, `backtrack=False`, `geometry=False` | `graph` | `line_graph` | — | `edge_pairs` |
+| `KeepNearImages` | `max_shift=1` | `graph` | `graph`, with fewer edges | `line_graph`, `triplets`, `quadruplets` | `near_images` |
+| `MirrorEdges` | — | `graph` | `graph`, symmetric | `line_graph`, `triplets`, `quadruplets`, `bonds` | `mirror_edges` |
+| `AddLineGraph` | `radius=None`, `backtrack=False`, `geometry=False`, `same_atom=True` | `graph` | `line_graph` | — | `edge_pairs` |
 | `AddTriplets` | `radius=None`, `geometry=False` | `graph` | `triplets` | — | `triplets` |
 | `AddQuadruplets` | `radius=None`, `geometry=False` | `graph` | `quadruplets` | — | `quadruplets` |
 
