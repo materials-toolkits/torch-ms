@@ -110,6 +110,52 @@ def centered_supercell(
     return supercell, atom_index
 
 
+def lattice_from_parameters(
+    lengths: Float[torch.Tensor, "n_struct 3"],
+    angles: Float[torch.Tensor, "n_struct 3"],
+) -> Float[torch.Tensor, "n_struct 3 3"]:
+    """Lattice vectors of cells from their lengths and their angles.
+
+    The orientation is the one of pymatgen: c is along z and a in the plane
+    (x, z).
+
+    Args:
+        lengths: Lengths a, b and c in Å, shape (n_struct, 3).
+        angles: Angles alpha, beta and gamma in degrees, shape (n_struct, 3).
+
+    Returns:
+        Lattice vectors as rows, shape (n_struct, 3, 3).
+
+    Examples:
+        >>> lengths = torch.tensor([[2.0, 3.0, 4.0]])
+        >>> lattice = lattice_from_parameters(lengths, torch.full((1, 3), 90.0))
+        >>> lattice.round(decimals=4) + 0.0
+        tensor([[[2., 0., 0.],
+                 [0., 3., 0.],
+                 [0., 0., 4.]]])
+    """
+    radians = torch.deg2rad(angles)
+    cos, sin = torch.cos(radians), torch.sin(radians)
+    zero = torch.zeros_like(lengths[:, 0])
+
+    # angle between the planes (a, c) and (b, c)
+    gamma_star = torch.arccos(
+        ((cos[:, 0] * cos[:, 1] - cos[:, 2]) / (sin[:, 0] * sin[:, 1])).clamp(-1.0, 1.0)
+    )
+
+    vector_a = torch.stack([lengths[:, 0] * sin[:, 1], zero, lengths[:, 0] * cos[:, 1]])
+    vector_b = torch.stack(
+        [
+            -lengths[:, 1] * sin[:, 0] * torch.cos(gamma_star),
+            lengths[:, 1] * sin[:, 0] * torch.sin(gamma_star),
+            lengths[:, 1] * cos[:, 0],
+        ]
+    )
+    vector_c = torch.stack([zero, zero, lengths[:, 2]])
+
+    return torch.stack([vector_a.t(), vector_b.t(), vector_c.t()], dim=1)
+
+
 def cartesian(
     fractional: Float[torch.Tensor, "n 3"],
     lattice: Float[torch.Tensor, "n_struct 3 3"],

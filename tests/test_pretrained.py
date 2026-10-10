@@ -162,7 +162,14 @@ def test_model_does_not_build_graphs(cls):
 
 
 def test_checkpoints_are_read_from_the_configurations(tmp_path):
-    assert set(weights.CHECKPOINTS) == {"orb", "chgnet", "m3gnet", "mace", "alignn"}
+    assert set(weights.CHECKPOINTS) == {
+        "orb",
+        "chgnet",
+        "m3gnet",
+        "mace",
+        "alignn",
+        "cdvae",
+    }
     for model, names in weights.CHECKPOINTS.items():
         for name, files in names.items():
             assert name.startswith(model)

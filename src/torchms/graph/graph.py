@@ -424,6 +424,40 @@ class Graph:
         """
         return src[self.receivers]
 
+    def unpool_structures(
+        self, src: Float[torch.Tensor, "n_struct ..."]
+    ) -> Float[torch.Tensor, "n_atoms ..."]:
+        """Per-structure features on the nodes: the ones of the structure of each atom.
+
+        The opposite of aggregate_nodes_to_structures.
+
+        Args:
+            src: Per-structure features, shape (n_struct, *).
+
+        Returns:
+            Features of the structure of each atom, shape (n_atoms, *).
+
+        Examples:
+            >>> graph = Graph(
+            ...     edge_index=[[0, 1], [1, 0]],
+            ...     edge_shift=torch.zeros(2, 3, dtype=torch.int64),
+            ...     num_atoms=[2, 1],
+            ...     num_edges=[2, 0],
+            ... )
+            >>> graph.unpool_structures(torch.tensor([10.0, 20.0]))
+            tensor([10., 10., 20.])
+        """
+        return src[self.node_batch()]
+
+    def node_batch(self) -> Int[torch.Tensor, "n_atoms"]:
+        """Structure index of each atom."""
+        if self.structures is not None:
+            return self.structures.batch
+
+        return torch.arange(
+            len(self.num_atoms), device=self.device()
+        ).repeat_interleave(self.num_atoms)
+
     def aggregate_edges_to_nodes(
         self,
         src: Float[torch.Tensor, "n_edges ..."],
@@ -464,13 +498,7 @@ class Graph:
         Returns:
             Per-structure aggregated features, shape (n_struct, *).
         """
-        if self.structures is not None:
-            node_batch = self.structures.batch
-        else:
-            node_batch = torch.arange(
-                len(self.num_atoms), device=self.device()
-            ).repeat_interleave(self.num_atoms)
-        return scatter(src, node_batch, len(self.num_atoms), reduce)
+        return scatter(src, self.node_batch(), len(self.num_atoms), reduce)
 
     def aggregate_edges_to_structures(
         self,

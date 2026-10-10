@@ -214,6 +214,7 @@ def edge_pairs(
     graph: Graph,
     edge_mask: Bool[torch.Tensor, "n_edges"] | None = None,
     backtrack: bool = False,
+    same_atom: bool = True,
 ) -> tuple[
     Int[torch.Tensor, "2 n_pairs"],
     Int[torch.Tensor, "n_pairs"],
@@ -227,6 +228,8 @@ def edge_pairs(
             them by default.
         backtrack: If False, an edge is not followed by its reverse: w is
             another atom than u, or another image of u.
+        same_atom: If False, w is another atom than u: a pair which comes back
+            to u or to one of its images is not listed, whatever backtrack.
 
     Returns:
         Indices of the first and second edge of each pair, shape (2, n_pairs),
@@ -249,6 +252,15 @@ def edge_pairs(
         True
         >>> edge_pairs(graph, backtrack=True)[2]
         tensor([  0, 128])
+
+        One atom in a cubic cell is bonded to 6 of its images: no pair of
+        bonds ends on another atom.
+
+        >>> lattice = 3.0 * torch.eye(3).unsqueeze(0)
+        >>> cube = Structures(lattice=lattice, x=[[0.0, 0.0, 0.0]], z=[29])
+        >>> graph = cutoff(cube, 3.5, self_images=True)
+        >>> edge_pairs(graph)[2], edge_pairs(graph, same_atom=False)[2]
+        (tensor([ 0, 30]), tensor([0, 0]))
     """
     device = graph.device()
     edges = _selected(graph, edge_mask)
@@ -264,6 +276,13 @@ def edge_pairs(
     pairs = line_graph(graph.edge_index[:, edges], int(graph.num_atoms.sum()), reverse)
 
     pair_index = edges[pairs]
+    if not same_atom:
+        start, end = (
+            graph.edge_index[0, pair_index[0]],
+            graph.edge_index[1, pair_index[1]],
+        )
+        pair_index = pair_index[:, start != end]
+
     pair_batch, pair_ptr = _batch_of(graph, pair_index[0])
 
     return pair_index, pair_batch, pair_ptr

@@ -1,0 +1,130 @@
+# CDVAE of cdvae: weights, graphs and hyperparameters, read by model.py,
+# dimenet.py and gemnet.py.
+
+default_weights: cdvae-mp20-cowboys
+
+# The authors of cdvae publish no weights of the generative model. These ones
+# were trained on MP-20 by a third party with the configuration of cdvae and
+# published on Hugging Face without description: their quality is not known.
+# The checkpoint of pytorch-lightning, the mean and the deviation of the cells
+# of the training set, and the configuration of the training.
+# files of the pretrained weights, by name: where a file is downloaded, its
+# expected SHA-256 and its name in the cache, the last part of the URL by default
+checkpoints:
+  cdvae-mp20-cowboys:
+    - url: https://huggingface.co/anitay/cdvae-mp20-cowboys/resolve/283b73cdf207d87b42110ca0277da3fa2f3c73d8/generator/epoch%3D745-step%3D79076.ckpt
+      sha256: 13bc40795363f395c33e6f739411520a6dc720014f92757a14241f09935196a6
+      filename: epoch=745-step=79076.ckpt
+    - url: https://huggingface.co/anitay/cdvae-mp20-cowboys/resolve/283b73cdf207d87b42110ca0277da3fa2f3c73d8/generator/lattice_scaler.pt
+      sha256: 9bf3c80c596094996c9cf34e75036ef83fd3c4706a2d73ff7f1685778bd3609a
+    - url: https://huggingface.co/anitay/cdvae-mp20-cowboys/resolve/283b73cdf207d87b42110ca0277da3fa2f3c73d8/generator/hparams.yaml
+      sha256: 1a36d6855e56d2a08f4b6c95362042bb1e997fe9fc1edca93a823f54631d926e
+
+# noise levels of the elements, only used by the training
+unused_parameters:
+  - type_sigmas
+
+graph:
+  # the encoder reads a graph of bonds it is given: no radius. In its line
+  # graph, a pair of bonds does not come back to the atom it starts from
+  encoder: {}
+  # the decoder connects an atom to its nearest neighbours closer than the
+  # radius, among the images of the cells around its own, then makes the graph
+  # symmetric
+  decoder:
+    radius: &radius 7.0                  # Å
+    max_neighbors: &max_neighbors 20
+    max_image_shift: 1
+
+model:
+  latent_dim: &latent_dim 256            # latent vector of a structure
+  hidden_dim: &hidden_dim 256            # hidden layer of the networks of the latent
+  num_hidden_layers: &fc_num_layers 1
+  max_atoms: &max_atoms 20               # largest number of atoms of a structure
+  num_elements: 100                      # elements a decoded atom can have, from H
+  # noise levels of the positions, in Å, from the first to the last
+  sigma_begin: &sigma_begin 10.0
+  sigma_end: &sigma_end 0.01
+  num_noise_levels: &num_noise_levels 50
+
+# DimeNet++
+encoder:
+  hidden_dim: &encoder_hidden 128        # features of the bonds
+  num_blocks: &encoder_blocks 4
+  triplet_dim: &int_emb_size 64          # features of the pairs of bonds
+  basis_dim: &basis_emb_size 8           # projection of the bases
+  output_dim: &out_emb_channels 256      # hidden layers of the outputs
+  num_spherical: &encoder_spherical 7    # degrees of the basis of the angles
+  num_radial: &encoder_radial 6          # radial functions
+  radius: &encoder_radius 7.0            # of the bases, in Å: a longer bond contributes nothing
+  envelope_exponent: &envelope_exponent 5
+  num_before_skip: &encoder_before_skip 1
+  num_after_skip: &encoder_after_skip 2
+  num_output_layers: &num_output_layers 3
+  readout: &readout mean                 # of the atoms of a structure
+  num_elements: 95                       # rows of the embedding, indexed by atomic number
+
+# GemNet-T
+decoder:
+  hidden_dim: &decoder_hidden 128        # features of the atoms and of the edges
+  num_blocks: 3
+  num_spherical: 7                       # degrees of the basis of the angles
+  num_radial: 128                        # gaussians of the lengths of the edges
+  triplet_dim: 64                        # features of the edges in a triplet
+  radial_dim: 16                         # projection of the radial basis
+  circular_dim: 16                       # projection of the basis of the angles
+  bilinear_dim: 64                       # features of the edges after the triplets
+  num_before_skip: 1
+  num_after_skip: 2
+  num_concat: 1
+  num_atom_layers: 3                     # residual layers of the updates of the atoms
+  envelope_exponent: 5
+  activation_scale: 0.6                  # the SiLU is divided by it
+
+# annealed Langevin dynamics, as in scripts/evaluate.py of cdvae
+sampling:
+  steps_per_level: 100
+  step_size: 1.0e-4
+  min_sigma: 0.0
+
+upstream:
+  # buffers of cdvae which have another name here
+  renamed_parameters:
+    rbf.offset: rbf.centers
+  # buffers of this rewrite which are constants, absent from the weights
+  constant_buffers:
+    - encoder.sbf.basis.cutoff
+  # configuration of the training the rewrite is written for (hparams.yaml)
+  model_args:
+    _target_: cdvae.pl_modules.model.CDVAE
+    hidden_dim: *hidden_dim
+    latent_dim: *latent_dim
+    fc_num_layers: *fc_num_layers
+    max_neighbors: *max_neighbors
+    radius: *radius
+    sigma_begin: *sigma_begin
+    sigma_end: *sigma_end
+    num_noise_level: *num_noise_levels
+    predict_property: false
+  encoder_args:
+    _target_: cdvae.pl_modules.gnn.DimeNetPlusPlusWrap
+    hidden_channels: *encoder_hidden
+    num_blocks: *encoder_blocks
+    int_emb_size: *int_emb_size
+    basis_emb_size: *basis_emb_size
+    out_emb_channels: *out_emb_channels
+    num_spherical: *encoder_spherical
+    num_radial: *encoder_radial
+    cutoff: *encoder_radius
+    envelope_exponent: *envelope_exponent
+    num_before_skip: *encoder_before_skip
+    num_after_skip: *encoder_after_skip
+    num_output_layers: *num_output_layers
+  decoder_args:
+    _target_: cdvae.pl_modules.decoder.GemNetTDecoder
+    hidden_dim: *decoder_hidden
+  data_args:
+    max_atoms: *max_atoms
+    readout: *readout
+    otf_graph: false
+    lattice_scale_method: scale_length

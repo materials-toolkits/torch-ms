@@ -4,6 +4,7 @@ from torchms.graph.cutoff import cutoff
 from torchms.graph.geometry import (
     centered_supercell,
     dihedral_angles,
+    lattice_from_parameters,
     lattice_heights,
     pair_cosines,
     triplet_cosines,
@@ -30,8 +31,10 @@ from torchms.graph.transforms import (
     AddQuadruplets,
     AddRadiusGraph,
     AddTriplets,
+    KeepNearImages,
     KeepNearestNeighbors,
     KeepRadius,
+    MirrorEdges,
 )
 
 __all__ = [
@@ -40,8 +43,10 @@ __all__ = [
     "AddQuadruplets",
     "AddRadiusGraph",
     "AddTriplets",
+    "KeepNearImages",
     "KeepNearestNeighbors",
     "KeepRadius",
+    "MirrorEdges",
     "EdgeTuples",
     "edge_pairs",
     "atomic_radius",
@@ -53,6 +58,7 @@ __all__ = [
     "dihedral_angles",
     "Graph",
     "InvalidGraph",
+    "lattice_from_parameters",
     "lattice_heights",
     "line_graph",
     "quadruplets",

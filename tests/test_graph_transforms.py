@@ -842,3 +842,113 @@ def test_bonds_pair_each_edge_with_its_reverse():
     )
     with pytest.raises(ValueError, match="every edge has its reverse"):
         nearest(distorted)
+
+
+def test_near_images_keeps_the_cells_around():
+    from torchms.graph.transforms import KeepNearImages
+
+    structures = AddRadiusGraph(7.0, self_images=True)(
+        random_structure(torch.Generator().manual_seed(0), 3)
+    )
+    near = KeepNearImages(1)(structures)
+
+    assert structures.graph.edge_shift.abs().max() > 1
+    assert near.graph.edge_shift.abs().max() == 1
+    kept = (structures.graph.edge_shift.abs() <= 1).all(dim=1)
+    assert near.graph.num_edges.tolist() == [int(kept.sum())]
+    assert torch.equal(near.graph.edge_index, structures.graph.edge_index[:, kept])
+    assert near.triplets is None
+
+
+def test_mirror_edges_makes_a_graph_symmetric():
+    from torchms.graph.line_graph import reverse_edges
+    from torchms.graph.transforms import MirrorEdges
+
+    generator = torch.Generator().manual_seed(1)
+    batch = Structures.collate(
+        [random_structure(generator, 6), random_structure(generator, 1)]
+    )
+    nearest = KeepNearestNeighbors(5)(AddRadiusGraph(6.0, self_images=True)(batch))
+    assert (reverse_edges(nearest.graph) < 0).any()
+
+    graph = MirrorEdges()(nearest).graph
+    assert (reverse_edges(graph) >= 0).all()
+    assert (graph.edge_batch[1:] >= graph.edge_batch[:-1]).all()
+    assert torch.equal(graph.edge_batch, batch.batch[graph.senders])
+
+    # the edges towards an atom of lower index, or an earlier image, and their
+    # reverses
+    sender, receiver = nearest.graph.edge_index
+    shift = nearest.graph.edge_shift
+    sign = torch.sign(shift[:, 0] * 9 + shift[:, 1] * 3 + shift[:, 2])
+    lower = (receiver < sender) | ((receiver == sender) & (sign < 0))
+    assert int(graph.num_edges.sum()) == 2 * int(lower.sum())
+
+    def keys(index, shifts):
+        rows = torch.cat([index.t(), shifts], dim=1).tolist()
+        return {tuple(row) for row in rows}
+
+    expected = keys(nearest.graph.edge_index[:, lower], shift[lower])
+    expected |= keys(nearest.graph.edge_index[:, lower].flip(0), -shift[lower])
+    assert keys(graph.edge_index, graph.edge_shift) == expected
+
+    # a graph which is symmetric already keeps its edges
+    symmetric = AddRadiusGraph(6.0, self_images=True)(batch)
+    assert keys(
+        MirrorEdges()(symmetric).graph.edge_index,
+        MirrorEdges()(symmetric).graph.edge_shift,
+    ) == keys(symmetric.graph.edge_index, symmetric.graph.edge_shift)
+
+
+def test_line_graph_without_pairs_back_to_the_same_atom():
+    structures = AddRadiusGraph(6.0, self_images=True)(
+        random_structure(torch.Generator().manual_seed(2), 2)
+    )
+    graph = structures.graph
+
+    every = AddLineGraph(backtrack=True)(structures).line_graph.index
+    other = AddLineGraph(backtrack=True, same_atom=False)(structures).line_graph.index
+    no_reverse = AddLineGraph()(structures).line_graph.index
+
+    start, end = graph.senders[every[0]], graph.receivers[every[1]]
+    assert other.shape[1] == int((start != end).sum())
+    assert (graph.senders[other[0]] != graph.receivers[other[1]]).all()
+    assert (graph.receivers[other[0]] == graph.senders[other[1]]).all()
+    # pairs through another image of the first atom are removed too
+    assert other.shape[1] < no_reverse.shape[1] < every.shape[1]
+
+
+def test_lattice_from_parameters():
+    from torchms.graph.geometry import lattice_from_parameters
+
+    lengths = torch.tensor([[3.0, 4.0, 5.0], [2.0, 2.0, 7.0]])
+    angles = torch.tensor([[80.0, 95.0, 110.0], [90.0, 90.0, 120.0]])
+    lattice = lattice_from_parameters(lengths, angles)
+
+    assert torch.allclose(lattice.norm(dim=-1), lengths, atol=1e-5)
+    unit = lattice / lattice.norm(dim=-1, keepdim=True)
+    cosines = torch.stack(
+        [
+            (unit[:, 1] * unit[:, 2]).sum(-1),
+            (unit[:, 0] * unit[:, 2]).sum(-1),
+            (unit[:, 0] * unit[:, 1]).sum(-1),
+        ],
+        dim=1,
+    )
+    assert torch.allclose(cosines, torch.cos(torch.deg2rad(angles)), atol=1e-5)
+    # c along z, a in the plane (x, z), a right-handed cell
+    assert torch.allclose(lattice[:, 2, :2], torch.zeros(2, 2))
+    assert torch.allclose(lattice[:, 0, 1], torch.zeros(2))
+    assert (torch.linalg.det(lattice) > 0).all()
+
+
+def test_unpool_structures():
+    batch = Structures.collate([Structures.diamond(), Structures.water()])
+    graph = AddRadiusGraph(2.0)(batch).graph
+    values = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+
+    assert torch.equal(graph.unpool_structures(values), values[batch.batch])
+    assert torch.equal(
+        graph.aggregate_nodes_to_structures(graph.unpool_structures(values), "mean"),
+        values,
+    )
