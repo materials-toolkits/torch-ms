@@ -32,6 +32,57 @@ FIELDS = ("graph", "triplets", "quadruplets")
 
 
 @dataclass(frozen=True)
+class Config:  # pylint: disable=too-many-instance-attributes
+    """Hyperparameters of a LineGraphNetwork.
+
+    Args:
+        order: 1 for bonds only, 2 to add angles, 3 to add dihedral angles.
+        radius: Radius in Å of each order, in decreasing order.
+        hidden: Number of features of atoms, bonds, angles and dihedral angles.
+        num_layers: Number of layers.
+        num_basis: Number of functions of the bases of distances and angles.
+        chiral: If True, the model distinguishes a crystal from its mirror
+            image, with the sign of the dihedral angles. Only for order 3.
+        num_elements: Largest atomic number of an atom.
+        cutoff_power: Power of the smooth cutoff of each order.
+        cosine_margin: The cosines of the angles are multiplied by one minus
+            this margin, which keeps them away from ±1 where the gradient of
+            the angle is infinite.
+
+    Raises:
+        ValueError: If the order is not 1, 2 or 3, if a radius is missing or
+            if the radii grow, or if chiral is asked without dihedral angles.
+
+    Examples:
+        >>> Config(order=2, radius=(4.0, 3.0)).hidden
+        64
+        >>> Config(order=4)
+        Traceback (most recent call last):
+        ...
+        ValueError: order must be 1, 2 or 3
+    """
+
+    order: int = 2
+    radius: tuple[float, ...] = (5.0, 3.5, 3.0)
+    hidden: int = 64
+    num_layers: int = 3
+    num_basis: int = 8
+    chiral: bool = False
+    num_elements: int = 118
+    cutoff_power: int = 4
+    cosine_margin: float = 1e-6
+
+    def __post_init__(self):
+        radius = self.radius
+        if self.order not in (1, 2, 3):
+            raise ValueError("order must be 1, 2 or 3")
+        if len(radius) < self.order or any(a < b for a, b in zip(radius, radius[1:])):
+            raise ValueError("one radius per order is needed, in decreasing order")
+        if self.chiral and self.order < 3:
+            raise ValueError("only dihedral angles distinguish mirror images")
+
+
+@dataclass(frozen=True)
 class Features:
     """Features of each order of a network.
 
@@ -183,53 +234,28 @@ class LineGraphNetwork(nn.Module):
     them are refused.
 
     Args:
-        order: 1 for bonds only, 2 to add angles, 3 to add dihedral angles.
-        radius: Radius in Å of each order, in decreasing order.
-        hidden: Number of features of atoms, bonds, angles and dihedral angles.
-        num_layers: Number of layers.
-        num_basis: Number of functions of the bases of distances and angles.
-        chiral: If True, the model distinguishes a crystal from its mirror
-            image, with the sign of the dihedral angles. Only for order 3.
-        num_elements: Largest atomic number of an atom.
-        cutoff_power: Power of the smooth cutoff of each order.
-        cosine_margin: The cosines of the angles are multiplied by one minus
-            this margin, which keeps them away from ±1 where the gradient of
-            the angle is infinite.
+        config: Hyperparameters of the network, the default ones of Config
+            without argument.
 
     Examples:
-        >>> model = LineGraphNetwork(order=2, hidden=16)
+        >>> model = LineGraphNetwork(Config(order=2, hidden=16))
         >>> structures = Structures.collate([Structures.diamond(), Structures.zincblende()])
         >>> structures = model.transform()(structures)
         >>> model(structures).shape
         torch.Size([2])
     """
 
-    def __init__(
-        self,
-        order: int = 2,
-        radius: tuple[float, ...] = (5.0, 3.5, 3.0),
-        hidden: int = 64,
-        num_layers: int = 3,
-        num_basis: int = 8,
-        chiral: bool = False,
-        num_elements: int = 118,
-        cutoff_power: int = 4,
-        cosine_margin: float = 1e-6,
-    ):
+    def __init__(self, config: Config | None = None):
         super().__init__()
-        if order not in (1, 2, 3):
-            raise ValueError("order must be 1, 2 or 3")
-        if len(radius) < order or any(a < b for a, b in zip(radius, radius[1:])):
-            raise ValueError("one radius per order is needed, in decreasing order")
-        if chiral and order < 3:
-            raise ValueError("only dihedral angles distinguish mirror images")
+        self.config = config = Config() if config is None else config
+        order, hidden, num_basis = config.order, config.hidden, config.num_basis
 
         self.order = order
-        self.radius = tuple(radius[:order])
-        self.cutoff_power = cutoff_power
-        self.cosine_margin = cosine_margin
+        self.radius = tuple(config.radius[:order])
+        self.cutoff_power = config.cutoff_power
+        self.cosine_margin = config.cosine_margin
 
-        self.atom_embedding = nn.Embedding(num_elements + 1, hidden)
+        self.atom_embedding = nn.Embedding(config.num_elements + 1, hidden)
         self.distance_basis = BesselBasis(self.radius[0], num_basis)
         self.bond_embedding = mlp(num_basis, hidden, hidden)
 
@@ -237,13 +263,13 @@ class LineGraphNetwork(nn.Module):
             self.angle_basis = AngleBasis(num_basis)
             self.triplet_embedding = mlp(num_basis, hidden, hidden)
         if order >= 3:
-            self.dihedral_basis = AngleBasis(num_basis, sine=chiral)
+            self.dihedral_basis = AngleBasis(num_basis, sine=config.chiral)
             self.quadruplet_embedding = mlp(
                 self.dihedral_basis.num_features, hidden, hidden
             )
 
         self.layers = nn.ModuleList(
-            LineGraphLayer(order, hidden) for _ in range(num_layers)
+            LineGraphLayer(order, hidden) for _ in range(config.num_layers)
         )
         self.readout = nn.Sequential(
             nn.Linear(hidden, hidden), nn.SiLU(), nn.Linear(hidden, 1)

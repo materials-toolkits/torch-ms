@@ -8,8 +8,8 @@ has a page for each one.
 |---|---|---|
 | Supervised | total energy, pretrained | [orb-v3](../models/orb.md), [MACE](../models/mace.md), [M3GNet](../models/m3gnet.md), [CHGNet](../models/chgnet.md) |
 | | formation energy, pretrained | [ALIGNN](../models/alignn.md) |
-| Generative | crystals, pretrained | [CDVAE](../models/cdvae.md) |
-| Layers | bases and networks | [bases](../models/bases.md), [DimeNet++](../models/dimenet.md), [GemNet-T](../models/gemnet.md) |
+| Generative | crystals, pretrained | [CDVAE](../models/cdvae.md), [DiffCSP](../models/diffcsp.md) |
+| Layers | bases and networks | [bases](../models/bases.md), [DimeNet++](../models/dimenet.md), [GemNet-T](../models/gemnet.md), [CSPNet](../models/cspnet.md) |
 | | networks of the energy, to train | [`LineGraphNetwork`](../models/line-graph-network.md), [`EquivariantNetwork`](../models/equivariant-network.md) |
 
 To know how far a structure is from the convex hull, use the
@@ -19,10 +19,10 @@ To know how far a structure is from the convex hull, use the
 
 ```{.python notest}
 from torchms.data import load_dataset
-from torchms.models import M3gnetEnergyModel
+from torchms.models import M3GNet
 
-dataset = load_dataset("mp-20", "test", transform=M3gnetEnergyModel.transform())
-model = M3gnetEnergyModel.from_pretrained(device="cuda")
+dataset = load_dataset("mp-20", "test", transform=M3GNet.transform())
+model = M3GNet.from_pretrained(device="cuda")
 
 energy = model(dataset[:32].to("cuda"))     # (32,), total energy in eV
 ```
@@ -32,11 +32,46 @@ energy = model(dataset[:32].to("cuda"))     # (32,), total energy in eV
 in evaluation mode, without gradients. A model can have several weights, listed on its page:
 
 ```{.python notest}
-model = OrbEnergyModel.from_pretrained("orb-v3-conservative-inf-omat", device="cuda")
+model = OrbV3.from_pretrained("orb-v3-conservative-inf-omat", device="cuda")
 ```
 
 The pretrained models are rewrites: they predict what the original code predicts, without
 its package. Forces, stress and training are not included.
+
+## Configuration of a model
+
+Every value of a pretrained model (the radii of its graph, its hyperparameters, the name
+of its weights) is in the `config.yaml` of its directory. The module of the model has a
+frozen dataclass `Config` with the same fields, typed, which the model is built from:
+
+```{.python notest}
+from torchms.models import m3gnet
+
+config = m3gnet.Config.load()               # the values of config.yaml, read once
+config.graph.radius                         # 5.0
+config.model.num_blocks                     # 3
+
+model = m3gnet.M3GNet()                     # the same as m3gnet.M3GNet(config)
+model.config is config                      # True
+```
+
+The class has the same name in every model, `orb.Config`, `cdvae.Config`,
+`diffcsp.Config`, and nothing is kept in a global variable: a model and its layers read
+the object they are given. To train another network than the published one, give another
+configuration to the model and to its transform:
+
+```{.python notest}
+from dataclasses import replace
+
+small = replace(config, model=replace(config.model, num_blocks=2))
+
+model = m3gnet.M3GNet(small)
+transform = m3gnet.M3GNet.transform(small)
+```
+
+The pretrained weights are the ones of `config.yaml`: a model with other sizes refuses
+them. A file with a key the dataclass does not have, or without one it needs, is refused
+when it is read.
 
 ## Graphs are attached by a transform
 
@@ -46,7 +81,7 @@ is the expensive part of a prediction: as a transform it runs in the workers of 
 once per structure, or on the GPU for a whole batch, as you choose.
 
 ```{.python notest}
-transform = M3gnetEnergyModel.transform()
+transform = M3GNet.transform()
 
 dataset = load_dataset("mp-20", "test", transform=transform)   # when a structure is loaded
 structures = transform(structures)                             # or on a batch
@@ -62,14 +97,34 @@ attach, and its decoder builds its own at each step of the generation.
 ## A generative model
 
 ```{.python notest}
-from torchms.models import CdvaeModel
+from torchms.models import CDVAE
 
-model = CdvaeModel.from_pretrained(device="cuda")
+model = CDVAE.from_pretrained(device="cuda")
 structures = model.sample(64)               # 64 crystals, 5000 steps of dynamics
 ```
 
 The weights of CDVAE were trained by a third party: read
 [its page](../models/cdvae.md) before using what it generates.
+
+[DiffCSP](../models/diffcsp.md) has two models. `DiffCSP` predicts a structure from
+its composition: it is given the atomic numbers of the atoms and the number of atoms of
+each structure. `DiffCSPGeneration` also generates the elements: it is only given the
+numbers of atoms, which it can draw as the ones of MP-20.
+
+```{.python notest}
+import torch
+
+from torchms.models import DiffCSP, DiffCSPGeneration
+
+model = DiffCSP.from_pretrained(device="cuda")
+
+z = torch.tensor([11, 17, 38, 22, 8, 8, 8], device="cuda")   # NaCl and SrTiO3
+num_atoms = torch.tensor([2, 5], device="cuda")
+structures = model.sample(z, num_atoms)     # 1000 steps of diffusion
+
+generation = DiffCSPGeneration.from_pretrained(device="cuda")
+structures = generation.sample(generation.sample_num_atoms(64))
+```
 
 ## Layers for your own model
 
@@ -92,14 +147,19 @@ As the models, a layer reads the graph of the structures and aggregates with its
 
 ```{.python notest}
 from torchms.data import load_dataset
-from torchms.models.layers import EquivariantNetwork, LineGraphNetwork
+from torchms.models.layers import (
+    EquivariantNetwork,
+    LineGraphNetwork,
+    equivariant_network,
+    line_graph_network,
+)
 
 structures = load_dataset("mp-20", "train")[:32]
 
-model = LineGraphNetwork(order=2, radius=(5.0, 3.5))
+model = LineGraphNetwork(line_graph_network.Config(order=2, radius=(5.0, 3.5)))
 energy = model(model.transform()(structures))      # (32,)
 
-model = EquivariantNetwork(correlation=3, radius=5.0)
+model = EquivariantNetwork(equivariant_network.Config(correlation=3, radius=5.0))
 energy = model(model.transform()(structures))      # (32,)
 ```
 

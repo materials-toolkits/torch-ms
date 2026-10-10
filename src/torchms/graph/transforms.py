@@ -31,6 +31,7 @@ from jaxtyping import Bool, Float
 
 from torchms.data.batching import Structures
 from torchms.graph.atomic_radius import atomic_radius
+from torchms.graph.complete import complete
 from torchms.graph.cutoff import cutoff, mirror_edges, near_images, nearest_neighbors
 from torchms.graph.geometry import dihedral_angles, pair_cosines, triplet_cosines
 from torchms.graph.graph import EdgeTuples, Graph
@@ -210,6 +211,41 @@ class AddAtomicRadiusGraph:
     def __call__(self, structures: Structures) -> Structures:
         structures = structures.without_graphs()
         graph = atomic_radius(structures, self.scaling, self.ensure_gap)
+
+        return attach_graph(structures, graph, self.geometry)
+
+
+@dataclass
+class AddCompleteGraph:
+    """Attach the complete graph of each structure.
+
+    An edge goes from each atom to every atom of its structure, in the same
+    cell: no edge goes to a periodic image. For the models which look at every
+    pair of atoms and read their fractional coordinates modulo the cell. See
+    torchms.graph.complete.complete.
+
+    Fields:
+        Sets structures.graph, with the same fields as AddRadiusGraph and
+        graph.edge_shift at zero. Removes structures.line_graph, triplets and
+        quadruplets.
+
+    Args:
+        self_loops: If True, an atom is also connected to itself.
+        geometry: If True, the vector and the length of each edge are attached.
+
+    Examples:
+        >>> AddCompleteGraph()(Structures.diamond()).graph.num_edges
+        tensor([56])
+        >>> AddCompleteGraph(self_loops=True)(Structures.diamond()).graph.num_edges
+        tensor([64])
+    """
+
+    self_loops: bool = False
+    geometry: bool = False
+
+    def __call__(self, structures: Structures) -> Structures:
+        structures = structures.without_graphs()
+        graph = complete(structures, self.self_loops)
 
         return attach_graph(structures, graph, self.geometry)
 

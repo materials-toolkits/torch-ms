@@ -1,6 +1,6 @@
 # MACE
 
-`MaceEnergyModel` is MACE-MP-0 small
+`MACE` is MACE-MP-0 small
 ([mace](https://github.com/ACEsuit/mace), MIT,
 [arXiv:2206.07697](https://arxiv.org/abs/2206.07697)), in `torchms/models/mace/`. Its graph has
 pairs only, the atoms closer than 6 Å: terms on three and four atoms come from products. An
@@ -11,7 +11,7 @@ tensor products, normalized activations) are written with torch alone.
 
 | | |
 |---|---|
-| Class | `torchms.models.MaceEnergyModel` |
+| Class | `torchms.models.MACE` |
 | Predicts | total energy in eV, one per structure, in double precision |
 | Source | [mace](https://github.com/ACEsuit/mace) 0.3.16 |
 | License | MIT |
@@ -22,10 +22,10 @@ tensor products, normalized activations) are written with torch alone.
 
 ```{.python notest}
 from torchms.data import load_dataset
-from torchms.models import MaceEnergyModel
+from torchms.models import MACE
 
-dataset = load_dataset("mp-20", "test", transform=MaceEnergyModel.transform())
-model = MaceEnergyModel.from_pretrained(device="cuda")
+dataset = load_dataset("mp-20", "test", transform=MACE.transform())
+model = MACE.from_pretrained(device="cuda")
 energy = model(dataset[:32].to("cuda"))        # (32,), eV
 ```
 

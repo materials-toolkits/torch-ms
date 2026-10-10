@@ -12,9 +12,9 @@ their angles, as ALIGNN, M3GNet, CHGNet or DPA-3. It has no pretrained weights, 
 
 ```{.python notest}
 from torchms.data import load_dataset
-from torchms.models.layers import LineGraphNetwork
+from torchms.models.layers import LineGraphNetwork, line_graph_network
 
-model = LineGraphNetwork(order=2, radius=(5.0, 3.5))
+model = LineGraphNetwork(line_graph_network.Config(order=2, radius=(5.0, 3.5)))
 
 # the graph and the triplets the network reads, attached when a structure is loaded
 dataset = load_dataset("mp-20", "train", transform=model.transform())

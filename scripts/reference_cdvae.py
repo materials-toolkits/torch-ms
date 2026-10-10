@@ -22,7 +22,7 @@ written for.
 
 WEIGHTS is the directory of the three files of the weights listed in
 src/torchms/models/cdvae/config.yaml: the cache of torchms after a first
-CdvaeModel.from_pretrained(), "~/.cache/torchms/cdvae/cdvae-mp20-cowboys".
+CDVAE.from_pretrained(), "~/.cache/torchms/cdvae/cdvae-mp20-cowboys".
 
 The structures are the ones of tests/data/orb_reference.npz, with at most 20
 atoms. The result is written to tests/data/cdvae_reference.npz and read by

@@ -18,17 +18,10 @@ from torchms.data.augmentation import (
     make_supercell,
 )
 from torchms.models.estimator import weights
-from torchms.models.alignn import AlignnModel, InvalidWeights
+from torchms.models.alignn import ALIGNN, Config, InvalidWeights
+from torchms.models.alignn.config import BasisConfig
 from torchms.models.estimator.weights import Checkpoint, sha256
-from torchms.models.alignn.model import (
-    GRAPH_ARGS,
-    MAX_NEIGHBORS,
-    MODEL_ARGS,
-    RADIUS,
-    THREE_BODY_RADIUS,
-    rbf_expansion,
-    element_features,
-)
+from torchms.models.alignn.model import rbf_expansion, element_features
 from torchms.graph.graph import Graph
 from torchms.graph.line_graph import reverse_edges
 from torchms.graph.transforms import AddLineGraph, attach_graph
@@ -68,7 +61,8 @@ def make_batch() -> Structures:
 
 def with_graph(structures: Structures, graph: Graph) -> Structures:
     """Structures with a given graph of the atoms, and the line graph of the model."""
-    line_graph = AddLineGraph(radius=THREE_BODY_RADIUS, backtrack=True)
+    config = Config.load()
+    line_graph = AddLineGraph(radius=config.graph.three_body_radius, backtrack=True)
     return line_graph(attach_graph(structures, graph, False))
 
 
@@ -77,10 +71,10 @@ def generator(seed: int = 0) -> torch.Generator:
 
 
 @pytest.fixture(scope="module")
-def model() -> AlignnModel:
+def model() -> ALIGNN:
     """Model with random weights."""
     torch.manual_seed(0)
-    return AlignnModel().eval().requires_grad_(False)
+    return ALIGNN().eval().requires_grad_(False)
 
 
 def test_pinned_checkpoints(tmp_path):
@@ -97,7 +91,7 @@ def test_pinned_checkpoints(tmp_path):
 
 
 def test_element_features():
-    features = element_features()
+    features = element_features(Config.load().element_features_path())
 
     assert features.shape == (119, 92)
     assert set(features.unique().tolist()) == {0.0, 1.0}
@@ -109,7 +103,7 @@ def test_element_features():
 
 
 def test_rbf_expansion():
-    expansion = rbf_expansion(0.0, 8.0, 80)
+    expansion = rbf_expansion(BasisConfig(start=0.0, stop=8.0, num_basis=80))
     values = expansion(torch.tensor([0.0, 4.0, 8.0]))
 
     assert values.shape == (3, 80)
@@ -130,18 +124,19 @@ def test_model_output(model):
 
 
 def test_model_graphs(model):
+    config = Config.load()
     batch = make_batch()
     graph, distance, pairs, cosine = model.graphs(model.transform()(batch))
     pair_index = pairs.index
 
-    assert (distance <= RADIUS).all()
+    assert (distance <= config.graph.radius).all()
     degree = torch.bincount(graph.edge_index[0], minlength=len(batch.z))
-    assert (degree == MAX_NEIGHBORS).all()
+    assert (degree == config.graph.max_neighbors).all()
 
     # a bond is followed by the bonds starting from its end, itself reversed too
     first, second = pair_index
     assert pair_index.shape[1] > 0
-    assert (distance[pair_index] <= THREE_BODY_RADIUS).all()
+    assert (distance[pair_index] <= config.graph.three_body_radius).all()
     assert (graph.edge_index[1, first] == graph.edge_index[0, second]).all()
 
     backward = reverse_edges(graph)[first] == second
@@ -198,17 +193,22 @@ def test_model_with_a_given_graph(model):
         model(attach_graph(batch, graph, False))
 
 
-def state_and_config(model: AlignnModel) -> tuple[dict, dict]:
+def state_and_config(model: ALIGNN) -> tuple[dict, dict]:
+    config = Config.load()
     state_dict = dict(model.state_dict())
     state_dict["_species_table"] = torch.zeros(120, 92)
-    return state_dict, {**GRAPH_ARGS, "model": dict(MODEL_ARGS)}
+    return state_dict, {
+        **config.upstream.graph_args,
+        "model": dict(config.upstream.model_args),
+    }
 
 
 def test_load_pretrained_checks_the_parameters(model):
-    state_dict, config = state_and_config(model)
+    config = Config.load()
+    state_dict, upstream = state_and_config(model)
 
-    other = AlignnModel()
-    other.load_pretrained(state_dict, config)
+    other = ALIGNN()
+    other.load_pretrained(state_dict, upstream)
     other.eval()
     with torch.no_grad():
         assert torch.allclose(
@@ -216,11 +216,15 @@ def test_load_pretrained_checks_the_parameters(model):
         )
 
     with pytest.raises(InvalidWeights, match="another configuration"):
-        other.load_pretrained(state_dict, {**config, "cutoff": 8.0})
+        other.load_pretrained(state_dict, {**upstream, "cutoff": 8.0})
 
     with pytest.raises(InvalidWeights, match="another configuration"):
         other.load_pretrained(
-            state_dict, {**config, "model": {**MODEL_ARGS, "alignn_layers": 2}}
+            state_dict,
+            {
+                **upstream,
+                "model": {**config.upstream.model_args, "alignn_layers": 2},
+            },
         )
 
     with pytest.raises(InvalidWeights, match="Unexpected"):
@@ -244,7 +248,7 @@ def test_from_pretrained_reads_the_archive(model, tmp_path, monkeypatch):
     checkpoint = Checkpoint(archive.as_uri(), sha256(archive), "model.zip")
     monkeypatch.setitem(weights.CHECKPOINTS["alignn"], "local", (checkpoint,))
 
-    loaded = AlignnModel.from_pretrained("local", cache=tmp_path / "cache")
+    loaded = ALIGNN.from_pretrained("local", cache=tmp_path / "cache")
     assert torch.allclose(predict(loaded, make_batch()), predict(model, make_batch()))
 
 
@@ -289,11 +293,11 @@ def edges_of(graph: Graph) -> list[set[tuple[int, ...]]]:
 
 
 @pytest.fixture(scope="module")
-def pretrained() -> AlignnModel:
+def pretrained() -> ALIGNN:
     if not weights.checkpoint_paths("alignn", NAME)[0].exists():
         pytest.skip(f"weights of {NAME} are not in the cache")
 
-    return AlignnModel.from_pretrained(NAME, device="cpu")
+    return ALIGNN.from_pretrained(NAME, device="cpu")
 
 
 @pytest.mark.timeout(120)

@@ -70,6 +70,7 @@ The transforms, with the function each one calls, described in
 |---|---|---|---|---|---|
 | `AddRadiusGraph` | `radius`, `self_images=False`, `geometry=False` | — | `graph` | `line_graph`, `triplets`, `quadruplets` | `cutoff` |
 | `AddAtomicRadiusGraph` | `scaling=2.0`, `ensure_gap=0.5`, `geometry=False` | — | `graph` | `line_graph`, `triplets`, `quadruplets` | `atomic_radius` |
+| `AddCompleteGraph` | `self_loops=False`, `geometry=False` | — | `graph`, every pair of atoms of a structure, without periodic image | `line_graph`, `triplets`, `quadruplets` | `complete` |
 | `KeepNearestNeighbors` | `k` | `graph` | `graph`, with fewer edges | `line_graph`, `triplets`, `quadruplets` | `nearest_neighbors` |
 | `KeepRadius` | `radius` | `graph` | `graph`, with fewer edges | `line_graph`, `triplets`, `quadruplets` | — |
 | `KeepNearImages` | `max_shift=1` | `graph` | `graph`, with fewer edges | `line_graph`, `triplets`, `quadruplets` | `near_images` |

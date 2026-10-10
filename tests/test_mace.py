@@ -17,14 +17,8 @@ from torchms.data.augmentation import (
     random_orthogonal,
 )
 from torchms.models.estimator import weights
-from torchms.models.mace import InvalidWeights, MaceEnergyModel
-from torchms.models.mace.model import (
-    DEGREES,
-    EXPECTED,
-    NUM_HARMONICS,
-    PARAMETERS,
-    RADIUS,
-)
+from torchms.models.mace import Config, InvalidWeights, MACE
+from torchms.models.mace.model import DEGREES, NUM_HARMONICS
 from torchms.models.estimator.reader import Placeholder
 from torchms.models.mace.reader import read_model
 from torchms.models.layers.basis import spherical_harmonics
@@ -57,13 +51,17 @@ def generator(seed: int = 0) -> torch.Generator:
     return torch.Generator().manual_seed(seed)
 
 
-def mace_state_dict(model: MaceEnergyModel) -> dict[str, torch.Tensor]:
+def mace_state_dict(model: MACE) -> dict[str, torch.Tensor]:
     """Parameters of a model as mace stores them: flat weights and its own names."""
+    config = Config.load()
     own = model.state_dict()
     state_dict = {
-        name: own[target].flatten() for name, (target, _) in PARAMETERS.items()
+        name: own[target].flatten()
+        for name, (target, _) in config.upstream_parameters().items()
     }
-    state_dict.update({name: torch.tensor(value) for name, value in EXPECTED.items()})
+    state_dict.update(
+        {name: torch.tensor(value) for name, value in config.expected_values().items()}
+    )
     return state_dict
 
 
@@ -157,7 +155,7 @@ def test_degrees():
 
 def test_model_with_random_weights():
     torch.manual_seed(0)
-    model = MaceEnergyModel().eval().requires_grad_(False)
+    model = MACE().eval().requires_grad_(False)
     energy = predict(model, make_batch())
 
     assert energy.shape == (2,)
@@ -166,7 +164,7 @@ def test_model_with_random_weights():
 
 
 def test_model_unknown_element():
-    model = MaceEnergyModel().eval().requires_grad_(False)
+    model = MACE().eval().requires_grad_(False)
     structures = Structures(
         lattice=torch.eye(3).unsqueeze(0) * 3.0, x=torch.zeros(1, 3), z=[100]
     )
@@ -177,13 +175,13 @@ def test_model_unknown_element():
 
 def test_load_pretrained_checks_the_parameters():
     torch.manual_seed(0)
-    model = MaceEnergyModel().eval().requires_grad_(False)
+    model = MACE().eval().requires_grad_(False)
     for product in model.products:
         for order in (1, 2, 3):
             getattr(product, f"U_matrix_{order}").normal_()
     state_dict = mace_state_dict(model)
 
-    other = MaceEnergyModel()
+    other = MACE()
     other.load_pretrained(state_dict, 30.0, {"a": 1.5, "b": 1.5})
     other.eval()
     assert other.avg_num_neighbors == 30.0 and other.activation == 1.5
@@ -212,11 +210,11 @@ def test_load_pretrained_checks_the_parameters():
 
 
 @pytest.fixture(scope="module")
-def pretrained() -> MaceEnergyModel:
+def pretrained() -> MACE:
     if not weights.checkpoint_paths("mace", NAME)[0].exists():
         pytest.skip(f"weights of {NAME} are not in the cache")
 
-    return MaceEnergyModel.from_pretrained(NAME, device="cpu")
+    return MACE.from_pretrained(NAME, device="cpu")
 
 
 def reference_structures() -> tuple[Structures, dict[str, np.ndarray]]:
@@ -232,12 +230,13 @@ def reference_structures() -> tuple[Structures, dict[str, np.ndarray]]:
 
 def test_pretrained_matches_mace(pretrained):
     """Energies of mace 0.3.16, computed once outside of the project."""
+    config = Config.load()
     structures, data = reference_structures()
     graph, vectors = pretrained.edges(pretrained.transform()(structures))
 
     assert graph.num_edges.tolist() == data["num_edges"].tolist()
     assert vectors.dtype == torch.float64
-    assert (vectors.norm(dim=-1) <= RADIUS + 1e-5).all()
+    assert (vectors.norm(dim=-1) <= config.graph.radius + 1e-5).all()
 
     energy = predict(pretrained, structures).numpy()
     error = np.abs(energy - data["energy"]) / structures.num_atoms.numpy()

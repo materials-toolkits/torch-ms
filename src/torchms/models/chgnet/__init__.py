@@ -2,12 +2,14 @@
 
 Derived from chgnet of the Ceder group (modified BSD license, see LICENSE in
 this directory): model.py is the network. Its pretrained weights are listed in
-config.yaml, with its hyperparameters.
+config.yaml, with its hyperparameters, which config.py reads into a Config.
 """
 
-from torchms.models.chgnet.model import ChgnetEnergyModel, InvalidWeights
+from torchms.models.chgnet.config import Config
+from torchms.models.chgnet.model import CHGNet, InvalidWeights
 
 __all__ = [
-    "ChgnetEnergyModel",
+    "CHGNet",
+    "Config",
     "InvalidWeights",
 ]

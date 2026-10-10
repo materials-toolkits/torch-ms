@@ -17,12 +17,14 @@ from torchms.data.augmentation import (
 )
 from torchms.data.batching import TUPLES_FIELDS, InvalidStructure
 from torchms.graph.atomic_radius import atomic_radius
+from torchms.graph.complete import complete
 from torchms.graph.cutoff import cutoff, nearest_neighbors
 from torchms.graph.geometry import dihedral_angles, triplet_cosines
 from torchms.graph.graph import EdgeTuples, Graph, InvalidGraph
 from torchms.graph.line_graph import edge_pairs, quadruplets, triplets
 from torchms.graph.transforms import (
     AddAtomicRadiusGraph,
+    AddCompleteGraph,
     AddLineGraph,
     AddQuadruplets,
     AddRadiusGraph,
@@ -30,7 +32,7 @@ from torchms.graph.transforms import (
     KeepNearestNeighbors,
     KeepRadius,
 )
-from torchms.models.layers import LineGraphNetwork
+from torchms.models.layers import LineGraphNetwork, line_graph_network
 
 
 def random_structure(generator: torch.Generator, n_atoms: int) -> Structures:
@@ -68,6 +70,7 @@ CHAINS = {
     "atomic-radius": [AddAtomicRadiusGraph(1.1, geometry=True)],
     "nearest": [AddRadiusGraph(4.0, geometry=True), KeepNearestNeighbors(3)],
     "keep-radius": [AddRadiusGraph(4.0), KeepRadius(2.8)],
+    "complete": [AddCompleteGraph(self_loops=True, geometry=True)],
     "line-graph": [AddRadiusGraph(3.0), AddLineGraph(geometry=True)],
     "line-graph-backtrack": [AddRadiusGraph(3.0), AddLineGraph(backtrack=True)],
     "triplets": [AddRadiusGraph(3.5, self_images=True), AddTriplets(2.8, True)],
@@ -327,7 +330,9 @@ class TestTransforms:
 
     def test_same_as_line_graph_network(self):
         batch = Structures.collate([Structures.zincblende(), Structures.diamond()])
-        model = LineGraphNetwork(order=3, radius=(4.0, 3.0, 2.5))
+        model = LineGraphNetwork(
+            line_graph_network.Config(order=3, radius=(4.0, 3.0, 2.5))
+        )
         structures = model.transform()(batch)
         geometry = model.geometry(structures)
         index = {
@@ -958,3 +963,37 @@ def test_unpool_structures():
         graph.aggregate_nodes_to_structures(graph.unpool_structures(values), "mean"),
         values,
     )
+
+
+def test_complete_graph(structures):
+    batch = Structures.collate(structures)
+    n = batch.num_atoms
+
+    graph = complete(batch, self_loops=True)
+    assert torch.equal(graph.num_edges, n * n)
+    assert (graph.edge_shift == 0).all()
+    assert (batch.batch[graph.senders] == batch.batch[graph.receivers]).all()
+    assert (batch.batch[graph.senders] == graph.edge_batch).all()
+
+    # every pair of atoms of a structure once, sorted by sender then receiver
+    pair = graph.senders * len(batch.z) + graph.receivers
+    assert (pair[1:] > pair[:-1]).all()
+
+    without = complete(batch).with_geometry()
+    assert torch.equal(without.num_edges, n * (n - 1))
+    assert (without.senders != without.receivers).all()
+
+    # an edge stays in the cell: its vector is the difference of the positions
+    positions = batch.positions()
+    expected = positions[without.receivers] - positions[without.senders]
+    assert torch.allclose(without.edge_vector, expected, atol=1e-5)
+
+
+def test_add_complete_graph_replaces_the_graph(structures):
+    batch = AddTriplets()(AddRadiusGraph(3.0)(Structures.collate(structures)))
+    result = AddCompleteGraph()(batch)
+
+    assert result.triplets is None
+    assert torch.equal(result.graph.num_edges, batch.num_atoms * (batch.num_atoms - 1))
+    assert result.graph.edge_vector is None
+    assert AddCompleteGraph(geometry=True)(batch).graph.edge_distance is not None

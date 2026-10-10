@@ -211,19 +211,21 @@ of other projects, rewritten with PyTorch and the graphs of the library.
 
 | | Model | Class | Output | Weights |
 |---|---|---|---|---|
-| Supervised | orb-v3 | `OrbEnergyModel` | total energy | official |
-| | MACE | `MaceEnergyModel` | total energy | official |
-| | M3GNet | `M3gnetEnergyModel` | total energy | official |
-| | CHGNet | `ChgnetEnergyModel` | total energy | official |
-| | ALIGNN | `AlignnModel` | formation energy | official |
-| Generative | CDVAE | `CdvaeModel` | crystals | third party |
+| Supervised | orb-v3 | `OrbV3` | total energy | official |
+| | MACE | `MACE` | total energy | official |
+| | M3GNet | `M3GNet` | total energy | official |
+| | CHGNet | `CHGNet` | total energy | official |
+| | ALIGNN | `ALIGNN` | formation energy | official |
+| Generative | CDVAE | `CDVAE` | crystals | third party |
+| | DiffCSP | `DiffCSP` | a crystal from its composition | official |
+| | DiffCSP | `DiffCSPGeneration` | crystals, with their elements | official |
 
 ```python
 from torchms.data import load_dataset
-from torchms.models import M3gnetEnergyModel
+from torchms.models import M3GNet
 
-dataset = load_dataset("mp-20", "test", transform=M3gnetEnergyModel.transform())
-model = M3gnetEnergyModel.from_pretrained(device="cuda")
+dataset = load_dataset("mp-20", "test", transform=M3GNet.transform())
+model = M3GNet.from_pretrained(device="cuda")
 energy = model(dataset[:32].to("cuda"))
 ```
 

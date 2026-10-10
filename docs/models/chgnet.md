@@ -1,6 +1,6 @@
 # CHGNet
 
-`ChgnetEnergyModel` is CHGNet 0.3.0
+`CHGNet` is CHGNet 0.3.0
 ([chgnet](https://github.com/CederGroupHub/chgnet), modified BSD,
 [arXiv:2302.14231](https://arxiv.org/abs/2302.14231)), in `torchms/models/chgnet/`. Atoms closer
 than 6 Å are bonded, an edge and its reverse sharing the features of one bond
@@ -10,7 +10,7 @@ included.
 
 | | |
 |---|---|
-| Class | `torchms.models.ChgnetEnergyModel` |
+| Class | `torchms.models.CHGNet` |
 | Predicts | total energy in eV, one per structure, in double precision |
 | Source | [chgnet](https://github.com/CederGroupHub/chgnet) 0.4.2 |
 | License | modified BSD |
@@ -21,10 +21,10 @@ included.
 
 ```{.python notest}
 from torchms.data import load_dataset
-from torchms.models import ChgnetEnergyModel
+from torchms.models import CHGNet
 
-dataset = load_dataset("mp-20", "test", transform=ChgnetEnergyModel.transform())
-model = ChgnetEnergyModel.from_pretrained(device="cuda")
+dataset = load_dataset("mp-20", "test", transform=CHGNet.transform())
+model = CHGNet.from_pretrained(device="cuda")
 energy = model(dataset[:32].to("cuda"))        # (32,), eV
 ```
 

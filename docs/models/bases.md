@@ -40,7 +40,18 @@ torch, which loses digits in single precision for a high degree and a short dist
 
 The Gaunt coefficients are computed in the library by an exact quadrature on the sphere.
 
+## Fractional coordinates and time
+
+| Name | Functions | From | Used by |
+|---|---|---|---|
+| `periodic_fourier` | `sin(2 pi k x)` and `cos(2 pi k x)` of each coordinate, of period 1 | DiffCSP | CSPNet |
+| `sinusoidal_embedding` | sines and cosines of a time at geometric frequencies | DiffCSP | DiffCSP |
+
+`periodic_fourier` is for fractional coordinates and their differences: it does not change
+when an atom moves by a whole number of cells.
+
 ## Licenses
 
-The functions derived from orb-models (Apache-2.0) and from matgl (BSD 3-Clause) are listed
+The functions derived from orb-models (Apache-2.0), from matgl (BSD 3-Clause) and from
+DiffCSP (MIT) are listed
 in the header of the module, with the license of each in the directory of its model.

@@ -12,9 +12,9 @@ spherical harmonics, as MACE. It has no pretrained weights, and no model of the 
 
 ```{.python notest}
 from torchms.data import load_dataset
-from torchms.models.layers import EquivariantNetwork
+from torchms.models.layers import EquivariantNetwork, equivariant_network
 
-model = EquivariantNetwork(correlation=3, radius=5.0)
+model = EquivariantNetwork(equivariant_network.Config(correlation=3, radius=5.0))
 
 # the graph the network reads, attached when a structure is loaded
 dataset = load_dataset("mp-20", "train", transform=model.transform())
@@ -40,7 +40,7 @@ library by an exact quadrature on the sphere. They are the couplings which do no
 mirror: the model cannot distinguish a crystal from its mirror image.
 
 This is not MACE: MACE learns one weight per coupling of its symmetric contraction and keeps
-vector and tensor features between layers in its larger models. `MaceEnergyModel`, in
+vector and tensor features between layers in its larger models. `MACE`, in
 `torchms.models.estimator`, is the exact rewrite of its small model.
 
 ## What it guarantees

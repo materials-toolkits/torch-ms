@@ -7,6 +7,8 @@ EquivariantNetwork.transform.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import torch
 from jaxtyping import Float
 from torch import nn
@@ -28,6 +30,45 @@ from torchms.models.layers.basis import (
 # implements them and their Gaunt coefficients up to MAX_DEGREE: not a
 # hyperparameter
 NUM_DEGREES = MAX_DEGREE + 1
+
+
+@dataclass(frozen=True)
+class Config:
+    """Hyperparameters of an EquivariantNetwork.
+
+    Args:
+        correlation: Number of factors of the products: 1 for terms on two
+            atoms, 2 for three atoms, 3 for four atoms in each layer.
+        radius: Radius of the graph in Å.
+        channels: Number of features of the atoms.
+        num_layers: Number of layers.
+        num_basis: Number of functions of the basis of the distances.
+        num_elements: Largest atomic number of an atom.
+        cutoff_power: Power of the smooth cutoff of the edges.
+
+    Raises:
+        ValueError: If the correlation is not 1, 2 or 3.
+
+    Examples:
+        >>> Config(correlation=2).radius
+        5.0
+        >>> Config(correlation=4)
+        Traceback (most recent call last):
+        ...
+        ValueError: correlation must be 1, 2 or 3
+    """
+
+    correlation: int = 3
+    radius: float = 5.0
+    channels: int = 64
+    num_layers: int = 2
+    num_basis: int = 8
+    num_elements: int = 118
+    cutoff_power: int = 4
+
+    def __post_init__(self):
+        if self.correlation not in (1, 2, 3):
+            raise ValueError("correlation must be 1, 2 or 3")
 
 
 class EquivariantLayer(nn.Module):
@@ -147,44 +188,29 @@ class EquivariantNetwork(nn.Module):
     loaded or to a batch. Structures without a graph are refused.
 
     Args:
-        correlation: Number of factors of the products: 1 for terms on two
-            atoms, 2 for three atoms, 3 for four atoms in each layer.
-        radius: Radius of the graph in Å.
-        channels: Number of features of the atoms.
-        num_layers: Number of layers.
-        num_basis: Number of functions of the basis of the distances.
-        num_elements: Largest atomic number of an atom.
-        cutoff_power: Power of the smooth cutoff of the edges.
+        config: Hyperparameters of the network, the default ones of Config
+            without argument.
 
     Examples:
-        >>> model = EquivariantNetwork(correlation=3, channels=16)
+        >>> model = EquivariantNetwork(Config(correlation=3, channels=16))
         >>> structures = Structures.collate([Structures.diamond(), Structures.zincblende()])
         >>> structures = model.transform()(structures)
         >>> model(structures).shape
         torch.Size([2])
     """
 
-    def __init__(
-        self,
-        correlation: int = 3,
-        radius: float = 5.0,
-        channels: int = 64,
-        num_layers: int = 2,
-        num_basis: int = 8,
-        num_elements: int = 118,
-        cutoff_power: int = 4,
-    ):
+    def __init__(self, config: Config | None = None):
         super().__init__()
-        if correlation not in (1, 2, 3):
-            raise ValueError("correlation must be 1, 2 or 3")
+        self.config = config = Config() if config is None else config
+        channels = config.channels
 
-        self.radius = radius
-        self.cutoff_power = cutoff_power
-        self.atom_embedding = nn.Embedding(num_elements + 1, channels)
-        self.distance_basis = BesselBasis(radius, num_basis)
+        self.radius = config.radius
+        self.cutoff_power = config.cutoff_power
+        self.atom_embedding = nn.Embedding(config.num_elements + 1, channels)
+        self.distance_basis = BesselBasis(config.radius, config.num_basis)
         self.layers = nn.ModuleList(
-            EquivariantLayer(correlation, channels, num_basis)
-            for _ in range(num_layers)
+            EquivariantLayer(config.correlation, channels, config.num_basis)
+            for _ in range(config.num_layers)
         )
         self.readout = nn.Sequential(
             nn.Linear(channels, channels), nn.SiLU(), nn.Linear(channels, 1)

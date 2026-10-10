@@ -9,20 +9,13 @@ import pytest
 import torch
 
 from torchms.data import HDF5Dataset, Structures
-from torchms.models import OrbEnergyModel
+from torchms.models import OrbV3
 from torchms.models.estimator import EnergyEstimator
 from torchms.models.estimator import calibration
 from torchms.models.estimator import weights
 from torchms.models.estimator.energy import atom_batches, to_device
-from torchms.models.orb.model import (
-    COVALENT_RADII,
-    MAX_NEIGHBORS,
-    RADIUS,
-    UNUSED_PARAMETERS,
-    InvalidWeights,
-    ZBLBasis,
-    build_mlp,
-)
+from torchms.models.orb import Config
+from torchms.models.orb.model import InvalidWeights, ZBLBasis, build_mlp
 from torchms.graph.graph import Graph
 from torchms.models.layers.basis import (
     BesselBasis,
@@ -183,7 +176,8 @@ def test_build_mlp_names():
 
 
 def test_pair_repulsion_only_at_short_distance():
-    repulsion = ZBLBasis()
+    config = Config.load()
+    repulsion = ZBLBasis(config.repulsion)
     z = torch.tensor([6, 6])
     graph = Graph.from_edges(
         None,
@@ -198,10 +192,10 @@ def test_pair_repulsion_only_at_short_distance():
         return float(repulsion(z, vectors, graph))
 
     # cut at the covalent radii of the next element (nitrogen), see ZBLBasis
-    limit = 2 * COVALENT_RADII[7]
+    limit = 2 * config.repulsion.covalent_radii[7]
     assert energy(limit + 0.01) == 0.0
     assert energy(1.0) > energy(1.2) > 0.0
-    assert len(COVALENT_RADII) == 119
+    assert len(config.repulsion.covalent_radii) == 119
 
 
 # the model, with random weights
@@ -210,7 +204,7 @@ def test_pair_repulsion_only_at_short_distance():
 @pytest.fixture(scope="module")
 def model():
     torch.manual_seed(0)
-    return OrbEnergyModel().double().eval().requires_grad_(False)
+    return OrbV3().double().eval().requires_grad_(False)
 
 
 def double(structures: Structures) -> Structures:
@@ -246,7 +240,7 @@ def supercell(structures: Structures) -> Structures:
     )
 
 
-def repulsion(model: OrbEnergyModel, structures: Structures) -> torch.Tensor:
+def repulsion(model: OrbV3, structures: Structures) -> torch.Tensor:
     graph, vectors = model.edges(model.transform()(structures))
     return model.pair_repulsion_fn(structures.z, vectors, graph)
 
@@ -262,16 +256,20 @@ def test_model_output(model):
 
 
 def test_model_graph(model):
+    config = Config.load()
     graph, vectors = model.edges(model.transform()(double(Structures.diamond())))
     degree = torch.bincount(graph.edge_index[0], minlength=8)
 
     # diamond has more than 120 atoms closer than 6 Å
-    assert degree.tolist() == [MAX_NEIGHBORS] * 8
-    assert vectors.norm(dim=1).max() <= RADIUS
+    assert degree.tolist() == [config.graph.max_neighbors] * 8
+    assert vectors.norm(dim=1).max() <= config.graph.radius
     assert torch.allclose(vectors.norm(dim=1), graph.edges_distances())
 
     graph, vectors = model.edges(model.transform()(double(tilted())))
-    assert torch.bincount(graph.edge_index[0], minlength=3).max() < MAX_NEIGHBORS
+    assert (
+        torch.bincount(graph.edge_index[0], minlength=3).max()
+        < config.graph.max_neighbors
+    )
     assert torch.allclose(vectors.norm(dim=1), graph.edges_distances())
 
 
@@ -337,15 +335,16 @@ def test_model_pair_repulsion_is_a_mean_over_atoms(model):
 
 
 def test_load_pretrained_checks_the_parameters(model):
+    config = Config.load()
     state_dict = dict(model.state_dict())
     state_dict["heads.energy.reference.linear.weight"] = state_dict[
         "heads.energy.reference.linear.weight"
     ].flatten()
     state_dict.update(
-        {f"{prefix}weight": torch.zeros(1) for prefix in UNUSED_PARAMETERS}
+        {f"{prefix}weight": torch.zeros(1) for prefix in config.unused_parameters}
     )
 
-    other = OrbEnergyModel().double()
+    other = OrbV3().double()
     other.load_pretrained(state_dict)
     assert torch.allclose(
         predict(other, double(tilted())), predict(model, double(tilted()))
@@ -377,12 +376,13 @@ def reference_structures() -> tuple[Structures, dict[str, np.ndarray]]:
 @pytest.mark.parametrize("name", ["omat", "mpa"])
 def test_pretrained_matches_orb_models(name):
     """Energies of orb-models 0.7.0, computed once outside of the project."""
+    config = Config.load()
     full_name = f"orb-v3-conservative-inf-{name}"
     if not weights.checkpoint_paths("orb", full_name)[0].exists():
         pytest.skip(f"weights of {full_name} are not in the cache")
 
     structures, data = reference_structures()
-    pretrained = OrbEnergyModel.from_pretrained(full_name, device="cpu")
+    pretrained = OrbV3.from_pretrained(full_name, device="cpu")
 
     graph, _ = pretrained.edges(pretrained.transform()(structures))
     with torch.no_grad():
@@ -393,7 +393,7 @@ def test_pretrained_matches_orb_models(name):
     error = np.abs(energy - data[f"energy_{name}"]) / data["num_atoms"]
     # atoms with more than 120 neighbours: equidistant ones are not kept in
     # the same order as orb-models
-    capped = data["max_degree"] >= MAX_NEIGHBORS
+    capped = data["max_degree"] >= config.graph.max_neighbors
     assert capped.sum() >= 3
     assert error[~capped].max() < 2e-5
     assert error[capped].max() < 5e-4
@@ -407,7 +407,7 @@ def test_pretrained_is_almost_invariant_to_rotations():
         pytest.skip(f"weights of {name} are not in the cache")
 
     structures, data = reference_structures()
-    pretrained = OrbEnergyModel.from_pretrained(name, device="cpu")
+    pretrained = OrbV3.from_pretrained(name, device="cpu")
     generator = torch.Generator().manual_seed(0)
     rotation = torch.linalg.qr(torch.randn(3, 3, generator=generator))[0]
     rotated = Structures(
@@ -428,14 +428,15 @@ def test_pretrained_is_almost_invariant_to_rotations():
 
 
 def test_pretrained_state_dict_is_fully_used():
+    config = Config.load()
     path = weights.checkpoint_paths("orb", "orb-v3-conservative-inf-omat")[0]
     if not path.exists():
         pytest.skip("weights are not in the cache")
 
     state_dict = torch.load(path, map_location="cpu", weights_only=True)
-    used = {k for k in state_dict if not k.startswith(UNUSED_PARAMETERS)}
+    used = {k for k in state_dict if not k.startswith(config.unused_parameters)}
 
-    assert used == set(OrbEnergyModel().state_dict())
+    assert used == set(OrbV3().state_dict())
     assert len(state_dict) - len(used) == 17
 
 
@@ -603,7 +604,7 @@ def test_to_device():
 @pytest.fixture(scope="module")
 def float_model():
     torch.manual_seed(0)
-    return OrbEnergyModel().eval().requires_grad_(False)
+    return OrbV3().eval().requires_grad_(False)
 
 
 def test_estimator_adds_the_correction(float_model):
@@ -709,7 +710,7 @@ def test_fit_absolute_loss_ignores_outliers():
 # energy above the hull
 
 
-def hull_file(tmp_path, model: OrbEnergyModel, shift: float = 0.0):
+def hull_file(tmp_path, model: OrbV3, shift: float = 0.0):
     """Hull of zincblende ZnS, of its elements and of sodium, from the model."""
     from torchms.data.hull import save_hull
 
@@ -847,7 +848,7 @@ def test_from_pretrained_loads_correction_and_hull(tmp_path, float_model, monkey
         loaded.append((name, device))
         return float_model
 
-    monkeypatch.setattr(OrbEnergyModel, "from_pretrained", from_pretrained)
+    monkeypatch.setattr(OrbV3, "from_pretrained", from_pretrained)
 
     estimator = EnergyEstimator.from_pretrained(
         correction_file=tmp_path / "correction.hdf5", hull_file=path
@@ -886,9 +887,7 @@ def test_from_lematerial_downloads_correction_and_hull(
     fake_hub = types.ModuleType("huggingface_hub")
     fake_hub.hf_hub_download = hf_hub_download
     monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub)
-    monkeypatch.setattr(
-        OrbEnergyModel, "from_pretrained", lambda name, device=None: float_model
-    )
+    monkeypatch.setattr(OrbV3, "from_pretrained", lambda name, device=None: float_model)
 
     estimator = EnergyEstimator.from_lematerial()
 
@@ -924,9 +923,7 @@ def test_from_lematerial_downloads_correction_and_hull(
 
 def test_hull_source_of_a_file(tmp_path, float_model, monkeypatch):
     path, _ = hull_file(tmp_path, float_model)
-    monkeypatch.setattr(
-        OrbEnergyModel, "from_pretrained", lambda name, device=None: float_model
-    )
+    monkeypatch.setattr(OrbV3, "from_pretrained", lambda name, device=None: float_model)
 
     estimator = EnergyEstimator.from_pretrained(hull_file=path)
     assert estimator.hull_source == f"file {path}"

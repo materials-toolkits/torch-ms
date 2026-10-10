@@ -12,6 +12,10 @@
 
 ::: torchms.graph.cutoff
 
+## Complete graph
+
+::: torchms.graph.complete
+
 ## Chemical bonds
 
 ::: torchms.graph.atomic_radius

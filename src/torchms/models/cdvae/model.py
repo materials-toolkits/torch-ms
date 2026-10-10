@@ -37,12 +37,12 @@ from torch import nn
 
 from torchms.data.augmentation.transforms import Compose, Transform
 from torchms.data.batching import Structures
-from torchms.models.estimator.config import load_config
+from torchms.models.cdvae.config import Config, NetworkConfig
 from torchms.models.estimator.reader import read_pickle
 from torchms.models.estimator.pretrained import (
     InvalidWeights,
     PretrainedModel,
-    different_arguments,
+    check_configuration,
     element_index,
     element_table,
 )
@@ -61,63 +61,22 @@ from torchms.graph.transforms import (
     attached_tuples,
     edges_vectors,
 )
-from torchms.models.layers.dimenet import DimeNetConfig, DimeNetPlusPlus
-from torchms.models.layers.gemnet import GemNetConfig, GemNetT
-
-# every value of the model is in config.yaml, next to this module
-CONFIG = load_config(__file__)
-
-UNUSED_PARAMETERS: tuple[str, ...] = tuple(CONFIG["unused_parameters"])
-
-RADIUS: float = CONFIG["graph"]["decoder"]["radius"]
-MAX_NEIGHBORS: int = CONFIG["graph"]["decoder"]["max_neighbors"]
-MAX_IMAGE_SHIFT: int = CONFIG["graph"]["decoder"]["max_image_shift"]
-
-LATENT_DIM: int = CONFIG["model"]["latent_dim"]
-HIDDEN_DIM: int = CONFIG["model"]["hidden_dim"]
-NUM_HIDDEN_LAYERS: int = CONFIG["model"]["num_hidden_layers"]
-MAX_ATOMS: int = CONFIG["model"]["max_atoms"]
-NUM_ELEMENTS: int = CONFIG["model"]["num_elements"]
-SIGMA_BEGIN: float = CONFIG["model"]["sigma_begin"]
-SIGMA_END: float = CONFIG["model"]["sigma_end"]
-NUM_NOISE_LEVELS: int = CONFIG["model"]["num_noise_levels"]
-
-# hyperparameters of the DimeNet++ encoder and of the GemNet-T decoder
-ENCODER = DimeNetConfig(out_channels=LATENT_DIM, **CONFIG["encoder"])
-DECODER = GemNetConfig(
-    latent_dim=LATENT_DIM,
-    num_elements=NUM_ELEMENTS,
-    radius=RADIUS,
-    **CONFIG["decoder"],
-)
-
-STEPS_PER_LEVEL: int = CONFIG["sampling"]["steps_per_level"]
-STEP_SIZE: float = CONFIG["sampling"]["step_size"]
-MIN_SIGMA: float = CONFIG["sampling"]["min_sigma"]
-
-# buffers of cdvae with another name here, and constants absent from its weights
-RENAMED_PARAMETERS: dict[str, str] = CONFIG["upstream"]["renamed_parameters"]
-CONSTANT_BUFFERS: tuple[str, ...] = tuple(CONFIG["upstream"]["constant_buffers"])
-
-# configuration of the training the rewrite is written for, by section
-UPSTREAM_ARGS: dict[str, dict[str, object]] = {
-    "model": CONFIG["upstream"]["model_args"],
-    "model.encoder": CONFIG["upstream"]["encoder_args"],
-    "model.decoder": CONFIG["upstream"]["decoder_args"],
-    "data": CONFIG["upstream"]["data_args"],
-}
+from torchms.models.layers import gemnet
+from torchms.models.layers.dimenet import DimeNetPlusPlus
+from torchms.models.layers.gemnet import GemNetT
 
 # what the encoder and the decoder read on the structures
 ENCODER_FIELDS = ("graph", "line_graph")
 DECODER_FIELDS = ("graph", "triplets", "bonds")
 
 
-def build_mlp(output_size: int) -> nn.Sequential:
+def build_mlp(network: NetworkConfig, output_size: int) -> nn.Sequential:
     """Network from a latent vector to one of the quantities decoded from it."""
-    layers: list[nn.Module] = [nn.Linear(LATENT_DIM, HIDDEN_DIM), nn.ReLU()]
-    for _ in range(NUM_HIDDEN_LAYERS - 1):
-        layers += [nn.Linear(HIDDEN_DIM, HIDDEN_DIM), nn.ReLU()]
-    layers.append(nn.Linear(HIDDEN_DIM, output_size))
+    hidden_dim = network.hidden_dim
+    layers: list[nn.Module] = [nn.Linear(network.latent_dim, hidden_dim), nn.ReLU()]
+    for _ in range(network.num_hidden_layers - 1):
+        layers += [nn.Linear(hidden_dim, hidden_dim), nn.ReLU()]
+    layers.append(nn.Linear(hidden_dim, output_size))
 
     return nn.Sequential(*layers)
 
@@ -125,10 +84,10 @@ def build_mlp(output_size: int) -> nn.Sequential:
 class GemNetTDecoder(nn.Module):
     """Move and element of each atom of noisy structures, from their latent vector."""
 
-    def __init__(self):
+    def __init__(self, config: gemnet.Config):
         super().__init__()
-        self.gemnet = GemNetT(DECODER)
-        self.fc_atom = nn.Linear(DECODER.hidden_dim, NUM_ELEMENTS)
+        self.gemnet = GemNetT(config)
+        self.fc_atom = nn.Linear(config.hidden_dim, config.num_elements)
 
     def forward(
         self,
@@ -209,7 +168,7 @@ def sample_composition(
     return z[order][rank < num_atoms[owner[order]]]
 
 
-class CdvaeModel(PretrainedModel):
+class CDVAE(PretrainedModel[Config]):
     """Crystal Diffusion Variational Autoencoder.
 
     The model does not build the graph of the bonds its encoder reads, see
@@ -220,7 +179,7 @@ class CdvaeModel(PretrainedModel):
         Latent vectors of two structures, with a graph of their atoms closer
         than 2 Å in place of the graph of CrystalNN:
 
-        >>> model = CdvaeModel().eval()
+        >>> model = CDVAE().eval()
         >>> structures = Structures.collate([Structures.diamond(), Structures.water()])
         >>> structures = model.transform()(AddRadiusGraph(2.0)(structures))
         >>> with torch.no_grad():
@@ -231,8 +190,7 @@ class CdvaeModel(PretrainedModel):
         With pretrained weights, `model.sample(8)` generates 8 structures.
     """
 
-    DEFAULT_WEIGHTS = CONFIG["default_weights"]
-    UNUSED_PARAMETERS = UNUSED_PARAMETERS
+    CONFIG = Config
     GRAPH_FIELDS = ENCODER_FIELDS
 
     sigmas: torch.Tensor
@@ -241,24 +199,29 @@ class CdvaeModel(PretrainedModel):
     encoder_elements: torch.Tensor
     decoder_elements: torch.Tensor
 
-    def __init__(self):
-        super().__init__()
-        self.encoder = DimeNetPlusPlus(ENCODER)
-        self.decoder = GemNetTDecoder()
+    def __init__(self, config: Config | None = None):
+        super().__init__(config)
+        network = self.config.model
+        encoder = self.config.encoder_config()
 
-        self.fc_mu = nn.Linear(LATENT_DIM, LATENT_DIM)
-        self.fc_var = nn.Linear(LATENT_DIM, LATENT_DIM)
+        self.encoder = DimeNetPlusPlus(encoder)
+        self.decoder = GemNetTDecoder(self.config.decoder_config())
 
-        self.fc_num_atoms = build_mlp(MAX_ATOMS + 1)
-        self.fc_lattice = build_mlp(6)
-        self.fc_composition = build_mlp(NUM_ELEMENTS)
+        self.fc_mu = nn.Linear(network.latent_dim, network.latent_dim)
+        self.fc_var = nn.Linear(network.latent_dim, network.latent_dim)
+
+        self.fc_num_atoms = build_mlp(network, network.max_atoms + 1)
+        self.fc_lattice = build_mlp(network, 6)
+        self.fc_composition = build_mlp(network, network.num_elements)
 
         # noise levels of the positions in Å, from the largest
         self.register_buffer(
             "sigmas",
             torch.exp(
                 torch.linspace(
-                    math.log(SIGMA_BEGIN), math.log(SIGMA_END), NUM_NOISE_LEVELS
+                    math.log(network.sigma_begin),
+                    math.log(network.sigma_end),
+                    network.num_noise_levels,
                 )
             ),
         )
@@ -272,12 +235,12 @@ class CdvaeModel(PretrainedModel):
         # by the atomic number, and of the decoder, from hydrogen
         self.register_buffer(
             "encoder_elements",
-            element_table(torch.arange(ENCODER.num_elements)),
+            element_table(torch.arange(encoder.num_elements)),
             persistent=False,
         )
         self.register_buffer(
             "decoder_elements",
-            element_table(torch.arange(1, NUM_ELEMENTS + 1)),
+            element_table(torch.arange(1, network.num_elements + 1)),
             persistent=False,
         )
 
@@ -329,34 +292,19 @@ class CdvaeModel(PretrainedModel):
                 model was trained with another configuration.
         """
         if hparams is not None:
-            different: dict[str, object] = {}
-            for section, expected in UPSTREAM_ARGS.items():
-                found: object = hparams
-                for key in section.split("."):
-                    found = found.get(key) if isinstance(found, Mapping) else None
-                if not isinstance(found, Mapping):
-                    raise InvalidWeights(f"the configuration has no {section}")
-
-                different.update(
-                    {
-                        f"{section}.{key}": value
-                        for key, value in different_arguments(found, expected).items()
-                    }
-                )
-            if different:
-                raise InvalidWeights(
-                    f"weights of a model with another configuration: {different}"
-                )
+            check_configuration(hparams, self.config.upstream.sections())
 
         parameters: dict[str, torch.Tensor] = {}
         for name, values in state_dict.items():
-            for old, new in RENAMED_PARAMETERS.items():
+            for old, new in self.config.upstream.renamed_parameters.items():
                 if name.endswith(old):
                     name = name[: -len(old)] + new
             parameters[name] = values
 
         own = self.state_dict()
-        parameters.update({name: own[name] for name in CONSTANT_BUFFERS})
+        parameters.update(
+            {name: own[name] for name in self.config.upstream.constant_buffers}
+        )
         parameters["lattice_means"] = lattice_means
         parameters["lattice_stds"] = lattice_stds
 
@@ -365,8 +313,10 @@ class CdvaeModel(PretrainedModel):
     # graphs
 
     @classmethod
-    def transform(cls) -> Transform:
+    def transform(cls, config: Config | None = None) -> Transform:
         """Transform of the encoder, for structures with a graph of their bonds.
+
+        It does not depend on the configuration, which is not read.
 
         The encoder was trained on the bonds found by CrystalNN of pymatgen,
         which torchms does not build: attach this graph to the structures,
@@ -374,10 +324,12 @@ class CdvaeModel(PretrainedModel):
         The transform attaches its line graph: the pairs of bonds i → j, j → k
         where k is another atom than i.
         """
+        del config
+
         return Compose([AddLineGraph(backtrack=True, same_atom=False)])
 
     @classmethod
-    def decoder_transform(cls) -> Transform:
+    def decoder_transform(cls, config: Config | None = None) -> Transform:
         """Transform attaching the graph of the decoder, its triplets and its bonds.
 
         An atom is connected to its 20 nearest neighbours closer than 7 Å,
@@ -386,12 +338,18 @@ class CdvaeModel(PretrainedModel):
         towards an atom of lower index. Among neighbours at the same distance,
         the ones which are kept are not the ones of cdvae: this does not
         happen for atoms moved by the dynamics.
+
+        Args:
+            config: Configuration of the model the graph is for. The one of
+                config.yaml by default.
         """
+        graph = (config or Config.load()).graph.decoder
+
         return Compose(
             [
-                AddRadiusGraph(RADIUS, self_images=True),
-                KeepNearImages(MAX_IMAGE_SHIFT),
-                KeepNearestNeighbors(MAX_NEIGHBORS),
+                AddRadiusGraph(graph.radius, self_images=True),
+                KeepNearImages(graph.max_image_shift),
+                KeepNearestNeighbors(graph.max_neighbors),
                 MirrorEdges(),
                 AddTriplets(),
                 AddBonds(),
@@ -520,7 +478,7 @@ class CdvaeModel(PretrainedModel):
         structures: Structures,
         sigma: Float[torch.Tensor, ""] | float,
         noise: Float[torch.Tensor, "n_atoms 3"],
-        step_size: float = STEP_SIZE,
+        step_size: float | None = None,
         update_elements: bool = True,
     ) -> Structures:
         """One step of the annealed Langevin dynamics.
@@ -532,7 +490,8 @@ class CdvaeModel(PretrainedModel):
             structures: Noisy structures, without graph.
             sigma: Level of the noise, in Å.
             noise: Standard normal noise of the step, shape (n_atoms, 3).
-            step_size: Step at the lowest level of noise: the step grows as
+            step_size: Step at the lowest level of noise, the one of the
+                configuration by default: the step grows as
                 the square of the level.
             update_elements: If True, each atom takes the element with the
                 best score of the decoder.
@@ -540,7 +499,12 @@ class CdvaeModel(PretrainedModel):
         Returns:
             Structures with the atoms moved, without graph.
         """
-        move, scores = self.denoise(latent, self.decoder_transform()(structures))
+        if step_size is None:
+            step_size = self.config.sampling.step_size
+
+        move, scores = self.denoise(
+            latent, self.decoder_transform(self.config)(structures)
+        )
 
         step = step_size * (sigma / self.sigmas[-1]) ** 2
         positions = (
@@ -564,9 +528,9 @@ class CdvaeModel(PretrainedModel):
         latent: Float[torch.Tensor, "n_struct latent_dim"],
         num_atoms: Int[torch.Tensor, "n_struct"] | None = None,
         z: Int[torch.Tensor, "n_atoms"] | None = None,
-        steps_per_level: int = STEPS_PER_LEVEL,
-        step_size: float = STEP_SIZE,
-        min_sigma: float = MIN_SIGMA,
+        steps_per_level: int | None = None,
+        step_size: float | None = None,
+        min_sigma: float | None = None,
         generator: torch.Generator | None = None,
     ) -> Structures:
         """Decode structures from latent vectors by annealed Langevin dynamics.
@@ -582,7 +546,9 @@ class CdvaeModel(PretrainedModel):
             z: Atomic number of each atom, kept during the dynamics. By
                 default they are drawn from the decoded composition, then
                 updated at each step.
-            steps_per_level: Number of steps at each level of noise.
+            steps_per_level: Number of steps at each level of noise. As
+                step_size and min_sigma, the one of the configuration by
+                default.
             step_size: Step at the lowest level of noise.
             min_sigma: The dynamics stops before the first level of noise
                 below it, in Å.
@@ -592,6 +558,11 @@ class CdvaeModel(PretrainedModel):
             Structures generated, without graph.
         """
         device = latent.device
+        sampling = self.config.sampling
+        if steps_per_level is None:
+            steps_per_level = sampling.steps_per_level
+        if min_sigma is None:
+            min_sigma = sampling.min_sigma
 
         if num_atoms is None:
             num_atoms = self.predict_num_atoms(latent).argmax(dim=-1)
@@ -620,16 +591,18 @@ class CdvaeModel(PretrainedModel):
     def sample(
         self,
         num_samples: int,
-        steps_per_level: int = STEPS_PER_LEVEL,
-        step_size: float = STEP_SIZE,
-        min_sigma: float = MIN_SIGMA,
+        steps_per_level: int | None = None,
+        step_size: float | None = None,
+        min_sigma: float | None = None,
         generator: torch.Generator | None = None,
     ) -> Structures:
         """Generate structures from latent vectors drawn from a standard normal.
 
         Args:
             num_samples: Number of structures.
-            steps_per_level: Number of steps at each level of noise.
+            steps_per_level: Number of steps at each level of noise. As
+                step_size and min_sigma, the one of the configuration by
+                default.
             step_size: Step at the lowest level of noise.
             min_sigma: The dynamics stops before the first level of noise
                 below it, in Å.
@@ -637,7 +610,9 @@ class CdvaeModel(PretrainedModel):
                 model.
         """
         latent = torch.randn(
-            (num_samples, LATENT_DIM), generator=generator, device=self.sigmas.device
+            (num_samples, self.config.model.latent_dim),
+            generator=generator,
+            device=self.sigmas.device,
         )
 
         return self.generate(

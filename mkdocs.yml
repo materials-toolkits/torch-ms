@@ -96,8 +96,10 @@ nav:
           - ALIGNN: models/alignn.md
       - Generative models:
           - CDVAE: models/cdvae.md
+          - DiffCSP: models/diffcsp.md
       - Layers:
           - Bases: models/bases.md
+          - CSPNet: models/cspnet.md
           - DimeNet++: models/dimenet.md
           - GemNet-T: models/gemnet.md
           - LineGraphNetwork: models/line-graph-network.md

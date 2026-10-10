@@ -1,13 +1,13 @@
 # CDVAE
 
-`CdvaeModel` is the Crystal Diffusion Variational Autoencoder
+`CDVAE` is the Crystal Diffusion Variational Autoencoder
 ([cdvae](https://github.com/txie-93/cdvae), commit `f857f59`, MIT,
 [arXiv:2110.06197](https://arxiv.org/abs/2110.06197)), in `torchms/models/cdvae/`. It generates
 structures.
 
 | | |
 |---|---|
-| Class | `torchms.models.CdvaeModel` |
+| Class | `torchms.models.CDVAE` |
 | Does | encodes a structure into a latent vector, generates structures from latent vectors |
 | Source | [cdvae](https://github.com/txie-93/cdvae), commit `f857f59` |
 | License | MIT |
@@ -18,9 +18,9 @@ structures.
 | Largest difference with the original | 4.0e-5 on the latent mean; 1.2e-5 Å on the moves where the neighbours are defined |
 
 ```{.python notest}
-from torchms.models import CdvaeModel
+from torchms.models import CDVAE
 
-model = CdvaeModel.from_pretrained(device="cuda")
+model = CDVAE.from_pretrained(device="cuda")
 structures = model.sample(64)                 # 5000 steps of dynamics
 
 mean, log_variance = model(model.transform()(structures_with_bonds))
@@ -46,7 +46,7 @@ reader of MACE, which runs nothing of a file.
 
 The model has two graphs. Its decoder builds its own at each step of the dynamics. Its
 encoder was trained on the bonds found by CrystalNN of pymatgen, which torchms does
-not build: `CdvaeModel.transform()` only completes a graph of bonds attached to the
+not build: `CDVAE.transform()` only completes a graph of bonds attached to the
 structures. The comparison below attaches the graphs of CrystalNN, computed by the
 reference script.
 

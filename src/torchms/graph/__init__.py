@@ -1,5 +1,6 @@
 from math import e
 from torchms.graph.atomic_radius import atomic_radius
+from torchms.graph.complete import complete
 from torchms.graph.cutoff import cutoff
 from torchms.graph.geometry import (
     centered_supercell,
@@ -27,6 +28,7 @@ from torchms.graph.sparse import (
 )
 from torchms.graph.transforms import (
     AddAtomicRadiusGraph,
+    AddCompleteGraph,
     AddLineGraph,
     AddQuadruplets,
     AddRadiusGraph,
@@ -39,6 +41,7 @@ from torchms.graph.transforms import (
 
 __all__ = [
     "AddAtomicRadiusGraph",
+    "AddCompleteGraph",
     "AddLineGraph",
     "AddQuadruplets",
     "AddRadiusGraph",
@@ -54,6 +57,7 @@ __all__ = [
     "batched_cartesian_product_3",
     "batched_join",
     "centered_supercell",
+    "complete",
     "cutoff",
     "dihedral_angles",
     "Graph",

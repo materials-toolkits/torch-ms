@@ -18,7 +18,9 @@ from torchms.models.layers import (
     AngleBasis,
     EquivariantNetwork,
     LineGraphNetwork,
+    equivariant_network,
     gaunt_coefficients,
+    line_graph_network,
 )
 from torchms.models.layers.basis import DEGREES
 
@@ -42,10 +44,12 @@ def generator(seed: int = 0) -> torch.Generator:
     return torch.Generator().manual_seed(seed)
 
 
-def line_graph_network(order: int, chiral: bool = False) -> LineGraphNetwork:
+def make_line_graph_network(order: int, chiral: bool = False) -> LineGraphNetwork:
     torch.manual_seed(order)
     return LineGraphNetwork(
-        order=order, radius=RADIUS, hidden=16, num_layers=2, chiral=chiral
+        line_graph_network.Config(
+            order=order, radius=RADIUS, hidden=16, num_layers=2, chiral=chiral
+        )
     ).eval()
 
 
@@ -58,20 +62,22 @@ def run(model, structures: Structures) -> torch.Tensor:
     return model(structures)
 
 
-def equivariant_network(correlation: int) -> EquivariantNetwork:
+def make_equivariant_network(correlation: int) -> EquivariantNetwork:
     torch.manual_seed(correlation)
     return EquivariantNetwork(
-        correlation=correlation, radius=RADIUS[0], channels=16, num_layers=2
+        equivariant_network.Config(
+            correlation=correlation, radius=RADIUS[0], channels=16, num_layers=2
+        )
     ).eval()
 
 
 MODELS = [
-    pytest.param(lambda: line_graph_network(1), id="bonds"),
-    pytest.param(lambda: line_graph_network(2), id="angles"),
-    pytest.param(lambda: line_graph_network(3), id="dihedrals"),
-    pytest.param(lambda: equivariant_network(1), id="products-1"),
-    pytest.param(lambda: equivariant_network(2), id="products-2"),
-    pytest.param(lambda: equivariant_network(3), id="products-3"),
+    pytest.param(lambda: make_line_graph_network(1), id="bonds"),
+    pytest.param(lambda: make_line_graph_network(2), id="angles"),
+    pytest.param(lambda: make_line_graph_network(3), id="dihedrals"),
+    pytest.param(lambda: make_equivariant_network(1), id="products-1"),
+    pytest.param(lambda: make_equivariant_network(2), id="products-2"),
+    pytest.param(lambda: make_equivariant_network(3), id="products-3"),
 ]
 
 
@@ -142,22 +148,22 @@ def test_gaunt_coefficients_are_equivariant():
 
 def test_arguments():
     with pytest.raises(ValueError, match="order"):
-        LineGraphNetwork(order=4)
+        LineGraphNetwork(line_graph_network.Config(order=4))
     with pytest.raises(ValueError, match="radius"):
-        LineGraphNetwork(order=3, radius=(5.0, 3.0))
+        LineGraphNetwork(line_graph_network.Config(order=3, radius=(5.0, 3.0)))
     with pytest.raises(ValueError, match="radius"):
-        LineGraphNetwork(order=2, radius=(3.0, 5.0))
+        LineGraphNetwork(line_graph_network.Config(order=2, radius=(3.0, 5.0)))
     with pytest.raises(ValueError, match="mirror"):
-        LineGraphNetwork(order=2, chiral=True)
+        LineGraphNetwork(line_graph_network.Config(order=2, chiral=True))
     with pytest.raises(ValueError, match="correlation"):
-        EquivariantNetwork(correlation=4)
+        EquivariantNetwork(equivariant_network.Config(correlation=4))
 
 
 def test_line_graph_network_orders():
     batch = make_batch()
 
     for order in (1, 2, 3):
-        model = line_graph_network(order)
+        model = make_line_graph_network(order)
         structures = model.transform()(batch)
         geometry = model.geometry(structures)
 
@@ -190,7 +196,7 @@ def test_line_graph_network_does_not_build_graphs():
     from torchms.graph.transforms import AddRadiusGraph
 
     batch = make_batch()
-    model = line_graph_network(3)
+    model = make_line_graph_network(3)
 
     with pytest.raises(ValueError, match="graph, triplets, quadruplets"):
         model(batch)
@@ -200,14 +206,14 @@ def test_line_graph_network_does_not_build_graphs():
         model(AddRadiusGraph(RADIUS[0], self_images=True)(batch))
 
     # a network of a lower order reads less
-    structures = line_graph_network(2).transform()(batch)
+    structures = make_line_graph_network(2).transform()(batch)
     assert structures.quadruplets is None
-    assert line_graph_network(2)(structures).shape == (2,)
+    assert make_line_graph_network(2)(structures).shape == (2,)
 
 
 def test_line_graph_network_cutoffs_of_tuples():
     """The cutoff of a triplet or a quadruplet is the product of its bonds'."""
-    model = line_graph_network(3)
+    model = make_line_graph_network(3)
     structures = model.transform()(make_batch())
     geometry = model.geometry(structures)
 
@@ -221,7 +227,7 @@ def test_line_graph_network_cutoffs_of_tuples():
 
 def test_equivariant_network_does_not_build_graphs():
     batch = make_batch()
-    model = equivariant_network(3)
+    model = make_equivariant_network(3)
 
     with pytest.raises(ValueError, match="graph.*transform"):
         model(batch)
@@ -323,13 +329,17 @@ def test_higher_orders_see_more():
 
     def models():
         torch.manual_seed(2)
-        yield "bonds", LineGraphNetwork(1, (radius,), hidden=16, num_layers=1), True
+        yield "bonds", LineGraphNetwork(
+            line_graph_network.Config(1, (radius,), hidden=16, num_layers=1)
+        ), True
         yield "angles", LineGraphNetwork(
-            2, (radius, radius), hidden=16, num_layers=1
+            line_graph_network.Config(2, (radius, radius), hidden=16, num_layers=1)
         ), False
         for correlation, same in [(1, True), (2, False), (3, False)]:
             yield f"products-{correlation}", EquivariantNetwork(
-                correlation, radius, channels=16, num_layers=1
+                equivariant_network.Config(
+                    correlation, radius, channels=16, num_layers=1
+                )
             ), same
 
     with torch.no_grad():
@@ -346,8 +356,8 @@ def test_chiral_model_sees_mirror_images():
     mirror = torch.diag(torch.tensor([1.0, 1.0, -1.0])).repeat(2, 1, 1)
     proper = random_orthogonal(2, torch.device("cpu"), generator(), proper=True)
 
-    achiral = line_graph_network(3)
-    chiral = line_graph_network(3, chiral=True)
+    achiral = make_line_graph_network(3)
+    chiral = make_line_graph_network(3, chiral=True)
 
     with torch.no_grad():
         for model in (achiral, chiral):
@@ -370,8 +380,12 @@ def test_networks_hyperparameters():
     batch = make_batch()
 
     for make in (
-        lambda **kwargs: LineGraphNetwork(order=2, radius=RADIUS, hidden=16, **kwargs),
-        lambda **kwargs: EquivariantNetwork(radius=RADIUS[0], channels=16, **kwargs),
+        lambda **kwargs: LineGraphNetwork(
+            line_graph_network.Config(order=2, radius=RADIUS, hidden=16, **kwargs)
+        ),
+        lambda **kwargs: EquivariantNetwork(
+            equivariant_network.Config(radius=RADIUS[0], channels=16, **kwargs)
+        ),
     ):
         torch.manual_seed(0)
         default = make().eval()

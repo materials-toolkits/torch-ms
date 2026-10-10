@@ -3,7 +3,7 @@
     uv run python demo_cdvae_hull.py                 # 1000 crystals
     uv run python demo_cdvae_hull.py --num 50 --steps-per-level 10   # a quick try
 
-Latent vectors are drawn from a standard normal and decoded by CdvaeModel into
+Latent vectors are drawn from a standard normal and decoded by CDVAE into
 crystals, by 50 levels of noise of 100 steps each. EnergyEstimator then
 estimates the total energy of each crystal with orb-v3 and compares it to the
 convex hull of LeMat-Bulk. The crystals are saved with their energy above the
@@ -39,8 +39,7 @@ from torchms.data import HDF5Dataset, Structures
 from torchms.data.hull import energy_above_reference
 from torchms.models.estimator import EnergyEstimator
 from torchms.graph.geometry import lattice_from_parameters, lattice_heights
-from torchms.models import CdvaeModel
-from torchms.models.cdvae.model import LATENT_DIM
+from torchms.models import CDVAE
 
 # a cell thinner than this, in Å, is not decoded: it has no room for an atom,
 # and the number of its images within the radius of the graphs has no limit
@@ -85,7 +84,7 @@ def parse_arguments() -> argparse.Namespace:
 
 @torch.no_grad()
 def generate(
-    model: CdvaeModel,
+    model: CDVAE,
     num: int,
     steps_per_level: int,
     generator: torch.Generator,
@@ -97,7 +96,8 @@ def generate(
         the ones of a crystal without atom or with a flat cell.
     """
     device = model.sigmas.device
-    latent = torch.randn((num, LATENT_DIM), generator=generator, device=device)
+    latent_dim = model.config.model.latent_dim
+    latent = torch.randn((num, latent_dim), generator=generator, device=device)
 
     num_atoms = model.predict_num_atoms(latent).argmax(dim=-1)
     lattice = lattice_from_parameters(*model.predict_lattice(latent, num_atoms))
@@ -151,7 +151,7 @@ def main() -> None:
     args = parse_arguments()
     generator = torch.Generator(device=args.device).manual_seed(args.seed)
 
-    model = CdvaeModel.from_pretrained(device=args.device)
+    model = CDVAE.from_pretrained(device=args.device)
     estimator = EnergyEstimator.from_lematerial(device=args.device)
     print(f"device {args.device}")
     print(estimator)

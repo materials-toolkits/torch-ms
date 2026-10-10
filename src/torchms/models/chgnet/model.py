@@ -36,7 +36,7 @@ from torch import nn
 
 from torchms.data.augmentation.transforms import Compose, Transform
 from torchms.data.batching import Structures
-from torchms.models.estimator.config import load_config
+from torchms.models.chgnet.config import Config, NetworkConfig
 from torchms.models.estimator.pretrained import (
     InvalidWeights,
     PretrainedModel,
@@ -56,27 +56,6 @@ from torchms.graph.transforms import (
     edges_vectors,
 )
 from torchms.models.layers.basis import polynomial_cutoff
-
-# every value of the model is in config.yaml, next to this module
-CONFIG = load_config(__file__)
-
-RADIUS: float = CONFIG["graph"]["radius"]
-BOND_RADIUS: float = CONFIG["graph"]["bond_radius"]
-
-LATENT_DIM: int = CONFIG["model"]["latent_dim"]
-NUM_ELEMENTS: int = CONFIG["model"]["num_elements"]
-NUM_RADIAL: int = CONFIG["model"]["num_radial"]
-NUM_ANGULAR: int = CONFIG["model"]["num_angular"]
-CUTOFF_POWER: int = CONFIG["model"]["cutoff_power"]
-NUM_LAYERS: int = CONFIG["model"]["num_layers"]
-READOUT_LAYERS: int = CONFIG["model"]["readout_layers"]
-COSINE_SHRINK: float = CONFIG["model"]["cosine_shrink"]
-
-# parameters of the pretrained weights which are not used to predict the energy
-UNUSED_PARAMETERS: tuple[str, ...] = tuple(CONFIG["unused_parameters"])
-
-# arguments of the model the rewrite is written for, as stored with the weights
-MODEL_ARGS: dict[str, object] = CONFIG["upstream"]["model_args"]
 
 
 @dataclass
@@ -153,12 +132,12 @@ class MLP(nn.Module):
 class GatedMLP(nn.Module):
     """Product of a network and of a gate in [0, 1], both normalized."""
 
-    def __init__(self, input_size: int, hidden_sizes: list[int]):
+    def __init__(self, input_size: int, hidden_sizes: list[int], output_size: int):
         super().__init__()
-        self.mlp_core = MLP(input_size, hidden_sizes, LATENT_DIM)
-        self.mlp_gate = MLP(input_size, hidden_sizes, LATENT_DIM)
-        self.bn1 = nn.LayerNorm(LATENT_DIM)
-        self.bn2 = nn.LayerNorm(LATENT_DIM)
+        self.mlp_core = MLP(input_size, hidden_sizes, output_size)
+        self.mlp_gate = MLP(input_size, hidden_sizes, output_size)
+        self.bn1 = nn.LayerNorm(output_size)
+        self.bn2 = nn.LayerNorm(output_size)
 
     def forward(self, x: Float[torch.Tensor, "n f"]) -> Float[torch.Tensor, "n d"]:
         core = nn.functional.silu(self.bn1(self.mlp_core(x)))
@@ -173,11 +152,12 @@ class RadialBessel(nn.Module):
     The frequencies f are parameters, n pi for n = 1..num_radial before training.
     """
 
-    def __init__(self, radius: float):
+    def __init__(self, radius: float, num_radial: int, cutoff_power: int):
         super().__init__()
         self.radius = radius
+        self.cutoff_power = cutoff_power
         self.frequencies = nn.Parameter(
-            math.pi * torch.arange(1.0, NUM_RADIAL + 1.0), requires_grad=False
+            math.pi * torch.arange(1.0, num_radial + 1.0), requires_grad=False
         )
 
     def forward(
@@ -190,16 +170,21 @@ class RadialBessel(nn.Module):
             / distance
         )
 
-        return polynomial_cutoff(distance, self.radius, p=CUTOFF_POWER) * basis
+        return polynomial_cutoff(distance, self.radius, p=self.cutoff_power) * basis
 
 
 class BondEncoder(nn.Module):
     """Radial bases of a bond for the cutoffs of the bonds and of the angles."""
 
-    def __init__(self):
+    def __init__(self, config: Config):
         super().__init__()
-        self.rbf_expansion_ag = RadialBessel(RADIUS)
-        self.rbf_expansion_bg = RadialBessel(BOND_RADIUS)
+        network = config.model
+        self.rbf_expansion_ag = RadialBessel(
+            config.graph.radius, network.num_radial, network.cutoff_power
+        )
+        self.rbf_expansion_bg = RadialBessel(
+            config.graph.bond_radius, network.num_radial, network.cutoff_power
+        )
 
 
 class Fourier(nn.Module):
@@ -208,10 +193,10 @@ class Fourier(nn.Module):
     The frequencies f are parameters, 1..order before training.
     """
 
-    def __init__(self):
+    def __init__(self, num_angular: int):
         super().__init__()
         self.frequencies = nn.Parameter(
-            torch.arange(1.0, (NUM_ANGULAR - 1) // 2 + 1.0), requires_grad=False
+            torch.arange(1.0, (num_angular - 1) // 2 + 1.0), requires_grad=False
         )
 
     def forward(
@@ -228,23 +213,24 @@ class Fourier(nn.Module):
 class AngleEncoder(nn.Module):
     """Fourier basis of the angle between two bonds."""
 
-    def __init__(self):
+    def __init__(self, network: NetworkConfig):
         super().__init__()
-        self.fourier_expansion = Fourier()
+        self.cosine_shrink = network.cosine_shrink
+        self.fourier_expansion = Fourier(network.num_angular)
 
     def forward(
         self, cosine: Float[torch.Tensor, "n"]
     ) -> Float[torch.Tensor, "n num_angular"]:
         # as chgnet, the cosine is shrunk to keep the angle differentiable
-        return self.fourier_expansion(torch.acos(cosine * (1.0 - COSINE_SHRINK)))
+        return self.fourier_expansion(torch.acos(cosine * (1.0 - self.cosine_shrink)))
 
 
 class AtomEmbedding(nn.Module):
     """Learned features of each element, indexed by atomic number minus one."""
 
-    def __init__(self):
+    def __init__(self, network: NetworkConfig):
         super().__init__()
-        self.embedding = nn.Embedding(NUM_ELEMENTS, LATENT_DIM)
+        self.embedding = nn.Embedding(network.num_elements, network.latent_dim)
 
     def forward(
         self, element: Int[torch.Tensor, "n_atoms"]
@@ -255,10 +241,10 @@ class AtomEmbedding(nn.Module):
 class AtomConv(nn.Module):
     """Update of the atoms from their bonds and their neighbours."""
 
-    def __init__(self):
+    def __init__(self, latent_dim: int):
         super().__init__()
-        self.twoBody_atom = GatedMLP(3 * LATENT_DIM, [LATENT_DIM])
-        self.mlp_out = MLP(LATENT_DIM, [], LATENT_DIM, bias=False)
+        self.twoBody_atom = GatedMLP(3 * latent_dim, [latent_dim], latent_dim)
+        self.mlp_out = MLP(latent_dim, [], latent_dim, bias=False)
 
     def forward(
         self,
@@ -288,10 +274,10 @@ class AtomConv(nn.Module):
 class BondConv(nn.Module):
     """Update of the bonds from the angles they form with the other bonds."""
 
-    def __init__(self):
+    def __init__(self, latent_dim: int):
         super().__init__()
-        self.twoBody_bond = GatedMLP(4 * LATENT_DIM, [LATENT_DIM])
-        self.mlp_out = MLP(LATENT_DIM, [], LATENT_DIM, bias=False)
+        self.twoBody_bond = GatedMLP(4 * latent_dim, [latent_dim], latent_dim)
+        self.mlp_out = MLP(latent_dim, [], latent_dim, bias=False)
 
     def forward(
         self,
@@ -313,9 +299,9 @@ class BondConv(nn.Module):
 class AngleUpdate(nn.Module):
     """Update of the angles from their two bonds and their atom."""
 
-    def __init__(self):
+    def __init__(self, latent_dim: int):
         super().__init__()
-        self.twoBody_bond = GatedMLP(4 * LATENT_DIM, [])
+        self.twoBody_bond = GatedMLP(4 * latent_dim, [], latent_dim)
 
     def forward(
         self,
@@ -328,9 +314,9 @@ class AngleUpdate(nn.Module):
 class AtomRef(nn.Module):
     """Reference energy of each element, indexed by atomic number minus one."""
 
-    def __init__(self):
+    def __init__(self, num_elements: int):
         super().__init__()
-        self.fc = nn.Linear(NUM_ELEMENTS, 1, bias=False)
+        self.fc = nn.Linear(num_elements, 1, bias=False)
 
     def forward(
         self, element: Int[torch.Tensor, "n_atoms"]
@@ -340,11 +326,11 @@ class AtomRef(nn.Module):
 
 # one module per module of chgnet
 # pylint: disable-next=too-many-instance-attributes
-class ChgnetEnergyModel(PretrainedModel):
+class CHGNet(PretrainedModel[Config]):
     """Total energy of crystal structures predicted by CHGNet 0.3.0.
 
     Examples:
-        >>> model = ChgnetEnergyModel()
+        >>> model = CHGNet()
         >>> structures = Structures.collate([Structures.diamond(), Structures.zincblende()])
         >>> structures = model.transform()(structures)
         >>> with torch.no_grad():
@@ -353,34 +339,42 @@ class ChgnetEnergyModel(PretrainedModel):
         (torch.Size([2]), torch.float64)
     """
 
-    DEFAULT_WEIGHTS = CONFIG["default_weights"]
+    CONFIG = Config
     GRAPH_FIELDS = ("graph", "triplets", "bonds")
-    UNUSED_PARAMETERS = UNUSED_PARAMETERS
 
     element_table: torch.Tensor
 
-    def __init__(self, num_layers: int = NUM_LAYERS):
-        super().__init__()
+    def __init__(self, config: Config | None = None):
+        super().__init__(config)
+        network = self.config.model
+        latent_dim, num_layers = network.latent_dim, network.num_layers
+
         self.register_buffer(
             "element_table",
-            element_table(torch.arange(1, NUM_ELEMENTS + 1)),
+            element_table(torch.arange(1, network.num_elements + 1)),
             persistent=False,
         )
-        self.composition_model = AtomRef()
-        self.atom_embedding = AtomEmbedding()
-        self.bond_basis_expansion = BondEncoder()
-        self.bond_embedding = nn.Linear(NUM_RADIAL, LATENT_DIM, bias=False)
-        self.bond_weights_ag = nn.Linear(NUM_RADIAL, LATENT_DIM, bias=False)
-        self.bond_weights_bg = nn.Linear(NUM_RADIAL, LATENT_DIM, bias=False)
-        self.angle_basis_expansion = AngleEncoder()
-        self.angle_embedding = nn.Linear(NUM_ANGULAR, LATENT_DIM, bias=False)
+        self.composition_model = AtomRef(network.num_elements)
+        self.atom_embedding = AtomEmbedding(network)
+        self.bond_basis_expansion = BondEncoder(self.config)
+        self.bond_embedding = nn.Linear(network.num_radial, latent_dim, bias=False)
+        self.bond_weights_ag = nn.Linear(network.num_radial, latent_dim, bias=False)
+        self.bond_weights_bg = nn.Linear(network.num_radial, latent_dim, bias=False)
+        self.angle_basis_expansion = AngleEncoder(network)
+        self.angle_embedding = nn.Linear(network.num_angular, latent_dim, bias=False)
 
-        self.atom_conv_layers = nn.ModuleList(AtomConv() for _ in range(num_layers))
-        self.bond_conv_layers = nn.ModuleList(BondConv() for _ in range(num_layers - 1))
-        self.angle_layers = nn.ModuleList(AngleUpdate() for _ in range(num_layers - 1))
+        self.atom_conv_layers = nn.ModuleList(
+            AtomConv(latent_dim) for _ in range(num_layers)
+        )
+        self.bond_conv_layers = nn.ModuleList(
+            BondConv(latent_dim) for _ in range(num_layers - 1)
+        )
+        self.angle_layers = nn.ModuleList(
+            AngleUpdate(latent_dim) for _ in range(num_layers - 1)
+        )
 
-        self.readout_norm = nn.LayerNorm(LATENT_DIM)
-        self.mlp = MLP(LATENT_DIM, [LATENT_DIM] * READOUT_LAYERS, 1)
+        self.readout_norm = nn.LayerNorm(latent_dim)
+        self.mlp = MLP(latent_dim, [latent_dim] * network.readout_layers, 1)
 
     def load_checkpoint(
         self, name: str, cache: str | os.PathLike | None = None
@@ -409,7 +403,7 @@ class ChgnetEnergyModel(PretrainedModel):
                 model was built with other arguments than CHGNet 0.3.0.
         """
         if model_args is not None:
-            different = different_arguments(model_args, MODEL_ARGS)
+            different = different_arguments(model_args, self.config.upstream.model_args)
             if different:
                 raise InvalidWeights(
                     f"weights of a model with other arguments: {different}"
@@ -418,17 +412,24 @@ class ChgnetEnergyModel(PretrainedModel):
         self.load_parameters(state_dict)
 
     @classmethod
-    def transform(cls) -> Transform:
+    def transform(cls, config: Config | None = None) -> Transform:
         """Transform attaching the graph, the angles and the bonds of the model.
 
-        Atoms closer than 6 Å are connected, periodic images of the atom itself
-        included. Angles are the pairs of edges shorter than 3 Å starting from
-        the same atom. An edge and its reverse are the same bond.
+        Atoms closer than the radius, 6 Å, are connected, periodic images of
+        the atom itself included. Angles are the pairs of edges shorter than
+        the bond radius, 3 Å, starting from the same atom. An edge and its
+        reverse are the same bond.
+
+        Args:
+            config: Configuration of the model the graph is for. The one of
+                config.yaml by default.
         """
+        graph = (config or Config.load()).graph
+
         return Compose(
             [
-                AddRadiusGraph(RADIUS, self_images=True),
-                AddTriplets(radius=BOND_RADIUS, strict=True),
+                AddRadiusGraph(graph.radius, self_images=True),
+                AddTriplets(radius=graph.bond_radius, strict=True),
                 AddBonds(),
             ]
         )

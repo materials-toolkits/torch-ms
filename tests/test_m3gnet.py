@@ -17,15 +17,7 @@ from torchms.data.augmentation import (
     make_supercell,
 )
 from torchms.models.estimator import weights
-from torchms.models.m3gnet import InvalidWeights, M3gnetEnergyModel
-from torchms.models.m3gnet.model import (
-    ELEMENTS,
-    MAX_L,
-    MAX_N,
-    MODEL_ARGS,
-    RADIUS,
-    THREE_BODY_RADIUS,
-)
+from torchms.models.m3gnet import Config, InvalidWeights, M3GNet
 from torchms.models.layers.basis import (
     SphericalBesselBasis,
     legendre,
@@ -62,10 +54,10 @@ def generator(seed: int = 0) -> torch.Generator:
 
 
 @pytest.fixture(scope="module")
-def model() -> M3gnetEnergyModel:
+def model() -> M3GNet:
     """Model with random weights."""
     torch.manual_seed(0)
-    return M3gnetEnergyModel().eval().requires_grad_(False)
+    return M3GNet().eval().requires_grad_(False)
 
 
 def test_pinned_checkpoints(tmp_path):
@@ -122,18 +114,25 @@ def test_legendre():
 
 
 def test_radial_basis_is_orthonormal():
-    basis = SphericalBesselBasis(MAX_L, MAX_N, RADIUS).double()
-    distance = torch.linspace(1e-4, RADIUS, 20001, dtype=torch.float64)
+    config = Config.load()
+    basis = SphericalBesselBasis(
+        config.model.max_l, config.model.max_n, config.graph.radius
+    ).double()
+    distance = torch.linspace(1e-4, config.graph.radius, 20001, dtype=torch.float64)
     values = basis(distance)
 
-    assert values.shape == (len(distance), MAX_L * MAX_N)
+    assert values.shape == (len(distance), config.model.max_l * config.model.max_n)
 
     # functions of the same degree are orthonormal for the measure r^2 dr
     weight = distance**2 * (distance[1] - distance[0])
-    for degree in range(MAX_L):
-        block = values[:, degree * MAX_N : (degree + 1) * MAX_N]
+    for degree in range(config.model.max_l):
+        block = values[
+            :, degree * config.model.max_n : (degree + 1) * config.model.max_n
+        ]
         gram = block.T @ (block * weight.unsqueeze(-1))
-        assert torch.allclose(gram, torch.eye(MAX_N, dtype=torch.float64), atol=1e-3)
+        assert torch.allclose(
+            gram, torch.eye(config.model.max_n, dtype=torch.float64), atol=1e-3
+        )
 
 
 # the model with random weights
@@ -148,15 +147,16 @@ def test_model_output(model):
 
 
 def test_model_graphs(model):
+    config = Config.load()
     batch = make_batch()
     graph, distance, angles, cosine = model.graphs(model.transform()(batch))
     triplet_index = angles.index
 
-    assert (distance <= RADIUS).all()
+    assert (distance <= config.graph.radius).all()
     assert torch.allclose(distance, graph.edges_distances())
 
     assert triplet_index.shape[1] > 0
-    assert (distance[triplet_index] <= THREE_BODY_RADIUS).all()
+    assert (distance[triplet_index] <= config.graph.three_body_radius).all()
     assert (triplet_index[0] != triplet_index[1]).all()
     assert (
         graph.edge_index[0, triplet_index[0]] == graph.edge_index[0, triplet_index[1]]
@@ -193,6 +193,7 @@ def test_model_energy_of_a_supercell(model):
 
 def test_model_unknown_element(model):
     # polonium is not an element of the model
+    config = Config.load()
     structures = Structures(
         lattice=torch.eye(3).unsqueeze(0) * 3.0, x=torch.zeros(1, 3), z=[84]
     )
@@ -200,14 +201,19 @@ def test_model_unknown_element(model):
     with pytest.raises(ValueError, match="not supported"):
         predict(model, structures)
 
-    assert len(ELEMENTS) == 89 and 84 not in ELEMENTS and 94 in ELEMENTS
+    assert (
+        len(config.model.atomic_numbers()) == 89
+        and 84 not in config.model.atomic_numbers()
+        and 94 in config.model.atomic_numbers()
+    )
 
 
 def test_load_pretrained_checks_the_parameters(model):
+    config = Config.load()
     state_dict = dict(model.state_dict())
 
-    other = M3gnetEnergyModel()
-    other.load_pretrained(state_dict, MODEL_ARGS)
+    other = M3GNet()
+    other.load_pretrained(state_dict, config.upstream.model_args)
     other.eval()
     with torch.no_grad():
         assert torch.allclose(
@@ -215,10 +221,14 @@ def test_load_pretrained_checks_the_parameters(model):
         )
 
     with pytest.raises(InvalidWeights, match="other arguments"):
-        other.load_pretrained(state_dict, {**MODEL_ARGS, "threebody_cutoff": 3.0})
+        other.load_pretrained(
+            state_dict, {**config.upstream.model_args, "threebody_cutoff": 3.0}
+        )
 
     with pytest.raises(InvalidWeights, match="other arguments"):
-        other.load_pretrained(state_dict, {**MODEL_ARGS, "element_types": ("H", "C")})
+        other.load_pretrained(
+            state_dict, {**config.upstream.model_args, "element_types": ("H", "C")}
+        )
 
     with pytest.raises(InvalidWeights, match="Unexpected"):
         other.load_pretrained({**state_dict, "unknown.weight": torch.zeros(1)})
@@ -249,11 +259,11 @@ def test_bessel_roots_match_matgl():
 
 
 @pytest.fixture(scope="module")
-def pretrained() -> M3gnetEnergyModel:
+def pretrained() -> M3GNet:
     if not all(path.exists() for path in weights.checkpoint_paths("m3gnet", NAME)):
         pytest.skip(f"weights of {NAME} are not in the cache")
 
-    return M3gnetEnergyModel.from_pretrained(NAME, device="cpu")
+    return M3GNet.from_pretrained(NAME, device="cpu")
 
 
 @pytest.mark.timeout(120)

@@ -84,9 +84,9 @@ Read these before designing anything; the conventions are in the code, not all i
 
 | Read | For |
 |---|---|
-| `src/torchms/models/estimator/pretrained.py` | `PretrainedModel`: `transform()`, `GRAPH_FIELDS`, `check_graphs`, `from_pretrained`, `load_checkpoint`, `load_parameters`; `element_table`, `element_index`, `different_arguments` |
-| `src/torchms/models/estimator/config.py`, `weights.py` | `load_config(__file__)`, `download(model, name, cache)`, the SHA-256 check, the cache |
-| the closest existing port: `model.py`, `config.yaml`, `__init__.py` | the shape of a port |
+| `src/torchms/models/estimator/pretrained.py` | `PretrainedModel`: `CONFIG`, `config`, `transform(config)`, `GRAPH_FIELDS`, `check_graphs`, `from_pretrained`, `load_checkpoint`, `load_parameters`; `element_table`, `element_index`, `different_arguments`, `check_configuration` |
+| `src/torchms/models/estimator/config.py`, `weights.py` | `YamlConfig` (`load()`, `from_mapping`), `download(model, name, cache)`, the SHA-256 check, the cache |
+| the closest existing port: `model.py`, `config.py`, `config.yaml`, `__init__.py` | the shape of a port |
 | its `tests/test_<name>.py` and `scripts/reference_<name>.py` | the shape of its tests |
 | its page `docs/models/<name>.md` | what is reported about a port |
 | `src/torchms/graph/transforms.py`, `graph.py` (docstrings) | what graphs and aggregations exist |
@@ -112,8 +112,9 @@ with them. Note each one for the documentation.
 
 ```
 src/torchms/models/<name>/
-├── __init__.py     # docstring naming the upstream and its license; exports the model
+├── __init__.py     # docstring naming the upstream and its license; exports the model and Config
 ├── model.py        # the network, a subclass of PretrainedModel
+├── config.py       # Config: a frozen dataclass with the fields of config.yaml
 ├── config.yaml     # every value: weights, graph, hyperparameters, upstream arguments
 └── LICENSE         # license of the upstream project
 scripts/reference_<name>.py     # runs the original, once, outside of the project
@@ -136,14 +137,14 @@ What loads weights is shared, in `torchms.models.estimator`: `pretrained.py`
 
 A network which another model could reuse (an encoder, a decoder, a known architecture as
 DimeNet++ or GemNet-T) goes to `models/layers/<name>.py`, not in the directory of the port.
-A layer reads no `config.yaml`: it takes a frozen dataclass of its hyperparameters
-(`DimeNetConfig`, `GemNetConfig`), which the port builds from its own `config.yaml`
-(`ENCODER = DimeNetConfig(out_channels=LATENT_DIM, **CONFIG["encoder"])` in
-`models/cdvae/model.py`). The names of its modules still follow upstream.
+A layer reads no `config.yaml`: it takes a frozen dataclass of its hyperparameters, the
+`Config` of its module (`dimenet.Config`, `gemnet.Config`), which the `Config` of the port
+builds from its own sections (`encoder_config()` and `decoder_config()` in
+`models/cdvae/config.py`). The names of its modules still follow upstream.
 
 ### config.yaml
 
-`model.py` has the names, `config.yaml` has the values: no radius, width, number of layers
+`config.py` has the names and the types, `config.yaml` has the values: no radius, width, number of layers
 or URL is written in Python. Same sections as the existing files:
 
 ```yaml
@@ -171,13 +172,49 @@ upstream:                        # arguments stored with the weights, checked at
 ```
 
 Use YAML anchors so that a value shared by the graph, the model and the upstream arguments
-is written once. `model.py` reads it at import, `CONFIG = load_config(__file__)`, into
-module constants (`RADIUS: float = CONFIG["graph"]["radius"]`).
+is written once.
+
+### config.py
+
+No module keeps a value of the file in a global variable: nothing as
+`CONFIG = load_config(__file__)` or `RADIUS = CONFIG["graph"]["radius"]`. `config.py` has a
+frozen dataclass per section of the file and one for the file, always named `Config`: it
+is `cdvae.Config` or `m3gnet.Config` at the call site, never `CdvaeConfig`.
+
+```python
+@dataclass(frozen=True)
+class GraphConfig:            # section "graph"
+    radius: float
+
+@dataclass(frozen=True)
+class NetworkConfig:          # section "model"
+    latent_dim: int
+
+@dataclass(frozen=True, kw_only=True)
+class Config(YamlConfig):     # default_weights and unused_parameters are inherited
+    graph: GraphConfig
+    model: NetworkConfig
+    upstream: UpstreamConfig  # model_args: dict[str, object], a mapping by nature
+```
+
+`Config.load()` reads the file once and is strict: a key without field, a field without
+key and a value of another type are errors, so the dataclass and the file cannot drift.
+Every field has a line in the docstring of its class. What is computed from the values
+(a list of atomic numbers from ranges, the `Config` of a shared layer, the table of the
+parameters of upstream) is a method of the `Config` or of its section, with a doctest.
 
 ## 6. Writing model.py
 
 Start the file with the attribution header of the existing ports: derived from which
 project, copyright, license, then "Changes:" with what was removed and replaced.
+
+**The model is built from its `Config`.** `CONFIG = Config` on the class,
+`__init__(self, config: Config | None = None)` which calls `super().__init__(config)` and
+then reads `self.config`: without argument it is the one of `config.yaml`. Every sub-module
+which needs a value takes the `Config`, a section or the value as an argument of its
+constructor; an argument of a method whose default is a value of the file is `None` by
+default and falls back on `self.config`. `transform` is a classmethod
+`transform(cls, config: Config | None = None)`.
 
 **Name modules and parameters as upstream does**, so that the official state dict loads
 with `load_parameters` (strict) and nothing is renamed by hand. Heads which are left out
@@ -198,9 +235,14 @@ dataset. The class gives the transform instead:
 GRAPH_FIELDS = ("graph", "triplets")
 
 @classmethod
-def transform(cls) -> Transform:
+def transform(cls, config: Config | None = None) -> Transform:
+    graph = (config or Config.load()).graph
+
     return Compose(
-        [AddRadiusGraph(RADIUS, self_images=True), AddTriplets(radius=THREE_BODY_RADIUS)]
+        [
+            AddRadiusGraph(graph.radius, self_images=True),
+            AddTriplets(radius=graph.three_body_radius),
+        ]
     )
 ```
 

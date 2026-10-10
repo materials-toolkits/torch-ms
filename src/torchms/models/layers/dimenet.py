@@ -46,7 +46,7 @@ from torchms.models.layers.basis import (
 
 
 @dataclass(frozen=True)
-class DimeNetConfig:  # pylint: disable=too-many-instance-attributes
+class Config:  # pylint: disable=too-many-instance-attributes
     """Hyperparameters of a DimeNet++.
 
     Args:
@@ -100,7 +100,7 @@ def envelope(
 class BesselBasisLayer(nn.Module):
     """Radial basis of the length of a bond, with learned frequencies."""
 
-    def __init__(self, config: DimeNetConfig):
+    def __init__(self, config: Config):
         super().__init__()
         self.config = config
         self.freq = nn.Parameter(math.pi * torch.arange(1.0, config.num_radial + 1.0))
@@ -122,7 +122,7 @@ class SphericalBasisLayer(nn.Module):
     radius of 1: its normalization is undone.
     """
 
-    def __init__(self, config: DimeNetConfig):
+    def __init__(self, config: Config):
         super().__init__()
         self.config = config
         self.basis = SphericalBesselBasis(
@@ -154,7 +154,7 @@ class SphericalBasisLayer(nn.Module):
 class EmbeddingBlock(nn.Module):
     """Initial features of the bonds, from their two atoms and their length."""
 
-    def __init__(self, config: DimeNetConfig):
+    def __init__(self, config: Config):
         super().__init__()
         self.act = nn.SiLU()
         # indexed by the atomic number itself
@@ -184,7 +184,7 @@ class EmbeddingBlock(nn.Module):
 class ResidualLayer(nn.Module):
     """Two layers added to their input."""
 
-    def __init__(self, config: DimeNetConfig):
+    def __init__(self, config: Config):
         super().__init__()
         self.act = nn.SiLU()
         self.lin1 = nn.Linear(config.hidden_dim, config.hidden_dim)
@@ -197,7 +197,7 @@ class ResidualLayer(nn.Module):
 class InteractionPPBlock(nn.Module):
     """Update of a bond from the bonds which follow it."""
 
-    def __init__(self, config: DimeNetConfig):
+    def __init__(self, config: Config):
         super().__init__()
         self.act = nn.SiLU()
 
@@ -253,7 +253,7 @@ class InteractionPPBlock(nn.Module):
 class OutputPPBlock(nn.Module):
     """Output of each atom from the bonds leaving it."""
 
-    def __init__(self, config: DimeNetConfig):
+    def __init__(self, config: Config):
         super().__init__()
         self.act = nn.SiLU()
 
@@ -286,7 +286,7 @@ class DimeNetPlusPlus(nn.Module):
         config: Hyperparameters of the network.
     """
 
-    def __init__(self, config: DimeNetConfig):
+    def __init__(self, config: Config):
         super().__init__()
         self.config = config
         self.rbf = BesselBasisLayer(config)

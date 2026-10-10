@@ -15,8 +15,7 @@ from torchms.data.augmentation import (
     make_supercell,
 )
 from torchms.models.estimator import weights
-from torchms.models.chgnet import ChgnetEnergyModel, InvalidWeights
-from torchms.models.chgnet.model import BOND_RADIUS, MODEL_ARGS, RADIUS
+from torchms.models.chgnet import CHGNet, Config, InvalidWeights
 from torchms.graph.line_graph import reverse_edges
 
 
@@ -48,13 +47,13 @@ def generator(seed: int = 0) -> torch.Generator:
 
 
 @pytest.fixture(scope="module")
-def model() -> ChgnetEnergyModel:
+def model() -> CHGNet:
     """Model with random weights."""
     torch.manual_seed(0)
-    return ChgnetEnergyModel().eval().requires_grad_(False)
+    return CHGNet().eval().requires_grad_(False)
 
 
-def per_atom(model: ChgnetEnergyModel, structures: Structures) -> torch.Tensor:
+def per_atom(model: CHGNet, structures: Structures) -> torch.Tensor:
     return predict(model, structures) / structures.num_atoms
 
 
@@ -80,6 +79,7 @@ def test_model_output(model):
 
 
 def test_model_graphs(model):
+    config = Config.load()
     batch = make_batch()
     graph, undirected, bond_length, triplets, cosines = model.graphs(
         model.transform()(batch)
@@ -88,7 +88,7 @@ def test_model_graphs(model):
     triplet_index = triplets.index
     distance = graph.edges_distances()
 
-    assert (distance <= RADIUS).all()
+    assert (distance <= config.graph.radius).all()
 
     # an edge and its reverse are one bond
     assert (edge_bond[reverse_edges(graph)] == edge_bond).all()
@@ -98,7 +98,7 @@ def test_model_graphs(model):
 
     # angles between two different short edges around the same atom
     assert triplet_index.shape[1] > 0
-    assert (distance[triplet_index] < BOND_RADIUS).all()
+    assert (distance[triplet_index] < config.graph.bond_radius).all()
     assert (triplet_index[0] != triplet_index[1]).all()
     assert (
         graph.edge_index[0, triplet_index[0]] == graph.edge_index[0, triplet_index[1]]
@@ -145,11 +145,12 @@ def test_model_without_angles(model):
 
 
 def test_load_pretrained_checks_the_parameters(model):
+    config = Config.load()
     state_dict = dict(model.state_dict())
     state_dict["site_wise.weight"] = torch.zeros(1, 64)
 
-    other = ChgnetEnergyModel()
-    other.load_pretrained(state_dict, MODEL_ARGS)
+    other = CHGNet()
+    other.load_pretrained(state_dict, config.upstream.model_args)
     other.eval()
     with torch.no_grad():
         assert torch.allclose(
@@ -157,7 +158,9 @@ def test_load_pretrained_checks_the_parameters(model):
         )
 
     with pytest.raises(InvalidWeights, match="other arguments"):
-        other.load_pretrained(state_dict, {**MODEL_ARGS, "atom_graph_cutoff": 5})
+        other.load_pretrained(
+            state_dict, {**config.upstream.model_args, "atom_graph_cutoff": 5}
+        )
 
     with pytest.raises(InvalidWeights, match="Unexpected"):
         other.load_pretrained({**state_dict, "unknown.weight": torch.zeros(1)})
@@ -182,11 +185,11 @@ def reference_structures() -> tuple[Structures, dict[str, np.ndarray]]:
 
 
 @pytest.fixture(scope="module")
-def pretrained() -> ChgnetEnergyModel:
+def pretrained() -> CHGNet:
     if not weights.checkpoint_paths("chgnet", NAME)[0].exists():
         pytest.skip(f"weights of {NAME} are not in the cache")
 
-    return ChgnetEnergyModel.from_pretrained(NAME, device="cpu")
+    return CHGNet.from_pretrained(NAME, device="cpu")
 
 
 @pytest.mark.timeout(120)

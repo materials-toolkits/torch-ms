@@ -6,9 +6,13 @@
 
 ::: torchms.models.orb.model
 
+::: torchms.models.orb.config
+
 ### MACE
 
 ::: torchms.models.mace.model
+
+::: torchms.models.mace.config
 
 ::: torchms.models.mace.reader
 
@@ -16,13 +20,19 @@
 
 ::: torchms.models.m3gnet.model
 
+::: torchms.models.m3gnet.config
+
 ### CHGNet
 
 ::: torchms.models.chgnet.model
 
+::: torchms.models.chgnet.config
+
 ### ALIGNN
 
 ::: torchms.models.alignn.model
+
+::: torchms.models.alignn.config
 
 ## Generative models
 
@@ -30,11 +40,23 @@
 
 ::: torchms.models.cdvae.model
 
+::: torchms.models.cdvae.config
+
+### DiffCSP
+
+::: torchms.models.diffcsp.model
+
+::: torchms.models.diffcsp.config
+
 ## Layers
 
 ### Bases
 
 ::: torchms.models.layers.basis
+
+### CSPNet
+
+::: torchms.models.layers.cspnet
 
 ### DimeNet++
 
