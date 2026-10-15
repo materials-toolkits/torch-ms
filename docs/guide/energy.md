@@ -25,6 +25,10 @@ print(estimator.hull_source)
 # a dataset: total energy in eV and energy above the hull in eV/atom
 energy, above = estimator.predict_energy_above_hull(load_dataset("mp-20", "test"))
 
+# the same for a batch of Structures, on any device: it is estimated in
+# batches of max_atoms atoms copied to the device of the model
+energy, above = estimator.predict_energy_above_hull(load_dataset("mp-20", "test")[:32])
+
 # a batch of Structures on the device of the model
 above = estimator.energy_above_hull(structures)
 ```

@@ -70,6 +70,45 @@ def atom_batches(
     return list(zip(bounds[:-1], bounds[1:]))
 
 
+def _num_atoms(
+    dataset: HDF5Dataset | Structures, indices: Int[np.ndarray, "n"]
+) -> Int[np.ndarray, "n"]:
+    """Number of atoms of the structures selected, in the order of indices."""
+    if isinstance(dataset, Structures):
+        return dataset.num_atoms.cpu().numpy()[indices]
+
+    # the arrays of the file have a row per structure of the file
+    return dataset.dataset("num_atoms")[:][dataset.rows(indices)]
+
+
+def _atomic_numbers(
+    dataset: HDF5Dataset | Structures, indices: Int[np.ndarray, "n"]
+) -> Int[np.ndarray, "n_atoms"]:
+    """Atomic numbers of the atoms of the structures selected, in their order."""
+    if isinstance(dataset, Structures):
+        first = dataset.ptr[:-1].cpu().numpy()[indices]
+        z = dataset.z.cpu().numpy()
+    else:
+        first = dataset.dataset("ptr")[:][dataset.rows(indices)]
+        z = dataset.dataset("z")[:]
+
+    num_atoms = _num_atoms(dataset, indices)
+    start = np.cumsum(num_atoms) - num_atoms
+    return z[np.repeat(first - start, num_atoms) + np.arange(int(num_atoms.sum()))]
+
+
+def _batch(
+    dataset: HDF5Dataset | Structures, indices: Int[np.ndarray, "n"]
+) -> Structures:
+    """Batch of the structures selected, on the device of the dataset."""
+    if isinstance(dataset, Structures):
+        # the graph is not selected with the structures: the estimator builds it
+        index = torch.as_tensor(indices, device=dataset.device())
+        return dataset.without_graphs().select(index)
+
+    return dataset[indices]
+
+
 class EnergyEstimator:
     """Total energy and energy above the hull of crystal structures, from a
     pretrained model.
@@ -112,7 +151,7 @@ class EnergyEstimator:
     # batch of structures on the device of the model
     above = estimator.energy_above_hull(structures)
 
-    # dataset
+    # dataset, or batch of structures on any device
     energy, above = estimator.predict_energy_above_hull(HDF5Dataset("structures.hdf5"))
     ```
     """
@@ -274,7 +313,7 @@ class EnergyEstimator:
 
     def predict(
         self,
-        dataset: HDF5Dataset,
+        dataset: HDF5Dataset | Structures,
         indices: Int[np.ndarray, "n"] | None = None,
         max_atoms: int = 1500,
         progress: bool = False,
@@ -282,7 +321,9 @@ class EnergyEstimator:
         """Estimate the total energy of structures of a dataset, in eV.
 
         Args:
-            dataset: Dataset of structures.
+            dataset: Dataset of structures, or a batch of Structures on any
+                device: its batches of max_atoms atoms are copied to the
+                device of the model one at a time.
             indices: Structures to estimate, in ascending order, all by default.
             max_atoms: Number of atoms of a batch, limits the memory used.
             progress: Show a progress bar.
@@ -297,15 +338,14 @@ class EnergyEstimator:
         if len(indices) > 1 and (np.diff(indices) <= 0).any():
             raise ValueError("indices must be in ascending order")
 
-        # the arrays of the file have a row per structure of the file
-        num_atoms = dataset.dataset("num_atoms")[:][dataset.rows(indices)]
+        num_atoms = _num_atoms(dataset, indices)
         energy = np.zeros(len(indices), dtype=np.float64)
 
         progress_bar = tqdm.tqdm(
             total=len(indices), unit="struct", disable=not progress
         )
         for start, stop in atom_batches(num_atoms, max_atoms):
-            structures = to_device(dataset[indices[start:stop]], self.device)
+            structures = to_device(_batch(dataset, indices[start:stop]), self.device)
             energy[start:stop] = self(structures).cpu().numpy()
             progress_bar.update(stop - start)
         progress_bar.close()
@@ -351,7 +391,7 @@ class EnergyEstimator:
 
     def predict_energy_above_hull(
         self,
-        dataset: HDF5Dataset,
+        dataset: HDF5Dataset | Structures,
         indices: Int[np.ndarray, "n"] | None = None,
         max_atoms: int = 1500,
         num_workers: int = 1,
@@ -360,7 +400,9 @@ class EnergyEstimator:
         """Estimate the energy above the hull of structures of a dataset.
 
         Args:
-            dataset: Dataset of structures.
+            dataset: Dataset of structures, or a batch of Structures on any
+                device: its batches of max_atoms atoms are copied to the
+                device of the model one at a time.
             indices: Structures to estimate, in ascending order, all by default.
             max_atoms: Number of atoms of a batch, limits the memory used.
             num_workers: Number of processes computing the hulls.
@@ -382,16 +424,13 @@ class EnergyEstimator:
 
         energy = self.predict(dataset, indices, max_atoms, progress)
 
-        # atoms of the selected structures, in the same order
-        rows = dataset.rows(indices)
-        num_atoms = dataset.dataset("num_atoms")[:][rows]
-        first = dataset.dataset("ptr")[:][rows]
-        start = np.cumsum(num_atoms) - num_atoms
-        atoms = np.repeat(first - start, num_atoms) + np.arange(int(num_atoms.sum()))
-        z = dataset.dataset("z")[:][atoms]
-
         above = energy_above_reference(
-            hull, z, num_atoms, energy, num_workers, progress
+            hull,
+            _atomic_numbers(dataset, indices),
+            _num_atoms(dataset, indices),
+            energy,
+            num_workers,
+            progress,
         )
 
         return energy, above
