@@ -3,14 +3,20 @@
 # Catalyst Project, Copyright (c) Facebook, Inc. and its affiliates, MIT
 # license (see LICENSE in this directory).
 #
+# The cosines of the edges with the lattice vectors and the read-out of the
+# lattice are derived from MatterGen (https://github.com/microsoft/mattergen),
+# Copyright (c) Microsoft Corporation, MIT license, whose GemNet-T comes from
+# the same Open Catalyst Project.
+#
 # Changes: this file is a rewrite of the GemNet-T of cdvae
-# (cdvae/pl_modules/gemnet), for inference only. The graph, its triplets and
-# its pairs of reverse edges are read from torchms Structures instead of being
-# built by the network, the sums over the triplets are aggregations instead of
-# padded matrices, the harmonics are computed with torch instead of sympy, and
-# the energy read-out, the fitting of the scaling factors and the other bases
-# are removed. Names of modules and parameters follow cdvae to load its
-# weights.
+# (cdvae/pl_modules/gemnet), and of the additions of MatterGen
+# (mattergen/common/gemnet/gemnet.py), for inference only. The graph, its
+# triplets and its pairs of reverse edges are read from torchms Structures
+# instead of being built by the network, the sums over the triplets are
+# aggregations instead of padded matrices, the harmonics are computed with
+# torch instead of sympy, and the energy read-out, the fitting of the scaling
+# factors and the other bases are removed. Names of modules and parameters
+# follow cdvae and MatterGen to load their weights.
 """GemNet-T, a network on the edges of a symmetric graph and on their triplets.
 
 Features live on the atoms and on the edges of a symmetric graph. A block
@@ -20,13 +26,20 @@ atoms from their edges and the edges from their atoms. Each edge gives a
 scalar: their sum along the directions of the edges of an atom is a vector.
 The network also reads a vector of each structure, given to all its atoms.
 
+MatterGen adds two things, which a Config turns on: the edges also read the
+cosines of their angles with the three lattice vectors, and a read-out gives a
+symmetric 3 x 3 matrix for each structure, a sum over its edges of a scalar
+times the outer product of their direction.
+
 GemNet is published in "GemNet: Universal Directional Graph Neural Networks
 for Molecules", Gasteiger, Becker and Günnemann (arXiv:2106.08903). GemNet-T
 is its variant with triplets of atoms.
 
 It is rewritten here from the code of cdvae, which uses it as the decoder of
 CDVAE, see torchms.models.cdvae: the vector of an atom is the direction it
-should move in.
+should move in. MatterGen uses it as the network of its diffusion, see
+torchms.models.mattergen: the matrix of a structure is the score of its
+lattice.
 """
 
 # attributes are named as in cdvae, to load its weights
@@ -69,6 +82,10 @@ class Config:  # pylint: disable=too-many-instance-attributes
         num_atom_layers: Residual layers of the updates of the atoms.
         envelope_exponent: Exponent of the smooth cutoff of the radial basis.
         activation_scale: The SiLU is divided by it.
+        lattice_cosines: If True, the features of an edge also read the
+            cosines of its angles with the lattice vectors, as in MatterGen.
+        predict_lattice: If True, the network also gives a symmetric matrix
+            for each structure, as in MatterGen.
     """
 
     latent_dim: int
@@ -88,6 +105,24 @@ class Config:  # pylint: disable=too-many-instance-attributes
     num_atom_layers: int
     envelope_exponent: int
     activation_scale: float
+    lattice_cosines: bool
+    predict_lattice: bool
+
+
+@dataclass(frozen=True)
+class Output:
+    """What GemNet-T computes for each atom and for each structure.
+
+    Args:
+        features: Features of each atom, shape (n_atoms, hidden_dim).
+        move: Vector of each atom in Å, shape (n_atoms, 3).
+        lattice: Symmetric matrix of each structure, shape (n_struct, 3, 3),
+            None unless Config.predict_lattice.
+    """
+
+    features: Float[torch.Tensor, "n_atoms hidden_dim"]
+    move: Float[torch.Tensor, "n_atoms 3"]
+    lattice: Float[torch.Tensor, "n_struct 3 3"] | None
 
 
 def reverse_features(
@@ -102,6 +137,34 @@ def reverse_features(
     return bonds.aggregate_to_edges(
         bonds.unpool_edges(src, position=1), position=0
     ) + bonds.aggregate_to_edges(bonds.unpool_edges(src, position=0), position=1)
+
+
+def lattice_cosines(
+    directions: Float[torch.Tensor, "n_edges 3"],
+    lattice: Float[torch.Tensor, "n_struct 3 3"],
+    graph: Graph,
+) -> Float[torch.Tensor, "n_edges 3"]:
+    """Cosine of the angle of each edge with each lattice vector of its structure.
+
+    Args:
+        directions: Direction of each edge.
+        lattice: Lattice vectors of each structure, as rows.
+        graph: Graph of the edges.
+
+    Examples:
+        >>> from torchms.data.batching import Structures
+        >>> from torchms.graph.transforms import AddRadiusGraph, edges_vectors
+        >>> structures = AddRadiusGraph(2.0)(Structures.diamond())
+        >>> vectors = edges_vectors(structures.graph)
+        >>> cosines = lattice_cosines(vectors, structures.lattice, structures.graph)
+        >>> cosines.shape, cosines.abs().unique().round(decimals=4)
+        (torch.Size([32, 3]), tensor([0.5774]))
+    """
+    vectors = graph.unpool_senders(graph.unpool_structures(lattice.flatten(1)))
+
+    return torch.cosine_similarity(
+        directions.unsqueeze(1), vectors.view(-1, 3, 3), dim=-1
+    )
 
 
 class ScaledSiLU(nn.Module):
@@ -181,7 +244,10 @@ class RadialBasis(nn.Module):
     def forward(
         self, distance: Float[torch.Tensor, "n_edges"]
     ) -> Float[torch.Tensor, "n_edges num_radial"]:
-        scaled = distance / self.config.radius
+        # times the inverse, as the Open Catalyst Project: the gaussians are
+        # narrow and the network amplifies them, a rounding of the distance
+        # changes its output by 1e-3 in MatterGen
+        scaled = distance * (1.0 / self.config.radius)
         cutoff = polynomial_cutoff(scaled, 1.0, p=self.config.envelope_exponent)
 
         return cutoff.unsqueeze(-1) * self.rbf(scaled)
@@ -341,6 +407,38 @@ class OutputBlock(nn.Module):
         return self.out_forces(x).squeeze(-1)
 
 
+class LatticeOutputBlock(nn.Module):
+    """Matrix of each structure, from a scalar of each of its edges.
+
+    The scalar of an edge, divided by the number of edges of its structure,
+    times the outer product of the direction of the edge with itself, summed
+    over the edges of the structure. MatterGen calls it
+    RBFBasedLatticeUpdateBlockFrac.
+    """
+
+    def __init__(self, config: Config):
+        super().__init__()
+        self.mlp = nn.Sequential(
+            Dense(config.hidden_dim, config.hidden_dim, config.activation_scale),
+            Dense(config.hidden_dim, config.hidden_dim),
+        )
+        self.dense_rbf_F = Dense(config.radial_dim, config.hidden_dim)
+        self.out_forces = Dense(config.hidden_dim, 1)
+
+    def forward(
+        self,
+        m: Float[torch.Tensor, "n_edges d"],
+        rbf: Float[torch.Tensor, "n_edges radial_dim"],
+        outer: Float[torch.Tensor, "n_edges 3 3"],
+        graph: Graph,
+    ) -> Float[torch.Tensor, "n_struct 3 3"]:
+        scalar = self.out_forces(self.mlp(m) * self.dense_rbf_F(rbf)).squeeze(-1)
+
+        return graph.aggregate_edges_to_structures(
+            scalar[:, None, None] * outer, reduce="mean"
+        )
+
+
 class TripletInteraction(nn.Module):
     """Update of an edge from the other edges of its atom, and of its reverse."""
 
@@ -442,7 +540,7 @@ class InteractionBlockTripletsOnly(nn.Module):
         return h, (m + m2) * INV_SQRT_2
 
 
-class GemNetT(nn.Module):
+class GemNetT(nn.Module):  # pylint: disable=too-many-instance-attributes
     """GemNet-T computing features and a vector for each atom."""
 
     def __init__(self, config: Config):
@@ -456,11 +554,24 @@ class GemNetT(nn.Module):
         self.mlp_rbf_h = Dense(config.num_radial, config.radial_dim)
         self.mlp_rbf_out = Dense(config.num_radial, config.radial_dim)
 
+        self.config = config
         self.atom_emb = AtomEmbedding(config)
         self.atom_latent_emb = nn.Linear(
             config.hidden_dim + config.latent_dim, config.hidden_dim
         )
         self.edge_emb = EdgeEmbedding(config.num_radial, config)
+
+        if config.lattice_cosines:
+            self.angle_edge_emb = nn.Sequential(
+                nn.Linear(config.hidden_dim + 3, config.hidden_dim),
+                nn.ReLU(),
+                nn.Linear(config.hidden_dim, config.hidden_dim),
+            )
+        if config.predict_lattice:
+            self.mlp_rbf_lattice = Dense(config.num_radial, config.radial_dim)
+            self.lattice_out_blocks = nn.ModuleList(
+                LatticeOutputBlock(config) for _ in range(config.num_blocks + 1)
+            )
 
         self.out_blocks = nn.ModuleList(
             OutputBlock(config) for _ in range(config.num_blocks + 1)
@@ -469,7 +580,7 @@ class GemNetT(nn.Module):
             InteractionBlockTripletsOnly(config) for _ in range(config.num_blocks)
         )
 
-    def forward(
+    def forward(  # pylint: disable=too-many-locals
         self,
         latent: Float[torch.Tensor, "n_struct latent_dim"],
         element: Int[torch.Tensor, "n_atoms"],
@@ -478,8 +589,9 @@ class GemNetT(nn.Module):
         bonds: EdgeTuples,
         vectors: Float[torch.Tensor, "n_edges 3"],
         cosine: Float[torch.Tensor, "n_triplets"],
-    ) -> tuple[Float[torch.Tensor, "n_atoms d"], Float[torch.Tensor, "n_atoms 3"]]:
-        """Features and vector of each atom.
+        lattice: Float[torch.Tensor, "n_struct 3 3"] | None = None,
+    ) -> Output:
+        """Features and vector of each atom, and matrix of each structure.
 
         Args:
             latent: Latent vector of each structure.
@@ -489,8 +601,16 @@ class GemNetT(nn.Module):
             bonds: Pairs of an edge of the graph and its reverse.
             vectors: Vector of each edge in Å, from its sender.
             cosine: Cosine of the angle of each triplet.
+            lattice: Lattice vectors of each structure, as rows, read with
+                Config.lattice_cosines.
+
+        Raises:
+            ValueError: If the configuration reads the lattice and it is not
+                given.
         """
         distance = vectors.norm(dim=-1)
+        # an edge of cdvae goes to the atom which lists it, from the other one
+        towards = -vectors / distance.unsqueeze(-1)
 
         rbf = self.radial_basis(distance)
         rbf_cbf3, cbf3 = self.cbf_basis3(distance, cosine)
@@ -498,6 +618,12 @@ class GemNetT(nn.Module):
         h = self.atom_emb(element)
         h = self.atom_latent_emb(torch.cat([h, graph.unpool_structures(latent)], dim=1))
         m = self.edge_emb(h, rbf, graph)
+        if self.config.lattice_cosines:
+            if lattice is None:
+                raise ValueError("this GemNet-T reads the lattice: give it")
+            m = self.angle_edge_emb(
+                torch.cat([m, lattice_cosines(towards, lattice, graph)], dim=-1)
+            )
 
         rbf3 = self.mlp_rbf3(rbf)
         rbf_cbf3 = self.mlp_cbf3(rbf_cbf3)
@@ -505,14 +631,41 @@ class GemNetT(nn.Module):
         rbf_out = self.mlp_rbf_out(rbf)
 
         scalar = self.out_blocks[0](m, rbf_out)
-        for int_block, out_block in zip(self.int_blocks, self.out_blocks[1:]):
+        lattice_scores = [self.lattice_score(0, m, rbf, towards, graph)]
+        for i, (int_block, out_block) in enumerate(
+            zip(self.int_blocks, self.out_blocks[1:]), start=1
+        ):
             h, m = int_block(h, m, rbf3, rbf_cbf3, cbf3, rbf_h, graph, angles, bonds)
             scalar = scalar + out_block(m, rbf_out)
+            lattice_scores.append(self.lattice_score(i, m, rbf, towards, graph))
 
         # an atom is moved along its edges, towards itself for a positive scalar
-        towards = -vectors / distance.unsqueeze(-1)
         move = graph.aggregate_edges_to_nodes(
             scalar.unsqueeze(-1) * towards, to="sender"
         )
 
-        return h, move
+        lattice_score = None
+        if self.config.predict_lattice:
+            lattice_score = lattice_scores[0]
+            for score in lattice_scores[1:]:
+                lattice_score = lattice_score + score
+
+        return Output(h, move, lattice_score)
+
+    def lattice_score(  # pylint: disable=too-many-positional-arguments
+        self,
+        block: int,
+        m: Float[torch.Tensor, "n_edges d"],
+        rbf: Float[torch.Tensor, "n_edges num_radial"],
+        towards: Float[torch.Tensor, "n_edges 3"],
+        graph: Graph,
+    ) -> Float[torch.Tensor, "n_struct 3 3"]:
+        """Matrix of each structure read after a block, zero if not predicted."""
+        if not self.config.predict_lattice:
+            return towards.new_zeros(len(graph.num_atoms), 3, 3)
+
+        outer = towards.unsqueeze(2) * towards.unsqueeze(1)
+
+        return self.lattice_out_blocks[block](
+            m, self.mlp_rbf_lattice(rbf), outer, graph
+        )

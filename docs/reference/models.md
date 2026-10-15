@@ -48,6 +48,12 @@
 
 ::: torchms.models.diffcsp.config
 
+### MatterGen
+
+::: torchms.models.mattergen.model
+
+::: torchms.models.mattergen.config
+
 ## Layers
 
 ### Bases

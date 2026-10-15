@@ -1,0 +1,199 @@
+# MatterGen
+
+MatterGen is the diffusion model of crystals of Zeni, Pinsler, Zügner, Fowler, Horton, Fu
+et al. ([MatterGen](https://github.com/microsoft/mattergen), commit `9242366`, version
+1.0.3, MIT, [Nature 2025](https://doi.org/10.1038/s41586-025-08628-5)), in
+`torchms/models/mattergen/`. Only its base model is rewritten: it generates crystals of
+given numbers of atoms, with their elements, without condition.
+
+| | |
+|---|---|
+| Class | `MatterGen` |
+| Does | samples the elements, the lattice and the coordinates of crystals of given numbers of atoms |
+| Source | [MatterGen](https://github.com/microsoft/mattergen), commit `9242366` (1.0.3) |
+| License | MIT; its diffusion of the elements and its sampler are adapted from Google Research code under Apache-2.0 |
+| Paper | [A generative model for inorganic materials design](https://doi.org/10.1038/s41586-025-08628-5), Nature 639, 624 (2025), [arXiv:2312.03687](https://arxiv.org/abs/2312.03687) |
+| Weights | `mattergen-base`, of the authors (`mattergen_base` on [Hugging Face](https://huggingface.co/microsoft/mattergen)), trained on Alex-MP-20, 461 MB |
+| Network | [GemNet-T](gemnet.md), 512 features, 4 blocks, 44.6 M parameters |
+| Transform | `AddRadiusGraph(7.0, max_image_shift=5)`, `KeepNearestNeighbors(50)`, `MirrorEdges()`, `AddTriplets()`, `AddBonds()` |
+| Difference with the original | a step of the sampling: identical, given the same scores and noise. The network: as near to MatterGen in double precision as MatterGen in single precision is, up to 1.6e-2 on the score of a lattice (values up to 5.6) |
+
+```{.python notest}
+import torch
+
+from torchms.models import MatterGen
+
+model = MatterGen.from_pretrained(device="cuda")
+num_atoms = model.sample_num_atoms(64)      # as the ones of Alex-MP-20, or any numbers
+
+structures = model.sample(num_atoms)         # 1000 steps, 2000 calls of the network
+structures.z                                 # atomic numbers
+structures.lattice                           # (64, 3, 3), in Å, symmetric matrices
+structures.x                                 # fractional coordinates
+```
+
+With a generator of seed 0 on a GPU, 8 crystals of 4 to 18 atoms take 155 s (a GPU of 8 GB)
+and have the compositions Dy4AsSe2Tl, KFeF3, ScMgGaNd, Li2Na2PbF12 (twice LiNaPbF6),
+Pr4CuGa2O11, ZrAs2, Sr2IrRhGa4 and Cu4F10, with 12 to 26 Å³ per atom. These are single
+draws: the accuracy of the model is the one of its paper, it was not measured here.
+
+## The rewrite
+
+A crystal is a lattice, the fractional coordinates of its atoms and their elements. From
+the time 0 to the time 1, the three get noise:
+
+- the lattice goes to a cubic cell of the mean density of the training set, 0.0577 atoms
+  per Å³, by a diffusion which preserves the variance (rates from 0.1 to 20). Its noise is a
+  symmetric matrix, whose variance grows as the number of atoms to the power 2/3;
+- the coordinates get a noise wrapped around the cell, whose level grows geometrically from
+  0.01 to 5, divided by the cube root of the number of atoms;
+- the element of an atom becomes the mask, an element of its own, the 101st, with a
+  probability `t` at the time `t` (an absorbing D3PM of 1000 steps).
+
+The network, [GemNet-T](gemnet.md), reads a noisy crystal and the embedding of its time,
+and gives the scores of the lattice and of the coordinates times their deviations, and the
+scores of the element each atom had at the time 0 (`model(structures, times)`, a
+`Denoised`). Its graph connects an atom to its 50 nearest neighbours closer than 7 Å, its
+own images included; its edges also read their cosines with the lattice vectors, and a
+read-out of its edges gives the score of the lattice.
+
+`sample` starts from `sample_prior`, random lattices and coordinates with every atom
+masked, and makes 1000 steps from the time 1 to the time 1/1000. `sample_step` is one of
+them, with its random draws as a `StepNoise`:
+
+1. `correct`: a Langevin move of the coordinates and of the lattice, with a step computed
+   from the signal to noise ratios 0.4 and 0.2; the lattice is then made symmetric again
+   (`symmetric_lattice`, a polar decomposition);
+2. `predict`: the ancestral step of each diffusion to the time of the next step. An atom
+   keeps its element or, when masked, stays masked or takes an element drawn from the
+   probabilities the network gives (`element_posterior`).
+
+Each of the two calls the network on a graph built for the crystals it is given.
+`correct_given_scores` and `predict_given_scores` are the same steps from given scores.
+After the last step no noise is added, and each atom takes its most probable element:
+these are the crystals MatterGen returns.
+
+Elements are drawn with Gumbel noise: `argmax(logits + gumbel)` is a draw of the
+categorical distribution of these logits. The noise of the last step is `elements=None`.
+
+The number of atoms is not generated. MatterGen draws it from the numbers of atoms of its
+training set, a table of its code; `sample_num_atoms` draws from it: from 1 to 20 atoms.
+
+Not included: the models conditioned on a property (chemical system, space group, band
+gap, magnetic density, bulk modulus, energy above the hull) and the guidance of their
+sampling, the model of MP-20 and the prediction of a structure from its composition, the
+training, the fine-tuning, the datasets and the evaluation. The checkpoint holds only
+tensors and is read with `weights_only=True`. The configuration stored with it is checked:
+the weights of a conditioned model, which has embeddings of properties, are refused.
+
+## Comparison with the original
+
+Compared with MatterGen `9242366` run with torch 2.2.1, on the 40 structures of the tests
+(225 atoms), whole: its loader, its denoiser and its sampler of `sampling_conf/default.yaml`,
+with the mask of the elements its script of generation adds.
+
+### The graph
+
+On the 19 structures where the 50 nearest neighbours of each atom are defined, the graph is
+the one of MatterGen: the same numbers of edges and of triplets, the same edges, the same
+sums of lengths. On the 21 other ones, the 50th and the 51st neighbour of an atom are at the
+same distance and the graphs differ by a few edges, see below.
+
+### The network
+
+**The network amplifies the rounding of its inputs a thousand times.** A length which
+differs by its last bit changes its outputs by 1e-3: the gaussians of the lengths are 0.055
+Å wide, and the trained projections of the bases cancel large terms. MatterGen in single
+precision is itself up to 1.6e-2 from MatterGen in double precision. The tests check that
+the rewrite is as near to MatterGen in double precision as MatterGen in single precision is
+(mean difference at most 1.5 times, largest at most 3 times), on the structures where the
+graph is defined.
+
+| Clean structures at times from 0.001 to 1 (19 structures, 82 atoms) | Rewrite, MatterGen | Rewrite, MatterGen in double | MatterGen, MatterGen in double |
+|---|---|---|---|
+| Scores of the coordinates (values up to 0.27), largest / mean | 3.3e-4 / 1.3e-5 | 1.8e-3 / 7.1e-5 | 1.8e-3 / 7.1e-5 |
+| Score of the lattice (values up to 5.6) | 3.6e-3 / 9.2e-5 | 1.6e-2 / 3.1e-4 | 1.6e-2 / 2.2e-4 |
+| Scores of the elements (values up to 23) | 8.5e-2 / 1.7e-3 | 1.6e-1 / 3.3e-3 | 1.0e-1 / 3.0e-3 |
+
+| Structures with the noise of their time (31 structures, 173 atoms, 118 atoms masked in all) | Rewrite, MatterGen | Rewrite, MatterGen in double | MatterGen, MatterGen in double |
+|---|---|---|---|
+| Scores of the coordinates (values up to 3.4) | 4.6e-2 / 8.1e-4 | 4.3e-2 / 8.1e-4 | 2.5e-2 / 6.4e-4 |
+| Score of the lattice (values up to 2.5) | 3.0e-2 / 3.1e-4 | 1.4e-2 / 1.9e-4 | 2.4e-2 / 4.0e-4 |
+| Scores of the elements (values up to 23) | 3.5e-1 / 4.8e-3 | 3.2e-1 / 4.9e-3 | 2.7e-1 / 3.6e-3 |
+
+MatterGen does not run in double precision as it is: two casts of its graph to single
+precision were changed for this run, see `scripts/reference_mattergen.py`.
+
+The rewrite scales the lengths by the radius as MatterGen does, times its inverse. It
+divided by the radius before, which is one bit away: the score of a lattice then differed
+from the one of MatterGen by 6.2e-2. This is now how [GemNet-T](gemnet.md) does it for
+CDVAE too.
+
+### The sampling
+
+The sampling of 4 crystals of 4, 8, 2 and 6 atoms was run whole, with what MatterGen draws
+and the scores its network gives recorded at 10 steps (0, 1, 2, 100, 300, 500, 700, 900, 998,
+999). Each step starts from what MatterGen had and is given its scores and its noise; the
+elements drawn by MatterGen are selected by the Gumbel noise:
+
+| A step of the sampling, given the scores and the noise of MatterGen | |
+|---|---|
+| Corrector: coordinates and lattice | identical |
+| Probabilities of the elements at the step before (`element_posterior`) | identical |
+| Predictor: coordinates and lattice | identical |
+| Elements after the last step, the most probable ones | identical |
+
+The scores of the rewrite on the crystals of the sampling are compared to the ones of
+MatterGen where no crystal of the batch has a tie of its neighbours (2 of the 20 calls):
+within 1e-2 of the largest value, 1e-4 on average. A sampling is never compared through a
+seed, and whole samplings are not compared: one ulp of difference in the network, amplified
+as above, makes the first steps diverge, when the coordinates move by several cells.
+
+## Behaviours kept from MatterGen
+
+- **The crystals of a batch are not independent.** The step of the Langevin corrector is
+  computed from the mean, over the batch, of the norms of the scores and of the noises: a
+  crystal is sampled differently with other crystals. The scores of the network do not
+  depend on the batch.
+- **The noise of the predictor of the lattice is one number per crystal.** MatterGen draws
+  it in the shape of a coefficient, `(n, 1, 1)`, and makes it symmetric: every element of
+  the diagonal is this number, every other one √2 times it. `StepNoise.predictor_lattice`
+  has one value per crystal.
+- **The graph depends on the order of the atoms.** It is made symmetric from the edges
+  towards atoms of lower index, after the 50 nearest neighbours are kept: when an atom has
+  more than 50 neighbours closer than 7 Å, which is the rule in these cells, permuting the
+  atoms changes the graph. On a graph without this cut, the network follows a permutation.
+- the time is continuous, from 1 to 0.001, and the step of the elements is the integer part
+  of `999 t`;
+- the elements which are not allowed get a score lowered by 1e10: the noble gases,
+  technetium, promethium and everything after bismuth, and the mask. An atom always ends
+  with an element of the 76 others;
+- the embedding of the time has the frequencies stored in the weights, which differ from the
+  ones computed from the configuration by one bit for 13 of 256;
+- the lower bound of `alpha_t / alpha_s`, 0.001, and the `1e-20` added to the probabilities
+  of the elements before their logarithm;
+- the lattice is a symmetric matrix, not reduced; the coordinates are wrapped in the cell
+  after each step.
+
+## Invariances
+
+The scores of the coordinates and of the elements do not change with a rotation of the
+crystal or a translation of its atoms, and the score of the lattice turns with it, `R^T S R`:
+these are tested. They follow a permutation of the atoms on a graph without cut of the
+neighbours, see above.
+
+## Differences with MatterGen
+
+- the noise of a step is drawn in another order, and the elements with Gumbel noise rather
+  than with `torch.distributions.Categorical`: the samples are not the ones of MatterGen for
+  the same seed, their distribution is. MatterGen also draws a sample of the elements from
+  the scores of the network before the one it keeps; it is not drawn here;
+- among neighbours at the same distance, the 50 nearest are not always the ones of
+  MatterGen, which keeps one or the other from the rounding of their distances. In a
+  crystal, the two images of an atom on each side of it are always at the same distance:
+  during the sampling, about one batch of crystals in two has such a tie at a step;
+- two atoms closer than 0.01 Å are an edge here, and give NaN; MatterGen leaves them out;
+- the images of the radius graph are bounded to 5 cells along each lattice vector before
+  they are listed (`max_image_shift`), as in MatterGen: the sampling meets flat cells, which
+  have thousands of images within 7 Å;
+- the graph is built by `torchms.graph`, without the padded matrices of MatterGen.

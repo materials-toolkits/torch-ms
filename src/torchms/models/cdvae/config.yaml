@@ -79,6 +79,10 @@ decoder:
   num_atom_layers: 3                     # residual layers of the updates of the atoms
   envelope_exponent: 5
   activation_scale: 0.6                  # the SiLU is divided by it
+  # the additions of MatterGen: cosines of the edges with the lattice vectors,
+  # and a matrix for each structure
+  lattice_cosines: false
+  predict_lattice: false
 
 # annealed Langevin dynamics, as in scripts/evaluate.py of cdvae
 sampling:

@@ -1,0 +1,896 @@
+"""Tests for the rewrite of the base model of MatterGen."""
+
+from dataclasses import replace
+from pathlib import Path
+
+import numpy as np
+import pytest
+import torch
+import torch.nn.functional as F
+
+from torchms.data import Structures, parse_cif
+from torchms.data.augmentation import (
+    AtomTranslation,
+    LatticeRotation,
+    actions,
+    sampling,
+)
+from torchms.graph.geometry import lattice_heights, symmetric_lattice
+from torchms.graph.line_graph import reverse_edges
+from torchms.graph.sparse import count_by
+from torchms.graph.transforms import (
+    AddRadiusGraph,
+    KeepNearestNeighbors,
+)
+from torchms.models.estimator import weights
+from torchms.models.layers import sinusoidal_frequencies
+from torchms.models.mattergen import (
+    Config,
+    Denoised,
+    InvalidWeights,
+    MatterGen,
+    StepNoise,
+)
+from torchms.models.mattergen.model import symmetric_noise
+
+DATA = Path(__file__).parent / "data"
+NAME = "mattergen-base"
+
+# a network of 512 features on 50 neighbours per atom and their triplets:
+# slower than the default timeout
+pytestmark = pytest.mark.timeout(120)
+
+
+def generator(seed: int = 0) -> torch.Generator:
+    return torch.Generator().manual_seed(seed)
+
+
+def make_structures() -> list[Structures]:
+    with open("tests/cif/triclinic2.cif", "r", encoding="utf-8") as fp:
+        triclinic = parse_cif(fp.read())
+
+    return [Structures.zincblende(), triclinic]
+
+
+def make_batch() -> Structures:
+    return Structures.collate(make_structures())
+
+
+def noisy(structures: Structures, seed: int = 0) -> Structures:
+    """Structures with their atoms moved at random, in the cell."""
+    noise = 0.05 * torch.randn(structures.x.shape, generator=generator(seed))
+
+    return replace(structures.without_graphs(), x=(structures.x + noise) % 1.0)
+
+
+def narrow(config: Config | None = None) -> Config:
+    """Configuration of the same network with fewer features and blocks."""
+    config = config or Config.load()
+
+    return replace(
+        config,
+        model=replace(config.model, hidden_dim=64),
+        decoder={**config.decoder, "num_blocks": 2},
+    )
+
+
+def relatively_close(found: torch.Tensor, expected: torch.Tensor, rtol: float) -> bool:
+    """Whether values are near the expected ones, relatively to the largest one.
+
+    The scores of the lattice of random weights are of order 1e-6.
+    """
+    return float((found - expected).abs().max()) <= rtol * float(expected.abs().max())
+
+
+@pytest.fixture(scope="module")
+def model() -> MatterGen:
+    """Model with random weights, narrower than the pretrained one: as fast as possible."""
+    torch.manual_seed(0)
+    return MatterGen(narrow()).eval().requires_grad_(False)
+
+
+TIMES = torch.tensor([0.05, 0.7])
+
+
+def test_pinned_checkpoints(tmp_path):
+    assert set(weights.CHECKPOINTS["mattergen"]) == {NAME}
+    assert Config.load().default_weights == NAME
+
+    for checkpoint in weights.CHECKPOINTS["mattergen"][NAME]:
+        # a commit of the repository of the authors, not a branch
+        assert checkpoint.url.startswith(
+            "https://huggingface.co/microsoft/mattergen/resolve/"
+            "5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/mattergen_base/"
+        )
+        assert len(checkpoint.sha256) == 64
+
+    paths = weights.checkpoint_paths("mattergen", NAME, tmp_path)
+    assert [path.relative_to(tmp_path).as_posix() for path in paths] == [
+        f"mattergen/{NAME}/last.ckpt",
+        f"mattergen/{NAME}/config.yaml",
+    ]
+
+
+def test_configuration():
+    config = Config.load()
+    network = config.model
+    sections = config.upstream.sections
+
+    # the classes of the diffusion of the elements are the elements and the mask
+    d3pm = "lightning_module.diffusion_module.corruption.discrete_corruptions"
+    assert sections[f"{d3pm}.atomic_numbers.d3pm"]["dim"] == network.num_classes
+    assert network.mask == network.num_elements + 1
+    assert config.elements.num_steps == config.sampling.num_steps
+
+    # elements up to bismuth, without the noble gases, Tc and Pm
+    allowed = set(network.allowed_elements)
+    assert len(allowed) == len(network.allowed_elements) == 76
+    assert max(allowed) == 83 and not allowed & {2, 10, 18, 36, 43, 54, 61}
+
+    assert len(config.sampling.num_atoms_distribution) == 21
+    assert config.sampling.num_atoms_distribution[0] == 0
+    assert sum(config.sampling.num_atoms_distribution) == pytest.approx(1.0)
+
+
+def test_output(model):
+    structures = model.transform()(make_batch())
+    denoised = model(structures, TIMES)
+
+    assert denoised.x.shape == (len(structures.z), 3)
+    assert denoised.lattice.shape == (2, 3, 3)
+    assert denoised.logits.shape == (len(structures.z), 101)
+    for values in (denoised.x, denoised.lattice, denoised.logits):
+        assert values.dtype == torch.float32 and values.isfinite().all()
+
+    # the score of the lattice is symmetric, the elements not allowed and the
+    # mask are lowered
+    assert torch.equal(denoised.lattice, denoised.lattice.transpose(1, 2))
+    assert denoised.lattice.abs().max() > 0
+    allowed = torch.tensor(Config.load().model.allowed_elements) - 1
+    lowered = torch.ones(101, dtype=torch.bool)
+    lowered[allowed] = False
+    assert lowered[-1]
+    assert (denoised.logits[:, lowered] < -1e9).all()
+    assert (denoised.logits[:, ~lowered].abs() < 1e3).all()
+
+
+def test_graph():
+    config = Config.load()
+    structures = MatterGen.transform()(noisy(make_batch()))
+    graph = structures.graph
+
+    assert (graph.edges_distances() <= config.graph.radius).all()
+    assert graph.edge_shift.abs().max() <= config.graph.max_image_shift
+    assert (reverse_edges(graph) >= 0).all()
+    # made symmetric from 50 neighbours per atom: about as many
+    degree = count_by(graph.senders, len(structures.z)).float()
+    assert (
+        0.5 * config.graph.max_neighbors
+        < degree.mean()
+        < 1.5 * config.graph.max_neighbors
+    )
+
+    bonds, triplets = structures.bonds.index, structures.triplets.index
+    assert sorted(bonds.flatten().tolist()) == list(range(int(graph.num_edges.sum())))
+    assert (graph.senders[triplets[0]] == graph.senders[triplets[1]]).all()
+    assert (triplets[0] != triplets[1]).all()
+
+
+def test_graph_of_a_flat_cell(model):
+    # the sampling meets flat cells: their images are bounded before they are
+    # listed, as in MatterGen, and the network still gives numbers
+    flat = Structures(
+        lattice=torch.diag(torch.tensor([4.0, 4.0, 1e-3]))[None],
+        x=torch.tensor([[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]]),
+        z=[8, 26],
+    )
+    structures = model.transform()(flat)
+
+    assert structures.graph.edge_shift.abs().max() <= 5
+    assert model(structures, TIMES[:1]).logits.isfinite().all()
+
+
+def test_depends_on_the_time(model):
+    structures = model.transform()(make_batch())
+    denoised = model(structures, TIMES)
+    other = model(structures, torch.tensor([0.05, 0.2]))
+
+    first = structures.batch == 0
+    assert torch.equal(other.x[first], denoised.x[first])
+    assert torch.equal(other.lattice[0], denoised.lattice[0])
+    assert not torch.allclose(other.x[~first], denoised.x[~first])
+    assert not relatively_close(other.lattice[1], denoised.lattice[1], 1e-3)
+
+
+def test_batch_equals_single(model):
+    transform = model.transform()
+    singles = [
+        model(transform(structure), TIMES[i : i + 1])
+        for i, structure in enumerate(make_structures())
+    ]
+    denoised = model(transform(make_batch()), TIMES)
+
+    for name in ("x", "logits"):
+        expected = torch.cat([getattr(single, name) for single in singles])
+        assert torch.allclose(getattr(denoised, name), expected, atol=1e-4), name
+    expected = torch.cat([single.lattice for single in singles])
+    assert relatively_close(denoised.lattice, expected, 1e-4)
+
+
+def test_follows_a_rotation(model):
+    batch = noisy(make_batch())
+    rotated = LatticeRotation(generator=generator())(batch)
+
+    denoised = model(model.transform()(batch), TIMES)
+    turned = model(model.transform()(rotated), TIMES)
+
+    # the scores of the coordinates are fractional and the elements do not
+    # depend on the orientation; the score of the lattice turns with it
+    assert torch.allclose(turned.x, denoised.x, atol=1e-4)
+    assert torch.allclose(turned.logits, denoised.logits, atol=1e-3)
+    rotation = torch.linalg.solve(batch.lattice, rotated.lattice)
+    expected = rotation.transpose(1, 2) @ denoised.lattice @ rotation
+    assert relatively_close(turned.lattice, expected, 1e-3)
+
+
+def test_translation_invariance(model):
+    batch = noisy(make_batch())
+    translated = AtomTranslation(generator=generator())(batch)
+    assert not torch.allclose(translated.x, batch.x)
+
+    denoised = model(model.transform()(batch), TIMES)
+    moved = model(model.transform()(translated), TIMES)
+
+    assert torch.allclose(moved.x, denoised.x, atol=1e-3)
+    assert torch.allclose(moved.logits, denoised.logits, atol=1e-3)
+    assert relatively_close(moved.lattice, denoised.lattice, 1e-3)
+
+
+def test_follows_a_permutation(model):
+    batch = noisy(make_batch())
+    permutation = sampling.random_permutation(batch.batch, generator())
+    permuted = actions.permute_atoms(batch, permutation)
+    assert not torch.equal(permuted.z, batch.z)
+
+    # on a graph where no neighbour is left out, the network follows the order
+    config = Config.load()
+    config = replace(config, graph=replace(config.graph, max_neighbors=1000))
+    transform = model.transform(config)
+    denoised = model(transform(batch), TIMES)
+    other = model(transform(permuted), TIMES)
+
+    assert relatively_close(other.x, denoised.x[permutation], 1e-3)
+    assert relatively_close(other.lattice, denoised.lattice, 1e-3)
+    assert torch.allclose(other.logits, denoised.logits[permutation], atol=1e-3)
+
+    # with 50 neighbours, the graph is made symmetric from the edges towards
+    # atoms of lower index, as in MatterGen: it depends on the order
+    graph = model.transform()(batch).graph
+    other_graph = model.transform()(permuted).graph
+    assert not torch.equal(graph.num_edges, other_graph.num_edges)
+
+
+def test_reads_the_mask(model):
+    batch = make_batch()
+    masked = replace(batch, z=torch.where(batch.batch == 1, model.mask, batch.z))
+
+    denoised = model(model.transform()(batch), TIMES)
+    other = model(model.transform()(masked), TIMES)
+    assert not torch.allclose(other.logits, denoised.logits)
+
+
+def test_needs_its_graphs(model):
+    with pytest.raises(ValueError, match=r"apply MatterGen.transform\(\)"):
+        model(make_batch(), TIMES)
+
+    with pytest.raises(ValueError, match="bonds"):
+        model(AddRadiusGraph(3.0)(make_batch()), TIMES)
+
+
+def test_unknown_element(model):
+    # the mask is the atomic number 101, there is nothing after it
+    structures = Structures(
+        lattice=torch.eye(3).unsqueeze(0) * 3.0, x=torch.zeros(1, 3), z=[102]
+    )
+
+    with pytest.raises(ValueError, match="not supported"):
+        model(model.transform()(structures), TIMES[:1])
+
+
+# the diffusions
+
+
+def test_embedding_of_the_time(model):
+    # as MatterGen: a sine then a cosine for each frequency
+    embedding = model.embed_time(torch.tensor([0.0, 0.5]))
+    frequencies = sinusoidal_frequencies(64, 10000.0, endpoint=False)
+
+    assert embedding.shape == (2, 64)
+    assert torch.equal(embedding[0, 0::2], torch.zeros(32))
+    assert torch.equal(embedding[0, 1::2], torch.ones(32))
+    assert torch.allclose(embedding[1, 0::2], torch.sin(0.5 * frequencies))
+    assert torch.equal(model.time_frequencies, frequencies)
+
+
+def test_diffusion_of_the_coordinates(model):
+    num_atoms = torch.tensor([1, 8])
+    start = model.coordinate_deviation(torch.zeros(2), num_atoms)
+    end = model.coordinate_deviation(torch.ones(2), num_atoms)
+
+    assert torch.allclose(start, torch.tensor([0.01, 0.005]))
+    assert torch.allclose(end, torch.tensor([5.0, 2.5]))
+
+
+def test_diffusion_of_the_lattice(model):
+    config = Config.load().lattice
+    num_atoms = torch.tensor([1, 8])
+    times = torch.tensor([0.0, 1.0])
+
+    coefficient = model.lattice_mean_coefficient(times)
+    expected = torch.exp(-torch.tensor([0.0, 0.25 * 19.9 + 0.05]))
+    assert torch.allclose(coefficient, expected)
+
+    # a cubic cell of the mean density, with a deviation which grows as the
+    # cube root of the number of atoms
+    mean, variance = model.lattice_limit(num_atoms)
+    volume = torch.linalg.det(mean)
+    assert torch.allclose(volume, num_atoms / config.limit_density, rtol=1e-5)
+    assert torch.allclose(variance[:, 0, 1], 0.25 * num_atoms ** (2 / 3))
+
+    deviation = model.lattice_deviation(times, num_atoms)
+    assert torch.equal(deviation[0], torch.zeros(3, 3))
+    assert torch.allclose(deviation[1], (variance[1] * (1 - expected[1] ** 2)).sqrt())
+
+
+def test_diffusion_of_the_elements(model):
+    # an atom is masked with a probability t / N
+    steps = Config.load().elements.num_steps
+    expected = 1 - torch.arange(steps + 1, dtype=torch.float64) / steps
+
+    assert model.mask_kept.shape == (steps + 1,)
+    assert torch.allclose(model.mask_kept.double(), expected, atol=1e-6)
+
+
+def test_times(model):
+    times, step = model.times(), model.time_step()
+
+    assert times.shape == (1000,)
+    assert times[0] == 1.0 and times[-1] == pytest.approx(1e-3)
+    assert torch.allclose(times[1:] - times[:-1], step.expand(999), atol=1e-6)
+    # after the last step, the time 0
+    assert times[-1] + step <= 0
+
+
+def test_symmetric_noise():
+    noise = torch.randn(1000, 3, 3, generator=generator())
+    symmetric = symmetric_noise(noise)
+
+    assert torch.equal(symmetric, symmetric.transpose(1, 2))
+    # with the variance of the noise
+    assert symmetric.var(dim=0).sub(1).abs().max() < 0.2
+
+
+def test_symmetric_lattice():
+    batch = make_batch()
+    symmetric = symmetric_lattice(batch.lattice)
+
+    assert torch.allclose(symmetric, symmetric.transpose(1, 2), atol=1e-5)
+    # the same cell, rotated
+    gram = batch.lattice @ batch.lattice.transpose(1, 2)
+    assert torch.allclose(symmetric @ symmetric.transpose(1, 2), gram, atol=1e-3)
+    assert torch.allclose(lattice_heights(symmetric), lattice_heights(batch.lattice))
+
+
+def test_element_posterior(model):
+    mask = model.mask
+    logits = torch.randn(3, 101, generator=generator())
+    logits[:, -1] = -1e10
+    probabilities = torch.softmax(logits, dim=-1)
+    z = torch.tensor([mask, 26, mask])
+    steps = torch.tensor([500, 500, 0])
+
+    posterior = torch.softmax(model.element_posterior(z, logits, steps), dim=-1)
+
+    # an element stays, a masked atom can stay masked or take an element in
+    # proportion of its probability at the time 0
+    assert posterior[1, 25] == pytest.approx(1.0)
+    masked = posterior[0, :-1] / posterior[0, :-1].sum()
+    assert torch.allclose(masked, probabilities[0, :-1], atol=1e-6)
+    assert posterior[0, -1] == pytest.approx(500 / 501, abs=1e-4)
+
+    # at the first step, a masked atom takes an element
+    assert posterior[2, -1] < 1e-6
+    assert torch.allclose(posterior[2, :-1], probabilities[2, :-1], atol=1e-5)
+
+
+# sampling with random weights
+
+
+def step_noise(batch: Structures, elements: bool = True, seed: int = 0) -> StepNoise:
+    random = generator(seed)
+    n_struct, n_atoms = len(batch.num_atoms), len(batch.z)
+
+    return StepNoise(
+        corrector_x=torch.randn((n_atoms, 3), generator=random),
+        corrector_lattice=torch.randn((n_struct, 3, 3), generator=random),
+        predictor_x=torch.randn((n_atoms, 3), generator=random),
+        predictor_lattice=torch.randn((n_struct,), generator=random),
+        elements=(
+            -torch.log(-torch.log(torch.rand((n_atoms, 101), generator=random)))
+            if elements
+            else None
+        ),
+    )
+
+
+def test_correct(model):
+    batch = noisy(make_batch())
+    corrected = model.correct(batch, 500, step_noise(batch))
+
+    assert corrected.graph is None
+    assert torch.equal(corrected.z, batch.z)
+    assert torch.allclose(corrected.lattice, corrected.lattice.transpose(1, 2))
+    assert (corrected.x >= 0).all() and (corrected.x < 1).all()
+    assert not torch.allclose(corrected.x, batch.x)
+
+
+def test_corrector_couples_the_crystals(model):
+    # the step of the Langevin corrector is computed from the whole batch, as
+    # in MatterGen: a crystal moves differently with other crystals
+    structures = [noisy(structure) for structure in make_structures()]
+    batch = Structures.collate(structures)
+    noise = step_noise(batch)
+    first = batch.batch == 0
+    alone = StepNoise(
+        corrector_x=noise.corrector_x[first],
+        corrector_lattice=noise.corrector_lattice[:1],
+        predictor_x=noise.predictor_x[first],
+        predictor_lattice=noise.predictor_lattice[:1],
+        elements=None,
+    )
+
+    together = model.correct(batch, 500, noise)
+    single = model.correct(structures[0], 500, alone)
+    assert not torch.allclose(together.x[first], single.x, atol=1e-4)
+
+
+def test_predict(model):
+    batch = noisy(make_batch())
+    masked = replace(batch, z=torch.where(batch.batch == 1, model.mask, batch.z))
+    predicted = model.predict(masked, 500, step_noise(masked))
+
+    assert predicted.graph is None
+    assert (predicted.x >= 0).all() and (predicted.x < 1).all()
+    assert predicted.lattice.isfinite().all()
+    # an atom with an element keeps it
+    assert torch.equal(predicted.z[batch.batch == 0], batch.z[batch.batch == 0])
+
+    # after the last step: no noise, and every atom has an allowed element
+    last = model.predict(masked, 999, step_noise(masked, elements=False))
+    again = model.predict(
+        masked, 999, replace(step_noise(masked, seed=1), elements=None)
+    )
+    assert torch.equal(last.x, again.x)
+    assert torch.equal(last.lattice, again.lattice)
+    assert torch.equal(last.z, again.z)
+    allowed = torch.tensor(Config.load().model.allowed_elements)
+    assert torch.isin(last.z, allowed).all()
+
+
+def short_diffusion(steps: int = 4) -> Config:
+    """Configuration of a diffusion of a few steps: all of them take seconds."""
+    config = narrow()
+
+    return replace(
+        config,
+        elements=replace(config.elements, num_steps=steps),
+        sampling=replace(config.sampling, num_steps=steps),
+    )
+
+
+def test_a_model_follows_its_configuration():
+    config = short_diffusion()
+    short = MatterGen(config)
+
+    assert short.config is config
+    assert short.times().shape == (4,) and short.mask_kept.shape == (5,)
+    assert MatterGen.transform(config) == MatterGen.transform()
+
+    # without argument, the one of config.yaml
+    assert MatterGen().config == Config.load()
+
+    # the weights of the model of the file do not fit
+    with pytest.raises(InvalidWeights, match="size mismatch"):
+        short.load_pretrained(upstream_state(MatterGen()))
+
+
+def test_sample():
+    torch.manual_seed(0)
+    model = MatterGen(short_diffusion()).eval().requires_grad_(False)
+    num_atoms = torch.tensor([3, 1])
+
+    structures = model.sample(num_atoms, generator=generator())
+    assert structures.graph is None
+    assert torch.equal(structures.num_atoms, num_atoms)
+    assert (structures.x >= 0).all() and (structures.x < 1).all()
+    assert structures.lattice.isfinite().all()
+    allowed = torch.tensor(Config.load().model.allowed_elements)
+    assert torch.isin(structures.z, allowed).all()
+
+    # the same draws give the same crystals
+    again = model.sample(num_atoms, generator=generator())
+    assert torch.equal(again.x, structures.x)
+    assert torch.equal(again.lattice, structures.lattice)
+    assert torch.equal(again.z, structures.z)
+    other = model.sample(num_atoms, generator=generator(1))
+    assert not torch.equal(other.x, structures.x)
+
+
+def test_sample_prior(model):
+    num_atoms = torch.tensor([2, 8])
+    structures = model.sample_prior(num_atoms, generator=generator())
+
+    assert (structures.z == model.mask).all()
+    assert (structures.x >= 0).all() and (structures.x < 1).all()
+    assert torch.equal(structures.lattice, structures.lattice.transpose(1, 2))
+
+
+def test_sample_num_atoms(model):
+    num_atoms = model.sample_num_atoms(2000, generator=generator())
+
+    assert num_atoms.shape == (2000,)
+    assert num_atoms.min() >= 1 and num_atoms.max() <= 20
+    # 4 and 12 are the most frequent, 1 and 2 are rare
+    counts = torch.bincount(num_atoms, minlength=21)
+    assert counts[4] > 200 and counts[12] > 200 and counts[1] + counts[2] < 30
+
+
+# the weights
+
+
+def nested(sections: dict[str, dict[str, object]]) -> dict[str, object]:
+    """Configuration of a training with these sections, named with dots."""
+    configuration: dict[str, object] = {}
+    for name, arguments in sections.items():
+        section = configuration
+        for key in name.split("."):
+            section = section.setdefault(key, {})  # type: ignore[assignment]
+        section.update(arguments)  # type: ignore[attr-defined]
+
+    return configuration
+
+
+def upstream_state(model: MatterGen) -> dict[str, torch.Tensor]:
+    """Parameters of a model under the names of MatterGen."""
+    upstream = Config.load().upstream
+    renamed = {new: old for old, new in upstream.renamed_parameters.items()}
+    state = {}
+    for name, values in model.state_dict().items():
+        for new, old in renamed.items():
+            if name.endswith(new):
+                name = name[: -len(new)] + old
+        state[upstream.prefix + name] = values
+
+    return state
+
+
+def test_load_pretrained_checks_the_parameters(model):
+    state = upstream_state(model)
+    configuration = nested(Config.load().upstream.sections)
+    assert "diffusion_module.model.noise_level_encoding.div_term" in state
+    assert "diffusion_module.model.gemnet.radial_basis.rbf.offset" in state
+
+    other = MatterGen(model.config)
+    other.load_pretrained(state, configuration)
+    other.eval()
+    with torch.no_grad():
+        structures = model.transform()(make_batch())
+        assert torch.equal(other(structures, TIMES).x, model(structures, TIMES).x)
+
+    # a model conditioned on a property
+    sections = dict(Config.load().upstream.sections)
+    sections["lightning_module.diffusion_module.model"] = {
+        **sections["lightning_module.diffusion_module.model"],
+        "property_embeddings": {"dft_band_gap": {}},
+    }
+    with pytest.raises(InvalidWeights, match="another configuration") as error:
+        other.load_pretrained(state, nested(sections))
+    assert "property_embeddings" in str(error.value)
+
+    with pytest.raises(InvalidWeights, match="no lightning_module"):
+        other.load_pretrained(state, {})
+
+    with pytest.raises(InvalidWeights, match="outside of"):
+        other.load_pretrained({**state, "ema.weight": torch.zeros(1)})
+
+    with pytest.raises(InvalidWeights, match="Unexpected"):
+        other.load_pretrained(
+            {**state, "diffusion_module.model.property_embeddings.w": torch.zeros(1)}
+        )
+
+    del state["diffusion_module.model.fc_atom.bias"]
+    with pytest.raises(InvalidWeights, match="Missing"):
+        other.load_pretrained(state)
+
+
+# the pretrained model against the real MatterGen
+
+
+def reference() -> tuple[Structures, dict[str, torch.Tensor]]:
+    """Structures of the tests and what MatterGen computed for them."""
+    data = dict(np.load(DATA / "orb_reference.npz"))
+    expected = {
+        name: torch.from_numpy(values)
+        for name, values in np.load(DATA / "mattergen_reference.npz").items()
+    }
+    structures = Structures(
+        lattice=torch.from_numpy(data["lattice"]),
+        x=torch.from_numpy(data["x"]),
+        z=torch.from_numpy(data["z"]),
+        num_atoms=torch.from_numpy(data["num_atoms"]),
+    )
+
+    return structures, expected
+
+
+def neighbours_at_the_same_distance(structures: Structures) -> torch.Tensor:
+    """Structures where the choice of the nearest neighbours of an atom is not defined.
+
+    The last neighbour kept and the first one left out are at the same
+    distance: in a crystal, or for the two images of an atom on each side of
+    it. MatterGen then keeps one or the other from the rounding of their
+    distances and the order of its sort.
+
+    Returns:
+        Mask of these structures, shape (n_struct,).
+    """
+    config = Config.load().graph
+    near = AddRadiusGraph(
+        config.radius, self_images=True, max_image_shift=config.max_image_shift
+    )(structures.without_graphs())
+    graph = KeepNearestNeighbors(config.max_neighbors + 1)(near).graph
+
+    # edges are sorted by atom then by length: the last two of each atom
+    degree = count_by(graph.senders, len(structures.z))
+    last = F.pad(torch.cumsum(degree, dim=0), (1, 0), value=0)[1:] - 1
+    full = degree == config.max_neighbors + 1
+    distance = graph.edges_distances()
+    tie = (distance[last[full]] - distance[last[full] - 1]).abs() < 1e-4
+
+    return count_by(structures.batch[full][tie], len(structures.num_atoms)) > 0
+
+
+def close(found: torch.Tensor, expected: torch.Tensor) -> bool:
+    """Whether values are the expected ones up to the rounding of float32.
+
+    The difference is under 1e-5 of the largest expected value, or 1e-5.
+    """
+    scale = max(1.0, float(expected.abs().max()))
+
+    return float((found - expected).abs().max()) < 1e-5 * scale
+
+
+def close_in_the_cell(found: torch.Tensor, expected: torch.Tensor) -> bool:
+    """Whether fractional coordinates are the expected ones, modulo the cell."""
+    difference = (found - expected + 0.5) % 1.0 - 0.5
+
+    return float(difference.abs().max()) < 1e-5
+
+
+@pytest.fixture(scope="module")
+def pretrained() -> MatterGen:
+    if not all(path.exists() for path in weights.checkpoint_paths("mattergen", NAME)):
+        pytest.skip(f"weights of {NAME} are not in the cache")
+
+    return MatterGen.from_pretrained(NAME, device="cpu")
+
+
+def test_pretrained_frequencies_are_the_ones_of_the_configuration(pretrained):
+    """The weights have their frequencies of the time, computed on another device."""
+    computed = MatterGen().time_frequencies
+    found = pretrained.time_frequencies
+
+    assert torch.allclose(found, computed, rtol=1e-6, atol=0)
+    assert not torch.equal(found, computed)
+
+
+def test_pretrained_graph_matches_mattergen(pretrained):
+    """The graph GemNet-T of MatterGen 9242366 builds, where its neighbours are defined."""
+    structures, expected = reference()
+    defined = ~neighbours_at_the_same_distance(structures)
+    assert defined.sum() >= 15
+
+    graphs = pretrained.transform()(structures)
+    graph = graphs.graph
+
+    assert torch.equal(graph.num_edges[defined], expected["graph_num_edges"][defined])
+    assert torch.equal(
+        graphs.triplets.num_tuples[defined], expected["graph_num_triplets"][defined]
+    )
+    distance_sum = graph.aggregate_edges_to_structures(graph.edges_distances().double())
+    assert torch.allclose(
+        distance_sum[defined], expected["graph_sum_distances"][defined], rtol=1e-6
+    )
+
+
+def as_near_as_mattergen(
+    found: torch.Tensor, single: torch.Tensor, double: torch.Tensor
+) -> bool:
+    """Whether values are as near to MatterGen in double precision as MatterGen is.
+
+    The network is very sensitive to the rounding of its inputs: MatterGen in
+    single precision is up to 1e-2 from MatterGen in double precision, and so
+    is the rewrite, which rounds differently.
+    """
+    ours, theirs = (found.double() - double).abs(), (single.double() - double).abs()
+
+    return bool(ours.mean() < 1.5 * theirs.mean() and ours.max() < 3 * theirs.max())
+
+
+def compare_network(
+    pretrained: MatterGen,
+    structures: Structures,
+    expected: dict[str, torch.Tensor],
+    prefix: str,
+) -> None:
+    defined = ~neighbours_at_the_same_distance(structures)
+    assert defined.sum() >= 15
+    atoms = defined[structures.batch]
+
+    denoised = pretrained(
+        pretrained.transform()(structures), expected[f"{prefix}_times"]
+    )
+    logits = expected[f"{prefix}_pred_logits"]
+    allowed = logits[atoms] > -1e9
+    assert torch.equal(denoised.logits[atoms] > -1e9, allowed)
+
+    for found, name, selected in (
+        (denoised.x[atoms], "x", atoms),
+        (denoised.lattice[defined], "l", defined),
+        (denoised.logits[atoms][allowed], "logits", atoms),
+    ):
+        single = expected[f"{prefix}_pred_{name}"][selected]
+        double = expected[f"{prefix}_double_{name}"][selected]
+        if name == "logits":
+            single, double = single[allowed], double[allowed]
+
+        assert as_near_as_mattergen(found, single, double), name
+
+    # elsewhere the graphs differ by a few edges: the outputs stay near
+    assert (denoised.x - expected[f"{prefix}_pred_x"]).abs().mean() < 0.05
+
+
+def test_pretrained_network_matches_mattergen(pretrained):
+    """The denoiser of MatterGen 9242366, on the structures at times from 0 to 1."""
+    structures, expected = reference()
+    compare_network(pretrained, structures, expected, "clean")
+
+
+def test_pretrained_network_matches_mattergen_on_noisy_structures(pretrained):
+    """The same with the noise of the diffusion at the time of each structure."""
+    structures, expected = reference()
+    noisy_structures = Structures(
+        lattice=expected["noisy_l"],
+        x=expected["noisy_x"],
+        z=expected["noisy_z"],
+        num_atoms=structures.num_atoms,
+    )
+    assert (noisy_structures.z == pretrained.mask).sum() > 20
+
+    compare_network(pretrained, noisy_structures, expected, "noisy")
+
+
+def state(expected: dict[str, torch.Tensor], name: str, step: int) -> Structures:
+    """Crystals of the sampling of MatterGen at one of its saved steps, with their graph."""
+    return MatterGen.transform()(
+        Structures(
+            lattice=expected[f"{name}_l"][step],
+            x=expected[f"{name}_x"][step],
+            z=expected[f"{name}_z"][step],
+            num_atoms=expected["sampling_num_atoms"],
+        )
+    )
+
+
+def recorded_scores(
+    expected: dict[str, torch.Tensor], name: str, step: int
+) -> Denoised:
+    """Scores MatterGen computed for its corrector or its predictor at a saved step."""
+    logits = expected["predictor_score_logits"][step]
+
+    return Denoised(
+        x=expected[f"{name}_score_x"][step],
+        lattice=expected[f"{name}_score_l"][step],
+        logits=logits if name == "predictor" else torch.zeros_like(logits),
+    )
+
+
+def recorded_noise(expected: dict[str, torch.Tensor], step: int) -> StepNoise:
+    """Noise MatterGen drew at a saved step, and Gumbel noise which selects its elements."""
+    chosen = F.one_hot(expected["after_z"][step] - 1, 101).float()
+
+    return StepNoise(
+        corrector_x=expected["corrector_noise_x"][step],
+        corrector_lattice=expected["corrector_noise_l"][step],
+        predictor_x=expected["predictor_noise_x"][step],
+        predictor_lattice=expected["predictor_noise_l"][step],
+        elements=(chosen - 1) * 1e30,
+    )
+
+
+def test_pretrained_steps_match_mattergen(pretrained):
+    """Steps of the sampling of MatterGen, each from its crystals, its scores and its noise."""
+    _, expected = reference()
+    steps = expected["sampling_steps"].tolist()
+    assert torch.allclose(pretrained.times()[steps], expected["sampling_times"])
+
+    for i, step in enumerate(steps):
+        noise = recorded_noise(expected, i)
+
+        # the corrector moves the coordinates and the lattice: the step of each
+        # crystal depends on the other ones
+        corrected = pretrained.correct_given_scores(
+            state(expected, "before", i),
+            step,
+            recorded_scores(expected, "corrector", i),
+            noise,
+        )
+        assert close_in_the_cell(corrected.x, expected["corrected_x"][i]), step
+        assert close(corrected.lattice, expected["corrected_l"][i]), step
+        assert torch.equal(corrected.z, expected["corrected_z"][i])
+
+        # the predictor, from the crystals MatterGen corrected
+        given = state(expected, "corrected", i)
+        times, _ = pretrained.step_times(given, step)
+        element_steps = given.graph.unpool_structures(pretrained.element_steps(times))
+        posterior = pretrained.element_posterior(
+            given.z, expected["predictor_score_logits"][i], element_steps
+        )
+        assert close(posterior, expected["posterior_logits"][i]), step
+
+        scores = recorded_scores(expected, "predictor", i)
+        predicted = pretrained.predict_given_scores(given, step, scores, noise)
+        assert close_in_the_cell(predicted.x, expected["after_x"][i]), step
+        assert close(predicted.lattice, expected["after_l"][i]), step
+
+    # the last step gives the crystals MatterGen returns: without noise, and
+    # each atom with its most probable element
+    last = len(steps) - 1
+    noise = replace(recorded_noise(expected, last), elements=None)
+    scores = recorded_scores(expected, "predictor", last)
+    final = pretrained.predict_given_scores(
+        state(expected, "corrected", last), steps[-1], scores, noise
+    )
+    assert torch.equal(expected["after_x"][-1], expected["mean_x"])
+    assert torch.equal(expected["after_l"][-1], expected["mean_l"])
+    assert torch.equal(final.z, expected["mean_z"])
+    assert close_in_the_cell(final.x, expected["mean_x"])
+    assert close(final.lattice, expected["mean_l"])
+
+
+def test_pretrained_scores_of_the_sampling_match_mattergen(pretrained):
+    """Scores of the crystals of the sampling of MatterGen, where their graphs are defined."""
+    _, expected = reference()
+    steps = expected["sampling_steps"].tolist()
+
+    compared = 0
+    for i, step in enumerate(steps):
+        for name, kind in (("before", "corrector"), ("corrected", "predictor")):
+            crystals = state(expected, name, i)
+            # the step of the corrector depends on every crystal of the batch
+            if neighbours_at_the_same_distance(crystals).any():
+                continue
+
+            times, _ = pretrained.step_times(crystals, step)
+            scores = pretrained.scores(crystals, times)
+            upstream = recorded_scores(expected, kind, i)
+            for found, wanted in (
+                (scores.x, upstream.x),
+                (scores.lattice, upstream.lattice),
+            ):
+                scale = float(wanted.abs().max())
+                assert (found - wanted).abs().max() < 1e-2 * scale, (step, name)
+                assert (found - wanted).abs().mean() < 1e-4 * scale, (step, name)
+            compared += 1
+
+    assert compared >= 2

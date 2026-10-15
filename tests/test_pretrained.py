@@ -176,6 +176,7 @@ def test_checkpoints_are_read_from_the_configurations(tmp_path):
         "alignn",
         "cdvae",
         "diffcsp",
+        "mattergen",
     }
     for model, names in weights.CHECKPOINTS.items():
         for name, files in names.items():

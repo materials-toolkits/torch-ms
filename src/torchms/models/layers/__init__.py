@@ -34,6 +34,8 @@ from torchms.models.layers.basis import (
     periodic_fourier,
     polynomial_cutoff,
     sinusoidal_embedding,
+    sinusoidal_frequencies,
+    sinusoids,
     spherical_harmonics,
 )
 from torchms.models.layers.cspnet import CSPNet
@@ -57,5 +59,7 @@ __all__ = [
     "periodic_fourier",
     "polynomial_cutoff",
     "sinusoidal_embedding",
+    "sinusoidal_frequencies",
+    "sinusoids",
     "spherical_harmonics",
 ]

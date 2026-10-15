@@ -158,6 +158,11 @@ class AddRadiusGraph:
         self_images: If True, an atom is connected to its own periodic images
             closer than the radius.
         geometry: If True, the vector and the length of each edge are attached.
+        max_image_shift: If given, only the images at most this number of
+            cells away along each lattice vector, counted from the coordinates
+            wrapped in the cell, are connected. As KeepNearImages, but the
+            images of a flat cell are bounded before they are listed: without
+            it, a cell 0.001 Å high has thousands of images within a radius.
 
     Examples:
         >>> structures = AddRadiusGraph(3.0, geometry=True)(Structures.zincblende())
@@ -172,10 +177,11 @@ class AddRadiusGraph:
     radius: float
     self_images: bool = False
     geometry: bool = False
+    max_image_shift: int | None = None
 
     def __call__(self, structures: Structures) -> Structures:
         structures = structures.without_graphs()
-        graph = cutoff(structures, self.radius, self.self_images)
+        graph = cutoff(structures, self.radius, self.self_images, self.max_image_shift)
 
         return attach_graph(structures, graph, self.geometry)
 

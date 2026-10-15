@@ -97,6 +97,7 @@ nav:
       - Generative models:
           - CDVAE: models/cdvae.md
           - DiffCSP: models/diffcsp.md
+          - MatterGen: models/mattergen.md
       - Layers:
           - Bases: models/bases.md
           - CSPNet: models/cspnet.md

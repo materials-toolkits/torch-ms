@@ -46,6 +46,8 @@ The Gaunt coefficients are computed in the library by an exact quadrature on the
 |---|---|---|---|
 | `periodic_fourier` | `sin(2 pi k x)` and `cos(2 pi k x)` of each coordinate, of period 1 | DiffCSP | CSPNet |
 | `sinusoidal_embedding` | sines and cosines of a time at geometric frequencies | DiffCSP | DiffCSP |
+| `sinusoidal_frequencies` | these frequencies, from 1 down to `1 / max_period`, with or without this last one | DiffCSP, MatterGen | MatterGen |
+| `sinusoids` | sines and cosines of angles, the sines first or each sine before its cosine | DiffCSP, MatterGen | MatterGen |
 
 `periodic_fourier` is for fractional coordinates and their differences: it does not change
 when an atom moves by a whole number of cells.
