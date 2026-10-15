@@ -11,9 +11,9 @@ codes it was compared with, not the one of its authors.
 
 | | |
 |---|---|
-| Classes | `GemNetT`, `gemnet.Config`, `gemnet.Output` |
+| Classes | `GemNetT`, `gemnet.Config`, `gemnet.Output`, `gemnet.Condition` |
 | Output | features of each atom, shape `(n_atoms, hidden_dim)`, a vector of each atom in Å, shape `(n_atoms, 3)`, and with `predict_lattice` a symmetric matrix of each structure, shape `(n_struct, 3, 3)` |
-| Reads | a symmetric graph, its triplets and its bonds, a vector of each structure, and with `lattice_cosines` the lattice |
+| Reads | a symmetric graph, its triplets and its bonds, a vector of each structure, with `lattice_cosines` the lattice, and with `conditions` one `Condition` per property |
 | Paper | [GemNet: Universal Directional Graph Neural Networks for Molecules](https://arxiv.org/abs/2106.08903), Gasteiger, Becker and Günnemann (arXiv:2106.08903) |
 | Code of the authors | [TUM-DAML/gemnet_pytorch](https://github.com/TUM-DAML/gemnet_pytorch) |
 | Rewritten from | [cdvae](https://github.com/txie-93/cdvae) `f857f59` and [MatterGen](https://github.com/microsoft/mattergen) `9242366`, whose GemNet-T comes from the Open Catalyst Project, MIT |
@@ -32,6 +32,12 @@ through a small network, before the first block. And after each block, each edge
 another scalar: divided by the number of edges of the structure and multiplied by the outer
 product of the direction of the edge with itself, its sum over the edges of a structure is
 a symmetric matrix, which follows the rotations of the structure as `R^T M R`.
+
+The models of MatterGen conditioned on a property add an adapter per property
+(`conditions`): before each block, a small network reads the features of an atom and the
+embedding of the property of its structure, and its output, through a linear layer, is added
+to the features of the atom. A `gemnet.Condition` gives this embedding and which structures
+are conditioned: the adapter adds nothing to the atoms of the other ones.
 
 ```{.python notest}
 from torchms.graph.geometry import triplet_cosines
@@ -66,7 +72,8 @@ output.features, output.move, output.lattice   # lattice is None without predict
 
 ## Hyperparameters
 
-Every field of `gemnet.Config` is required: a model gives the values of its `config.yaml`.
+Every field of `gemnet.Config` is required but `conditions`: a model gives the values of its
+`config.yaml`.
 
 | Field | Meaning | In CDVAE | In MatterGen |
 |---|---|---|---|
@@ -86,6 +93,7 @@ Every field of `gemnet.Config` is required: a model gives the values of its `con
 | `activation_scale` | the SiLU is divided by it | 0.6 | 0.6 |
 | `lattice_cosines` | the edges read their cosines with the lattice vectors | false | true |
 | `predict_lattice` | a symmetric matrix for each structure | false | true |
+| `conditions` | names of the properties with an adapter, `()` by default | `()` | `("chemical_system",)` for `MatterGenChemicalSystem` |
 
 ## What to know
 

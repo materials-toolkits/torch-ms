@@ -158,6 +158,22 @@ class UpstreamConfig:
     sections: dict[str, dict[str, object]]
 
 
+@dataclass(frozen=True)
+class ChemicalSystemConfig:
+    """What the model conditioned on a chemical system has of its own.
+
+    Args:
+        default_weights: Name of its weights loaded by from_pretrained.
+        guidance_scale: Factor of the guidance of its sampling by default.
+        upstream_sections: Sections of the configuration of its training
+            which replace or complete the ones of the base model.
+    """
+
+    default_weights: str
+    guidance_scale: float
+    upstream_sections: dict[str, dict[str, object]]
+
+
 @dataclass(frozen=True, kw_only=True)
 class Config(YamlConfig):
     """Configuration of MatterGen, the one of config.yaml by default.
@@ -171,6 +187,8 @@ class Config(YamlConfig):
         elements: Diffusion of the elements.
         sampling: Predictor and corrector of the sampling.
         upstream: What is checked in the configuration of MatterGen.
+        chemical_system: What the model conditioned on a chemical system has
+            of its own.
     """
 
     graph: GraphConfig
@@ -181,21 +199,48 @@ class Config(YamlConfig):
     elements: ElementsConfig
     sampling: SamplingConfig
     upstream: UpstreamConfig
+    chemical_system: ChemicalSystemConfig
 
-    def decoder_config(self) -> gemnet.Config:
+    def decoder_config(self, conditional: bool = False) -> gemnet.Config:
         """Hyperparameters of GemNet-T, which reads the embedding of the time.
 
         Its embedding of the elements has a row for the mask.
+
+        Args:
+            conditional: If True, the ones of the model conditioned on a
+                chemical system, with its adapter.
 
         Examples:
             >>> decoder = Config.load().decoder_config()
             >>> decoder.latent_dim, decoder.num_elements, decoder.predict_lattice
             (512, 101, True)
+            >>> Config.load().decoder_config(conditional=True).conditions
+            ('chemical_system',)
         """
         return gemnet.Config(
             latent_dim=self.model.hidden_dim,
             num_elements=self.model.num_classes,
             radius=self.graph.radius,
             hidden_dim=self.model.hidden_dim,
+            conditions=("chemical_system",) if conditional else (),
             **self.decoder,
         )
+
+    def upstream_sections(
+        self, conditional: bool = False
+    ) -> dict[str, dict[str, object]]:
+        """Sections checked in the configuration of a training of MatterGen.
+
+        Args:
+            conditional: If True, the ones of the model conditioned on a
+                chemical system.
+
+        Examples:
+            >>> sections = Config.load().upstream_sections(conditional=True)
+            >>> sections["lightning_module.diffusion_module.model"]["_target_"]
+            'mattergen.adapter.GemNetTAdapter'
+        """
+        if not conditional:
+            return dict(self.upstream.sections)
+
+        return {**self.upstream.sections, **self.chemical_system.upstream_sections}

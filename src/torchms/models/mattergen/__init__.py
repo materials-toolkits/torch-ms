@@ -3,17 +3,24 @@
 Derived from MatterGen of Microsoft (MIT license, see LICENSE in this
 directory): model.py has its denoiser, its three diffusions, of the lattice,
 of the fractional coordinates and of the elements, and its sampling without
-condition. Its network, GemNet-T, is in torchms.models.layers. The weights of
-its base model are listed in config.yaml, with its hyperparameters, which
-config.py reads into a Config.
+condition (MatterGen) or guided towards a chemical system
+(MatterGenChemicalSystem, in chemical_system.py); diffusion.py has the
+arithmetic of a step. Its network, GemNet-T, is in torchms.models.layers. The
+weights of both models are listed in config.yaml, with their hyperparameters,
+which config.py reads into a Config.
 """
 
 from torchms.models.mattergen.config import Config
-from torchms.models.mattergen.model import (
-    Denoised,
-    InvalidWeights,
-    MatterGen,
-    StepNoise,
-)
+from torchms.models.mattergen.chemical_system import MatterGenChemicalSystem
+from torchms.models.mattergen.diffusion import Denoised, Guidance, StepNoise
+from torchms.models.mattergen.model import InvalidWeights, MatterGen
 
-__all__ = ["Config", "Denoised", "InvalidWeights", "MatterGen", "StepNoise"]
+__all__ = [
+    "Config",
+    "Denoised",
+    "Guidance",
+    "InvalidWeights",
+    "MatterGen",
+    "MatterGenChemicalSystem",
+    "StepNoise",
+]

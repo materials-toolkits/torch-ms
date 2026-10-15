@@ -5,17 +5,20 @@
 # directory).
 #
 # Changes: this file is a rewrite of the base model of MatterGen, which
-# generates crystals without condition, for inference only: the denoiser
-# (mattergen/denoiser.py), the three diffusions of the lattice, of the
+# generates crystals without condition, and of its model conditioned on a
+# chemical system, for inference only: the denoiser (mattergen/denoiser.py,
+# mattergen/adapter.py, the embedding of a chemical system of
+# mattergen/property_embeddings.py), the three diffusions of the lattice, of the
 # fractional coordinates and of the elements
 # (mattergen/common/diffusion/corruption.py, mattergen/diffusion/corruption,
 # mattergen/diffusion/d3pm/d3pm.py), their predictors and correctors
 # (mattergen/common/diffusion/predictors_correctors.py,
 # mattergen/diffusion/sampling, mattergen/diffusion/wrapped) and the numbers
-# of atoms of mattergen/common/data/num_atoms_distribution.py. The training,
-# the losses, the embeddings of properties and the conditional sampling with
-# its guidance, the fine-tuning, the prediction of a structure from its
-# composition, the datasets and the evaluation are removed. The graph is built
+# of atoms of mattergen/common/data/num_atoms_distribution.py, with the
+# guidance of mattergen/diffusion/sampling/classifier_free_guidance.py. The
+# training, the losses, the embeddings of the other properties, the
+# fine-tuning, the prediction of a structure from its composition, the
+# datasets and the evaluation are removed. The graph is built
 # by torchms.graph, batches are torchms Structures, the noise of a step is an
 # argument, and the elements are sampled with Gumbel noise. Names of modules
 # and parameters follow MatterGen to load its weights.
@@ -41,19 +44,21 @@ lattice and the coordinates by a Langevin move, then predicts the three of
 them at the time of the step before.
 
 The weights are the base model of the authors, trained on Alex-MP-20: it
-generates crystals of up to 20 atoms without condition.
+generates crystals of up to 20 atoms without condition. MatterGenChemicalSystem
+is the same model fine-tuned on a chemical system, the elements a crystal can
+have: its network also reads this system, and its sampling mixes the scores
+with and without it (classifier-free guidance).
 """
 
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from typing import Mapping
 
 import torch
 import torch.nn.functional as F
 import yaml
-from jaxtyping import Float, Int
+from jaxtyping import Bool, Float, Int
 from torch import nn
 
 from torchms.data.augmentation.transforms import Compose, Transform
@@ -76,113 +81,16 @@ from torchms.models.estimator.pretrained import (
 )
 from torchms.models.estimator.weights import download
 from torchms.models.layers.basis import sinusoidal_frequencies, sinusoids
-from torchms.models.layers.gemnet import GemNetT
+from torchms.models.layers.gemnet import Condition, GemNetT
 from torchms.models.mattergen.config import Config
-
-
-@dataclass(frozen=True)
-class Denoised:
-    """What the network gives for noisy crystals.
-
-    Args:
-        x: Score of the fractional coordinates of each atom, times their
-            deviation at the time of its crystal, shape (n_atoms, 3).
-        lattice: Score of the lattice of each crystal, times its deviation,
-            shape (n_struct, 3, 3).
-        logits: Scores of the element each atom had at the time 0, from
-            hydrogen, then the mask, shape (n_atoms, num_classes). The ones
-            of the elements which are not allowed are lowered.
-    """
-
-    x: Float[torch.Tensor, "n_atoms 3"]
-    lattice: Float[torch.Tensor, "n_struct 3 3"]
-    logits: Float[torch.Tensor, "n_atoms num_classes"]
-
-
-@dataclass(frozen=True)
-class StepNoise:
-    """Random draws of one step of the sampling.
-
-    Args:
-        corrector_x: Standard normal noise of the correction of the
-            coordinates, shape (n_atoms, 3).
-        corrector_lattice: Standard normal noise of the correction of the
-            lattice, shape (n_struct, 3, 3), made symmetric by the step.
-        predictor_x: Standard normal noise of the prediction of the
-            coordinates, shape (n_atoms, 3).
-        predictor_lattice: Standard normal noise of the prediction of the
-            lattice, one value per crystal, shape (n_struct,): MatterGen draws
-            one value and gives it to the nine elements of the lattice.
-        elements: Gumbel noise of the prediction of the elements, shape
-            (n_atoms, num_classes). If None, each atom takes its most probable
-            element, as MatterGen returns after its last step.
-    """
-
-    corrector_x: Float[torch.Tensor, "n_atoms 3"]
-    corrector_lattice: Float[torch.Tensor, "n_struct 3 3"]
-    predictor_x: Float[torch.Tensor, "n_atoms 3"]
-    predictor_lattice: Float[torch.Tensor, "n_struct"]
-    elements: Float[torch.Tensor, "n_atoms num_classes"] | None
-
-
-def symmetric_noise(
-    noise: Float[torch.Tensor, "n 3 3"] | Float[torch.Tensor, "n 1 1"],
-) -> Float[torch.Tensor, "n 3 3"]:
-    """Symmetric matrices of standard normal noise, from independent draws.
-
-    An element out of the diagonal is the sum of two draws over sqrt(2). Given
-    one draw per matrix, shape (n, 1, 1), every element of the diagonal is
-    this draw and every other one sqrt(2) times it, as in the predictor of
-    MatterGen.
-
-    Examples:
-        >>> symmetric_noise(torch.ones(1, 1, 1)).round(decimals=4)
-        tensor([[[1.0000, 1.4142, 1.4142],
-                 [1.4142, 1.0000, 1.4142],
-                 [1.4142, 1.4142, 1.0000]]])
-    """
-    eye = torch.eye(3, device=noise.device)[None]
-
-    return (1 / (2**0.5)) * (1 - eye) * (noise + noise.transpose(1, 2)) + eye * noise
-
-
-def ancestral_coefficients(  # pylint: disable=too-many-positional-arguments
-    alpha_t: torch.Tensor,
-    sigma_t: torch.Tensor,
-    alpha_s: torch.Tensor,
-    sigma_s: torch.Tensor,
-    at_zero: torch.Tensor,
-    min_alpha_ratio: float,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Coefficients of an ancestral step from the time t to the time s before.
-
-    The values at the time t are alpha_t times the ones without noise plus a
-    noise of deviation sigma_t. The values at the time s are sampled from the
-    ones at the time t and their score:
-    x_coeff x + score_coeff score + std noise.
-
-    Args:
-        alpha_t: Mean coefficient at the time t.
-        sigma_t: Deviation at the time t.
-        alpha_s: Mean coefficient at the time s.
-        sigma_s: Deviation at the time s.
-        at_zero: Where s is the time 0 or before: no noise is added.
-        min_alpha_ratio: Lower bound of alpha_t / alpha_s.
-
-    Returns:
-        x_coeff, score_coeff and std.
-    """
-    sigma_s = torch.where(at_zero, torch.zeros_like(sigma_s), sigma_s)
-    sigma2_t_given_s = sigma_t**2 - sigma_s**2 * alpha_t**2 / alpha_s**2
-    std = torch.sqrt(sigma2_t_given_s) * sigma_s / sigma_t
-
-    ratio = alpha_t / alpha_s
-    if torch.any(ratio < min_alpha_ratio):
-        ratio = torch.clip(ratio, min_alpha_ratio, 1)
-
-    std = torch.where(at_zero, torch.zeros_like(std), std)
-
-    return 1.0 / ratio, sigma2_t_given_s / ratio, std
+from torchms.models.mattergen.diffusion import (
+    Denoised,
+    Guidance,
+    StepNoise,
+    ancestral_coefficients,
+    guided_scores,
+    symmetric_noise,
+)
 
 
 # the steps of the sampling are separate methods, to compare them with MatterGen
@@ -215,6 +123,8 @@ class MatterGen(PretrainedModel[Config]):
 
     CONFIG = Config
     GRAPH_FIELDS = ("graph", "triplets", "bonds")
+    # whether the network reads a chemical system: MatterGenChemicalSystem
+    CONDITIONAL = False
 
     time_frequencies: torch.Tensor
     logit_offset: torch.Tensor
@@ -233,8 +143,13 @@ class MatterGen(PretrainedModel[Config]):
                 network.hidden_dim, network.time_max_period, endpoint=False
             ),
         )
-        self.gemnet = GemNetT(self.config.decoder_config())
+        self.gemnet = GemNetT(self.config.decoder_config(self.CONDITIONAL))
         self.fc_atom = nn.Linear(network.hidden_dim, network.num_classes)
+        if self.CONDITIONAL:
+            # a chemical system, one value per atomic number from 0
+            self.chemical_system_embedding = nn.Linear(
+                network.num_elements + 1, network.hidden_dim
+            )
 
         # added to the scores of the elements: 0 for an allowed one
         allowed = torch.zeros(network.num_classes)
@@ -269,6 +184,12 @@ class MatterGen(PretrainedModel[Config]):
     def mask(self) -> int:
         """Atomic number of an atom which has no element yet."""
         return self.config.model.mask
+
+    def default_weights(self) -> str:
+        if self.CONDITIONAL:
+            return self.config.chemical_system.default_weights
+
+        return self.config.default_weights
 
     # weights
 
@@ -305,11 +226,15 @@ class MatterGen(PretrainedModel[Config]):
 
         Raises:
             InvalidWeights: If parameters are missing or unknown, or if the
-                model was trained with another configuration, as the models
-                conditioned on a property.
+                model was trained with another configuration: the base model
+                and the model conditioned on a chemical system refuse the
+                weights of each other, and of the models conditioned on other
+                properties.
         """
         if configuration is not None:
-            check_configuration(configuration, self.config.upstream.sections)
+            check_configuration(
+                configuration, self.config.upstream_sections(self.CONDITIONAL)
+            )
 
         prefix = self.config.upstream.prefix
         outside = [name for name in state_dict if not name.startswith(prefix)]
@@ -388,7 +313,11 @@ class MatterGen(PretrainedModel[Config]):
         return z - 1
 
     def denoise(
-        self, structures: Structures, times: Float[torch.Tensor, "n_struct"]
+        self,
+        structures: Structures,
+        times: Float[torch.Tensor, "n_struct"],
+        chemical_systems: Float[torch.Tensor, "n_struct num_classes"] | None = None,
+        conditioned: Bool[torch.Tensor, "n_struct"] | None = None,
     ) -> Denoised:
         """Scores of noisy crystals, from the network.
 
@@ -396,15 +325,26 @@ class MatterGen(PretrainedModel[Config]):
             structures: Noisy crystals with their graph, see transform. An atom
                 without element has the atomic number of the mask, see mask.
             times: Time of each crystal, from 0 to 1: how much noise it has.
+            chemical_systems: Chemical system of each crystal, see Guidance,
+                read by a conditioned model. None for a network without
+                condition.
+            conditioned: Which crystals are conditioned on their chemical
+                system, all of them by default. The scores of their elements
+                outside of it are lowered as the ones not allowed.
 
         Raises:
-            ValueError: If an atom has an element after fermium, or if the
-                structures do not have their graph.
+            ValueError: If an atom has an element after fermium, if the
+                structures do not have their graph, or if chemical systems are
+                given to a model which is not conditioned.
         """
         self.check_graphs(structures)
         graph = attached_graph(structures, self)
         angles = attached_tuples(structures, "triplets", self)
         bonds = attached_tuples(structures, "bonds", self)
+
+        conditions, keep = self.chemical_system_conditions(
+            times, chemical_systems, conditioned
+        )
 
         vectors = edges_vectors(graph)
         output = self.gemnet(
@@ -416,6 +356,7 @@ class MatterGen(PretrainedModel[Config]):
             vectors,
             triplet_cosines(vectors, angles),
             structures.lattice,
+            conditions,
         )
         assert output.lattice is not None
 
@@ -426,17 +367,59 @@ class MatterGen(PretrainedModel[Config]):
         inverse = graph.unpool_structures(inverse.flatten(1)).view(-1, 3, 3)
         x = (inverse @ output.move.unsqueeze(-1)).squeeze(-1)
 
-        return Denoised(
-            x=x,
-            lattice=output.lattice,
-            logits=self.fc_atom(output.features) + self.logit_offset,
+        logits = self.fc_atom(output.features) + self.logit_offset
+        if keep is not None:
+            # as MatterGen: the elements outside of the chemical system are
+            # lowered after the ones which are not allowed
+            keep = graph.unpool_structures(keep)
+            logits = logits + (1 - keep) * self.config.model.masked_logit
+
+        return Denoised(x=x, lattice=output.lattice, logits=logits)
+
+    def chemical_system_conditions(
+        self,
+        times: Float[torch.Tensor, "n_struct"],
+        chemical_systems: Float[torch.Tensor, "n_struct num_classes"] | None,
+        conditioned: Bool[torch.Tensor, "n_struct"] | None,
+    ) -> tuple[
+        tuple[Condition, ...], Float[torch.Tensor, "n_struct num_classes"] | None
+    ]:
+        """Condition of GemNet-T, and the classes of the elements kept for each crystal.
+
+        Without chemical system, a conditioned model has its condition
+        inactive and keeps every class.
+        """
+        if chemical_systems is not None and not self.CONDITIONAL:
+            raise ValueError(f"{type(self).__name__} is not conditioned")
+        if not self.CONDITIONAL:
+            return (), None
+
+        n_struct = len(times)
+        num_systems = self.config.model.num_elements + 1
+        if chemical_systems is None:
+            chemical_systems = times.new_zeros((n_struct, num_systems))
+            conditioned = torch.zeros(n_struct, dtype=torch.bool, device=times.device)
+        elif conditioned is None:
+            conditioned = torch.ones(n_struct, dtype=torch.bool, device=times.device)
+
+        # elements of the system, from hydrogen, then the mask, which is never kept
+        keep = F.pad(chemical_systems[:, 1:], (0, 1))
+        keep = torch.where(conditioned.unsqueeze(1), keep, torch.ones_like(keep))
+        condition = Condition(
+            self.chemical_system_embedding(chemical_systems), conditioned
         )
 
+        return (condition,), keep
+
     def forward(
-        self, structures: Structures, times: Float[torch.Tensor, "n_struct"]
+        self,
+        structures: Structures,
+        times: Float[torch.Tensor, "n_struct"],
+        chemical_systems: Float[torch.Tensor, "n_struct num_classes"] | None = None,
+        conditioned: Bool[torch.Tensor, "n_struct"] | None = None,
     ) -> Denoised:
         """Scores of noisy crystals, see denoise."""
-        return self.denoise(structures, times)
+        return self.denoise(structures, times, chemical_systems, conditioned)
 
     # the three diffusions
 
@@ -527,18 +510,41 @@ class MatterGen(PretrainedModel[Config]):
         return (times * (self.config.elements.num_steps - 1)).long()
 
     def scores(
-        self, structures: Structures, times: Float[torch.Tensor, "n_struct"]
+        self,
+        structures: Structures,
+        times: Float[torch.Tensor, "n_struct"],
+        guidance: Guidance | None = None,
     ) -> Denoised:
         """Scores of noisy crystals: the ones of the network over their deviations.
 
-        The scores of the elements are the ones of the network.
+        The scores of the elements are the ones of the network. With a
+        guidance, the scores without and with the condition are mixed, see
+        Guidance: two calls of the network, one at a scale of 0 or 1.
 
         Args:
             structures: Noisy crystals with their graph, see transform.
             times: Time of each crystal.
+            guidance: Condition of a conditioned model, None without.
         """
+        if guidance is None or abs(guidance.scale) < 1e-15:
+            return self.unguided_scores(structures, times, None)
+        if abs(guidance.scale - 1) < 1e-15:
+            return self.unguided_scores(structures, times, guidance.chemical_systems)
+
+        unconditional = self.unguided_scores(structures, times, None)
+        conditional = self.unguided_scores(structures, times, guidance.chemical_systems)
+
+        return guided_scores(unconditional, conditional, guidance.scale)
+
+    def unguided_scores(
+        self,
+        structures: Structures,
+        times: Float[torch.Tensor, "n_struct"],
+        chemical_systems: Float[torch.Tensor, "n_struct num_classes"] | None,
+    ) -> Denoised:
+        """Scores of noisy crystals, with or without a chemical system, see scores."""
         graph = attached_graph(structures, self)
-        denoised = self.denoise(structures, times)
+        denoised = self.denoise(structures, times, chemical_systems)
 
         num_atoms = structures.num_atoms
         deviation = graph.unpool_structures(self.coordinate_deviation(times, num_atoms))
@@ -571,7 +577,11 @@ class MatterGen(PretrainedModel[Config]):
         return torch.where(grad_norm == 0, max_step, step_size)
 
     def correct(
-        self, structures: Structures, step: int, noise: StepNoise
+        self,
+        structures: Structures,
+        step: int,
+        noise: StepNoise,
+        guidance: Guidance | None = None,
     ) -> Structures:
         """Langevin move of the coordinates and of the lattice at a step.
 
@@ -583,12 +593,13 @@ class MatterGen(PretrainedModel[Config]):
             step: Step of the sampling, from 0, at the time 1.
             noise: Random draws of the step: its corrector_x and its
                 corrector_lattice are read.
+            guidance: Condition of a conditioned model, see scores.
         """
         structures = self.transform(self.config)(structures)
         times, _ = self.step_times(structures, step)
 
         return self.correct_given_scores(
-            structures, step, self.scores(structures, times), noise
+            structures, step, self.scores(structures, times, guidance), noise
         )
 
     def correct_given_scores(
@@ -696,7 +707,11 @@ class MatterGen(PretrainedModel[Config]):
         return torch.log(at_step + epsilon) + torch.log(transition + epsilon)
 
     def predict(
-        self, structures: Structures, step: int, noise: StepNoise
+        self,
+        structures: Structures,
+        step: int,
+        noise: StepNoise,
+        guidance: Guidance | None = None,
     ) -> Structures:
         """Crystals at the step after, from the ones of a step and their scores.
 
@@ -708,12 +723,13 @@ class MatterGen(PretrainedModel[Config]):
             step: Step of the sampling, from 0, at the time 1.
             noise: Random draws of the step: its predictor_x, its
                 predictor_lattice and its elements are read.
+            guidance: Condition of a conditioned model, see scores.
         """
         structures = self.transform(self.config)(structures)
         times, _ = self.step_times(structures, step)
 
         return self.predict_given_scores(
-            structures, step, self.scores(structures, times), noise
+            structures, step, self.scores(structures, times, guidance), noise
         )
 
     def predict_given_scores(  # pylint: disable=too-many-locals
@@ -790,14 +806,20 @@ class MatterGen(PretrainedModel[Config]):
         )
 
     def sample_step(
-        self, structures: Structures, step: int, noise: StepNoise
+        self,
+        structures: Structures,
+        step: int,
+        noise: StepNoise,
+        guidance: Guidance | None = None,
     ) -> Structures:
         """One step of the sampling: a correction, then a prediction.
 
         Two calls of the network, each on a graph built on the crystals it is
-        given, see correct and predict.
+        given, see correct and predict; four with a guidance.
         """
-        return self.predict(self.correct(structures, step, noise), step, noise)
+        corrected = self.correct(structures, step, noise, guidance)
+
+        return self.predict(corrected, step, noise, guidance)
 
     def sample_prior(
         self,
@@ -889,6 +911,7 @@ class MatterGen(PretrainedModel[Config]):
         self,
         num_atoms: Int[torch.Tensor, "n_struct"],
         generator: torch.Generator | None = None,
+        guidance: Guidance | None = None,
     ) -> Structures:
         """Generate crystals of given numbers of atoms.
 
@@ -902,6 +925,10 @@ class MatterGen(PretrainedModel[Config]):
                 the device of the model. See sample_num_atoms.
             generator: Generator of the random draws, on the device of
                 num_atoms.
+            guidance: Chemical system of each crystal and factor of the
+                guidance, for a conditioned model: see
+                MatterGenChemicalSystem.guidance. Without, a conditioned model
+                samples without condition.
 
         Returns:
             Crystals generated, without graph. Their lattices are symmetric
@@ -912,6 +939,6 @@ class MatterGen(PretrainedModel[Config]):
 
         for step in range(steps):
             noise = self.step_noise(structures, step == steps - 1, generator)
-            structures = self.sample_step(structures, step, noise)
+            structures = self.sample_step(structures, step, noise, guidance)
 
         return structures

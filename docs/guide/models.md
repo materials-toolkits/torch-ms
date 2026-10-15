@@ -137,6 +137,16 @@ model = MatterGen.from_pretrained(device="cuda")
 structures = model.sample(model.sample_num_atoms(64))   # 1000 steps, 2000 calls of the network
 ```
 
+`MatterGenChemicalSystem` generates them with given elements, one chemical system per crystal:
+
+```{.python notest}
+from torchms.models import MatterGenChemicalSystem
+
+model = MatterGenChemicalSystem.from_pretrained(device="cuda")
+guidance = model.guidance(["Li-O"] * 64)
+structures = model.sample(model.sample_num_atoms(64), guidance=guidance)
+```
+
 ## Layers for your own model
 
 `torchms.models.layers` has the bases of distances and of angles of the models, and two

@@ -24,17 +24,21 @@ from torchms.graph.transforms import (
 )
 from torchms.models.estimator import weights
 from torchms.models.layers import sinusoidal_frequencies
+from torchms.models.layers import gemnet
 from torchms.models.mattergen import (
     Config,
     Denoised,
+    Guidance,
     InvalidWeights,
     MatterGen,
+    MatterGenChemicalSystem,
     StepNoise,
 )
-from torchms.models.mattergen.model import symmetric_noise
+from torchms.models.mattergen.diffusion import guided_scores, symmetric_noise
 
 DATA = Path(__file__).parent / "data"
 NAME = "mattergen-base"
+CHEMICAL_SYSTEM_NAME = "mattergen-chemical-system"
 
 # a network of 512 features on 50 neighbours per atom and their triplets:
 # slower than the default timeout
@@ -93,22 +97,28 @@ TIMES = torch.tensor([0.05, 0.7])
 
 
 def test_pinned_checkpoints(tmp_path):
-    assert set(weights.CHECKPOINTS["mattergen"]) == {NAME}
+    assert set(weights.CHECKPOINTS["mattergen"]) == {NAME, CHEMICAL_SYSTEM_NAME}
     assert Config.load().default_weights == NAME
+    assert Config.load().chemical_system.default_weights == CHEMICAL_SYSTEM_NAME
+    assert MatterGenChemicalSystem().default_weights() == CHEMICAL_SYSTEM_NAME
 
-    for checkpoint in weights.CHECKPOINTS["mattergen"][NAME]:
-        # a commit of the repository of the authors, not a branch
-        assert checkpoint.url.startswith(
-            "https://huggingface.co/microsoft/mattergen/resolve/"
-            "5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/mattergen_base/"
-        )
-        assert len(checkpoint.sha256) == 64
+    for name, directory in (
+        (NAME, "mattergen_base"),
+        (CHEMICAL_SYSTEM_NAME, "chemical_system"),
+    ):
+        for checkpoint in weights.CHECKPOINTS["mattergen"][name]:
+            # a commit of the repository of the authors, not a branch
+            assert checkpoint.url.startswith(
+                "https://huggingface.co/microsoft/mattergen/resolve/"
+                f"5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/{directory}/"
+            )
+            assert len(checkpoint.sha256) == 64
 
-    paths = weights.checkpoint_paths("mattergen", NAME, tmp_path)
-    assert [path.relative_to(tmp_path).as_posix() for path in paths] == [
-        f"mattergen/{NAME}/last.ckpt",
-        f"mattergen/{NAME}/config.yaml",
-    ]
+        paths = weights.checkpoint_paths("mattergen", name, tmp_path)
+        assert [path.relative_to(tmp_path).as_posix() for path in paths] == [
+            f"mattergen/{name}/last.ckpt",
+            f"mattergen/{name}/config.yaml",
+        ]
 
 
 def test_configuration():
@@ -613,15 +623,154 @@ def test_load_pretrained_checks_the_parameters(model):
         other.load_pretrained(state)
 
 
+# the model conditioned on a chemical system, with random weights
+
+
+@pytest.fixture(scope="module")
+def conditional() -> MatterGenChemicalSystem:
+    torch.manual_seed(0)
+    return MatterGenChemicalSystem(narrow()).eval().requires_grad_(False)
+
+
+def test_guidance(conditional):
+    guidance = conditional.guidance(["Zn-S", "Li-Fe-O"], scale=1.5)
+
+    assert guidance.chemical_systems.shape == (2, 101)
+    assert guidance.chemical_systems.nonzero().tolist() == [
+        [0, 16],
+        [0, 30],
+        [1, 3],
+        [1, 8],
+        [1, 26],
+    ]
+    assert guidance.scale == 1.5
+    assert conditional.guidance(["O"]).scale == 2.0
+
+    for unknown in ("Li-Xx", "Li-Og", "li"):
+        with pytest.raises(ValueError, match="not supported"):
+            conditional.guidance([unknown])
+
+
+def test_conditional_network(conditional):
+    structures = conditional.transform()(make_batch())
+    systems = conditional.guidance(["Zn-S", "Zn-S"]).chemical_systems
+
+    free = conditional(structures, TIMES)
+    mixed = conditional(structures, TIMES, systems, torch.tensor([True, False]))
+    first = structures.batch == 0
+
+    # the second crystal is not conditioned: its scores are the ones without
+    # chemical system; the first one is, and only keeps zinc and sulfur
+    assert torch.equal(mixed.x[~first], free.x[~first])
+    assert torch.equal(mixed.lattice[1], free.lattice[1])
+    assert torch.equal(mixed.logits[~first], free.logits[~first])
+    assert not torch.allclose(mixed.x[first], free.x[first])
+    kept = (mixed.logits[first] > -1e9).nonzero()[:, 1].unique() + 1
+    assert kept.tolist() == [16, 30]
+    assert (free.logits[first] > -1e9).sum(dim=1).eq(76).all()
+
+
+def test_the_base_model_reads_no_chemical_system(model):
+    structures = model.transform()(make_batch())
+    systems = torch.zeros(2, 101)
+
+    with pytest.raises(ValueError, match="not conditioned"):
+        model(structures, TIMES, systems)
+
+    with pytest.raises(ValueError, match="one Condition each"):
+        model.gemnet(
+            model.embed_time(TIMES),
+            model.element_rows(structures.z),
+            structures.graph,
+            structures.triplets,
+            structures.bonds,
+            structures.graph.edges_vectors(),
+            torch.zeros(structures.triplets.index.shape[1]),
+            structures.lattice,
+            (gemnet.Condition(torch.zeros(2, 64), torch.ones(2, dtype=torch.bool)),),
+        )
+
+
+def test_guided_scores(conditional):
+    structures = conditional.transform()(noisy(make_batch()))
+    systems = conditional.guidance(["Zn-S", "Si"]).chemical_systems
+
+    free = conditional.scores(structures, TIMES)
+    with_system = conditional.unguided_scores(structures, TIMES, systems)
+    assert not torch.allclose(with_system.x, free.x)
+
+    # 0 is the model without condition, 1 the model with it
+    for scale, expected in ((0.0, free), (1.0, with_system)):
+        found = conditional.scores(structures, TIMES, Guidance(systems, scale))
+        assert torch.equal(found.x, expected.x)
+        assert torch.equal(found.logits, expected.logits)
+
+    guided = conditional.scores(structures, TIMES, Guidance(systems, 2.0))
+    assert torch.allclose(guided.x, 2 * with_system.x - free.x, atol=1e-5)
+    assert torch.allclose(guided.lattice, 2 * with_system.lattice - free.lattice)
+    # the elements outside the system stay lowered
+    first = structures.batch == 0
+    kept = (guided.logits[first] > -1e9).nonzero()[:, 1].unique() + 1
+    assert kept.tolist() == [16, 30]
+
+
+def test_conditional_sample():
+    torch.manual_seed(0)
+    model = MatterGenChemicalSystem(short_diffusion()).eval().requires_grad_(False)
+    num_atoms = torch.tensor([3, 2])
+    guidance = model.guidance(["Li-O", "Fe-Ni"])
+
+    structures = model.sample(num_atoms, generator=generator(), guidance=guidance)
+    first = structures.batch == 0
+    assert set(structures.z[first].tolist()) <= {3, 8}
+    assert set(structures.z[~first].tolist()) <= {26, 28}
+
+    # without guidance, the conditioned model samples without condition
+    free = model.sample(num_atoms, generator=generator())
+    assert not torch.equal(free.x, structures.x)
+
+    with pytest.raises(ValueError, match="not conditioned"):
+        MatterGen(short_diffusion()).sample(num_atoms, guidance=guidance)
+
+
+def test_conditional_load_pretrained_checks_the_parameters(conditional, model):
+    state = upstream_state(conditional)
+    assert (
+        "diffusion_module.model.property_embeddings_adapt.chemical_system."
+        "conditional_embedding_module.embedding.weight"
+    ) in state
+    assert (
+        "diffusion_module.model.gemnet.cond_mixin_layers.chemical_system.0.weight"
+        in state
+    )
+    configuration = nested(Config.load().upstream_sections(conditional=True))
+
+    other = MatterGenChemicalSystem(conditional.config)
+    other.load_pretrained(state, configuration)
+
+    # each model refuses the weights and the configuration of the other one
+    with pytest.raises(InvalidWeights, match="another configuration"):
+        MatterGen(model.config).load_pretrained(state, configuration)
+    with pytest.raises(InvalidWeights, match="Unexpected"):
+        MatterGen(model.config).load_pretrained(state)
+    with pytest.raises(InvalidWeights, match="no lightning_module"):
+        other.load_pretrained(
+            upstream_state(model), nested(Config.load().upstream.sections)
+        )
+    with pytest.raises(InvalidWeights, match="Missing"):
+        other.load_pretrained(upstream_state(model))
+
+
 # the pretrained model against the real MatterGen
 
 
-def reference() -> tuple[Structures, dict[str, torch.Tensor]]:
+def reference(
+    name: str = "mattergen_reference.npz",
+) -> tuple[Structures, dict[str, torch.Tensor]]:
     """Structures of the tests and what MatterGen computed for them."""
     data = dict(np.load(DATA / "orb_reference.npz"))
     expected = {
-        name: torch.from_numpy(values)
-        for name, values in np.load(DATA / "mattergen_reference.npz").items()
+        key: torch.from_numpy(values) for key, values in np.load(DATA / name).items()
     }
     structures = Structures(
         lattice=torch.from_numpy(data["lattice"]),
@@ -727,6 +876,57 @@ def as_near_as_mattergen(
     return bool(ours.mean() < 1.5 * theirs.mean() and ours.max() < 3 * theirs.max())
 
 
+def rounding_spread(
+    evaluate, structures: Structures, count: int = 6
+) -> list[torch.Tensor]:
+    """How much the outputs of the network move when its inputs move by their last bits.
+
+    The lattice and the coordinates are multiplied by 1 + k 2^-23, k drawn in
+    -2 to 2 for each value, count times.
+
+    Args:
+        evaluate: Outputs of the network for structures without graph, a tuple
+            of tensors.
+        structures: Structures without graph.
+
+    Returns:
+        For each output, the largest move of each value over the draws.
+    """
+    random = generator(1)
+    found = evaluate(structures)
+    spread = [torch.zeros_like(values) for values in found]
+    for _ in range(count):
+        lattice = structures.lattice * (
+            1
+            + torch.randint(-2, 3, structures.lattice.shape, generator=random) * 2**-23
+        )
+        x = structures.x * (
+            1 + torch.randint(-2, 3, structures.x.shape, generator=random) * 2**-23
+        )
+        moved = evaluate(replace(structures, lattice=lattice, x=x))
+        spread = [
+            torch.maximum(old, (new - values).abs())
+            for old, new, values in zip(spread, moved, found)
+        ]
+
+    return spread
+
+
+def within_rounding(
+    found: torch.Tensor, expected: torch.Tensor, spread: torch.Tensor
+) -> bool:
+    """Whether values differ from the expected ones as little as rounding moves them.
+
+    The largest and the mean difference are at most 3 times the largest and
+    the mean move of rounding_spread.
+    """
+    difference = (found - expected).abs()
+
+    return bool(
+        difference.max() <= 3 * spread.max() and difference.mean() <= 3 * spread.mean()
+    )
+
+
 def compare_network(
     pretrained: MatterGen,
     structures: Structures,
@@ -737,9 +937,20 @@ def compare_network(
     assert defined.sum() >= 15
     atoms = defined[structures.batch]
 
-    denoised = pretrained(
-        pretrained.transform()(structures), expected[f"{prefix}_times"]
-    )
+    systems = expected.get("chemical_systems")
+    conditioned = expected.get("conditioned")
+
+    def evaluate(crystals: Structures) -> tuple[torch.Tensor, ...]:
+        denoised = pretrained(
+            pretrained.transform()(crystals),
+            expected[f"{prefix}_times"],
+            None if systems is None else systems.float(),
+            conditioned,
+        )
+        return denoised.x, denoised.lattice, denoised.logits
+
+    denoised = Denoised(*evaluate(structures))
+    spread = dict(zip(("x", "l", "logits"), rounding_spread(evaluate, structures)))
     logits = expected[f"{prefix}_pred_logits"]
     allowed = logits[atoms] > -1e9
     assert torch.equal(denoised.logits[atoms] > -1e9, allowed)
@@ -751,10 +962,15 @@ def compare_network(
     ):
         single = expected[f"{prefix}_pred_{name}"][selected]
         double = expected[f"{prefix}_double_{name}"][selected]
+        moved = spread[name][selected]
         if name == "logits":
-            single, double = single[allowed], double[allowed]
+            single, double, moved = single[allowed], double[allowed], moved[allowed]
 
-        assert as_near_as_mattergen(found, single, double), name
+        # as near as MatterGen to MatterGen in double precision, or as near to
+        # MatterGen as a change of the last bits of the inputs moves the rewrite
+        assert as_near_as_mattergen(found, single, double) or within_rounding(
+            found, single, moved
+        ), name
 
     # elsewhere the graphs differ by a few edges: the outputs stay near
     assert (denoised.x - expected[f"{prefix}_pred_x"]).abs().mean() < 0.05
@@ -821,6 +1037,11 @@ def recorded_noise(expected: dict[str, torch.Tensor], step: int) -> StepNoise:
 def test_pretrained_steps_match_mattergen(pretrained):
     """Steps of the sampling of MatterGen, each from its crystals, its scores and its noise."""
     _, expected = reference()
+    check_steps(pretrained, expected)
+
+
+def check_steps(pretrained: MatterGen, expected: dict[str, torch.Tensor]) -> None:
+    """Every saved step of the sampling of MatterGen, given its scores and its noise."""
     steps = expected["sampling_steps"].tolist()
     assert torch.allclose(pretrained.times()[steps], expected["sampling_times"])
 
@@ -871,26 +1092,129 @@ def test_pretrained_steps_match_mattergen(pretrained):
 def test_pretrained_scores_of_the_sampling_match_mattergen(pretrained):
     """Scores of the crystals of the sampling of MatterGen, where their graphs are defined."""
     _, expected = reference()
+    assert compare_sampling_scores(pretrained, expected, "score") >= 2
+
+
+def compare_sampling_scores(
+    pretrained: MatterGen, expected: dict[str, torch.Tensor], kind: str
+) -> int:
+    """Compare the scores of the network on the crystals of the sampling.
+
+    Args:
+        kind: "score" for the scores of the steps, "unconditional" or
+            "conditional" for the ones the guidance mixes.
+
+    Returns:
+        Number of calls of the network compared: the ones whose crystals have
+        no tie of their neighbours.
+    """
     steps = expected["sampling_steps"].tolist()
+    systems = None
+    if kind == "conditional":
+        systems = expected["sampling_chemical_systems"].float()
 
     compared = 0
     for i, step in enumerate(steps):
-        for name, kind in (("before", "corrector"), ("corrected", "predictor")):
+        for name, call in (("before", "corrector"), ("corrected", "predictor")):
             crystals = state(expected, name, i)
-            # the step of the corrector depends on every crystal of the batch
             if neighbours_at_the_same_distance(crystals).any():
                 continue
 
             times, _ = pretrained.step_times(crystals, step)
-            scores = pretrained.scores(crystals, times)
-            upstream = recorded_scores(expected, kind, i)
-            for found, wanted in (
-                (scores.x, upstream.x),
-                (scores.lattice, upstream.lattice),
-            ):
-                scale = float(wanted.abs().max())
-                assert (found - wanted).abs().max() < 1e-2 * scale, (step, name)
-                assert (found - wanted).abs().mean() < 1e-4 * scale, (step, name)
+
+            def evaluate(given: Structures) -> tuple[torch.Tensor, ...]:
+                scores = pretrained.unguided_scores(
+                    pretrained.transform()(given), times, systems
+                )
+                return scores.x, scores.lattice
+
+            found = evaluate(crystals.without_graphs())
+            spread = rounding_spread(evaluate, crystals.without_graphs())
+            for values, moved, field in zip(found, spread, ("x", "l")):
+                wanted = expected[f"{call}_{kind}_{field}"][i]
+                assert within_rounding(values, wanted, moved), (step, name, field)
             compared += 1
 
-    assert compared >= 2
+    return compared
+
+
+# the model conditioned on a chemical system against the real MatterGen
+
+
+@pytest.fixture(scope="module")
+def pretrained_conditional() -> MatterGenChemicalSystem:
+    paths = weights.checkpoint_paths("mattergen", CHEMICAL_SYSTEM_NAME)
+    if not all(path.exists() for path in paths):
+        pytest.skip(f"weights of {CHEMICAL_SYSTEM_NAME} are not in the cache")
+
+    return MatterGenChemicalSystem.from_pretrained(CHEMICAL_SYSTEM_NAME, device="cpu")
+
+
+CONDITIONAL_REFERENCE = "mattergen_chemical_system_reference.npz"
+
+
+def test_pretrained_conditional_network_matches_mattergen(pretrained_conditional):
+    """The denoiser conditioned on a chemical system, every other structure without it."""
+    structures, expected = reference(CONDITIONAL_REFERENCE)
+    assert expected["conditioned"].sum() == 20
+
+    compare_network(pretrained_conditional, structures, expected, "clean")
+
+
+def test_pretrained_conditional_network_matches_mattergen_on_noisy_structures(
+    pretrained_conditional,
+):
+    structures, expected = reference(CONDITIONAL_REFERENCE)
+    noisy_structures = Structures(
+        lattice=expected["noisy_l"],
+        x=expected["noisy_x"],
+        z=expected["noisy_z"],
+        num_atoms=structures.num_atoms,
+    )
+
+    compare_network(pretrained_conditional, noisy_structures, expected, "noisy")
+
+
+def test_pretrained_guidance_matches_mattergen(pretrained_conditional):
+    """The scores of the guided sampling of MatterGen, from its two unguided scores."""
+    _, expected = reference(CONDITIONAL_REFERENCE)
+    scale = float(expected["sampling_guidance"])
+    assert scale == pretrained_conditional.config.chemical_system.guidance_scale
+
+    for call in ("corrector", "predictor"):
+        for i in range(len(expected["sampling_steps"])):
+            unconditional, conditional = (
+                Denoised(
+                    x=expected[f"{call}_{kind}_x"][i],
+                    lattice=expected[f"{call}_{kind}_l"][i],
+                    logits=expected[f"{call}_{kind}_logits"][i],
+                )
+                for kind in ("unconditional", "conditional")
+            )
+            guided = guided_scores(unconditional, conditional, scale)
+
+            assert torch.equal(guided.x, expected[f"{call}_score_x"][i])
+            assert torch.equal(guided.lattice, expected[f"{call}_score_l"][i])
+            if call == "predictor":
+                assert torch.equal(guided.logits, expected["predictor_score_logits"][i])
+
+
+def test_pretrained_guided_steps_match_mattergen(pretrained_conditional):
+    """Steps of the guided sampling of MatterGen, given its scores and its noise."""
+    _, expected = reference(CONDITIONAL_REFERENCE)
+    check_steps(pretrained_conditional, expected)
+
+    # the crystals generated only have elements of their chemical systems
+    systems = expected["sampling_chemical_systems"].bool()
+    batch = torch.arange(4).repeat_interleave(expected["sampling_num_atoms"])
+    assert systems[batch, expected["mean_z"]].all()
+
+
+def test_pretrained_conditional_scores_of_the_sampling_match_mattergen(
+    pretrained_conditional,
+):
+    """Both scores the guidance mixes, where the graphs of the crystals are defined."""
+    _, expected = reference(CONDITIONAL_REFERENCE)
+
+    for kind in ("unconditional", "conditional"):
+        assert compare_sampling_scores(pretrained_conditional, expected, kind) >= 2

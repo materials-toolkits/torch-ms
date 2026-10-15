@@ -3,17 +3,19 @@
 MatterGen is the diffusion model of crystals of Zeni, Pinsler, Zügner, Fowler, Horton, Fu
 et al. ([MatterGen](https://github.com/microsoft/mattergen), commit `9242366`, version
 1.0.3, MIT, [Nature 2025](https://doi.org/10.1038/s41586-025-08628-5)), in
-`torchms/models/mattergen/`. Only its base model is rewritten: it generates crystals of
-given numbers of atoms, with their elements, without condition.
+`torchms/models/mattergen/`. Two of its models are rewritten: the base model, which
+generates crystals of given numbers of atoms with their elements, without condition, and
+the model fine-tuned on a chemical system, which generates them with given elements: see
+[Conditioned on a chemical system](#conditioned-on-a-chemical-system).
 
 | | |
 |---|---|
-| Class | `MatterGen` |
+| Class | `MatterGen`, and `MatterGenChemicalSystem` for a chemical system |
 | Does | samples the elements, the lattice and the coordinates of crystals of given numbers of atoms |
 | Source | [MatterGen](https://github.com/microsoft/mattergen), commit `9242366` (1.0.3) |
 | License | MIT; its diffusion of the elements and its sampler are adapted from Google Research code under Apache-2.0 |
 | Paper | [A generative model for inorganic materials design](https://doi.org/10.1038/s41586-025-08628-5), Nature 639, 624 (2025), [arXiv:2312.03687](https://arxiv.org/abs/2312.03687) |
-| Weights | `mattergen-base`, of the authors (`mattergen_base` on [Hugging Face](https://huggingface.co/microsoft/mattergen)), trained on Alex-MP-20, 461 MB |
+| Weights | `mattergen-base`, of the authors (`mattergen_base` on [Hugging Face](https://huggingface.co/microsoft/mattergen)), trained on Alex-MP-20, 461 MB; `mattergen-chemical-system` (`chemical_system`), fine-tuned from it, 512 MB |
 | Network | [GemNet-T](gemnet.md), 512 features, 4 blocks, 44.6 M parameters |
 | Transform | `AddRadiusGraph(7.0, max_image_shift=5)`, `KeepNearestNeighbors(50)`, `MirrorEdges()`, `AddTriplets()`, `AddBonds()` |
 | Difference with the original | a step of the sampling: identical, given the same scores and noise. The network: as near to MatterGen in double precision as MatterGen in single precision is, up to 1.6e-2 on the score of a lattice (values up to 5.6) |
@@ -79,12 +81,74 @@ categorical distribution of these logits. The noise of the last step is `element
 The number of atoms is not generated. MatterGen draws it from the numbers of atoms of its
 training set, a table of its code; `sample_num_atoms` draws from it: from 1 to 20 atoms.
 
-Not included: the models conditioned on a property (chemical system, space group, band
-gap, magnetic density, bulk modulus, energy above the hull) and the guidance of their
-sampling, the model of MP-20 and the prediction of a structure from its composition, the
-training, the fine-tuning, the datasets and the evaluation. The checkpoint holds only
-tensors and is read with `weights_only=True`. The configuration stored with it is checked:
-the weights of a conditioned model, which has embeddings of properties, are refused.
+Not included: the models conditioned on the other properties (space group, band gap,
+magnetic density, bulk modulus, energy above the hull), the model of MP-20 and the
+prediction of a structure from its composition, the training, the fine-tuning, the datasets
+and the evaluation. The checkpoints hold only tensors and are read with
+`weights_only=True`. The configuration stored with them is checked: each model refuses the
+weights of the other one and of the models conditioned on other properties.
+
+## Conditioned on a chemical system
+
+`MatterGenChemicalSystem` is MatterGen fine-tuned on Alex-MP-20 with the chemical system of
+each crystal, the set of its elements: all its weights were trained again, from the ones of
+the base model. It generates crystals whose elements are the ones given.
+
+```{.python notest}
+from torchms.models import MatterGenChemicalSystem
+
+model = MatterGenChemicalSystem.from_pretrained(device="cuda")
+num_atoms = model.sample_num_atoms(8)
+guidance = model.guidance(["Li-Fe-P-O"] * 8)    # one system per crystal, factor 2
+
+structures = model.sample(num_atoms, guidance=guidance)   # 4000 calls of the network
+```
+
+- **The network** has an adapter before each of its 4 blocks: a network on the features of
+  an atom and the embedding of the chemical system of its crystal (a linear layer on 101
+  values, one per atomic number), whose output is added to the features through a linear
+  layer. A crystal without condition skips it (`gemnet.Condition`). For a conditioned
+  crystal, the scores of the elements outside its system are lowered by 1e10, as the ones
+  not allowed: its atoms can only take them.
+- **The guidance** (classifier-free) mixes the scores without and with the condition,
+  `unconditional + scale (conditional - unconditional)`, for the coordinates, the lattice
+  and the elements: two calls of the network per score. `guidance(systems, scale)` gives a
+  `Guidance`; its factor is 2 by default, the one of the README of MatterGen. 0 is the
+  model without condition, 1 the model with it. Without guidance, `sample` samples the
+  fine-tuned model without condition: these are not the crystals of `MatterGen`.
+- `model(structures, times, chemical_systems, conditioned)` is the network alone, with a
+  mask of the conditioned crystals; `scores(structures, times, guidance)` the mixed scores.
+
+With a generator of seed 0, 8 crystals of 6 to 16 atoms take 271 s on a GPU of 8 GB, and all
+their atoms have the elements asked for: Li4O2 (Li-O, 0.002 eV/atom above the hull,
+unrelaxed), Li3Fe2P2O7 (Li-Fe-P-O, 0.98), Na4Cl4 (0.087), Ti8O4 (0.19), Ga4N4 (0.058), Si4C4
+(−0.002), MgAl5O8 (0.23) and CuZn3Sn3S9 (0.13). These are single draws, without
+relaxation.
+
+### Comparison with the original
+
+Compared with MatterGen `9242366` as the base model, with the weights `chemical_system`: the
+40 structures of the tests, every other one conditioned on its own chemical system, and the
+sampling of 4 crystals of 4, 8, 2 and 6 atoms towards Li-O, Fe-Ni-O, Na-Cl and Ti-O, with a
+factor of 2, recording both scores the guidance mixes at 10 steps.
+
+| | |
+|---|---|
+| Mixed scores of the guidance, from the two scores of MatterGen | identical, at every recorded step |
+| A step of the guided sampling, given its scores and its noise: coordinates, lattice, probabilities of the elements | identical |
+| Elements of the crystals MatterGen returns | identical: Li2O2, FeNi3O4, NaCl, Ti2O4 |
+| Network, conditioned structures without noise (12, 56 atoms): lattice, largest / mean difference with MatterGen in double precision (values up to 5.1) | 1.2e-2 / 3.1e-4, MatterGen in single precision 1.2e-2 / 2.3e-4 |
+| The same, scores of the elements (values up to 20) | 4.6e-2 / 3.9e-3, MatterGen 2.3e-2 / 2.0e-3 |
+| Network, conditioned structures with noise (16, 93 atoms): coordinates, lattice, elements | 3.9e-4, 1.4e-4, 4.7e-3; MatterGen 5.8e-4, 1.5e-4, 5.7e-3 |
+| Network, structures without condition (23): all within the rounding of MatterGen | up to 2.8e-2 on a lattice, as MatterGen in single precision |
+
+The scores of the elements of the conditioned structures without noise are twice as far
+from MatterGen in double precision as MatterGen is, on average. This is rounding again,
+measured: moving the lattice of these structures by its last bit moves these scores by
+7.6e-3 on average, twice the difference. The tests accept a difference as small as MatterGen
+in single precision, or within 3 times what a change of the last bits of the inputs does to
+the rewrite. The same holds on the crystals of the sampling: on a masked crystal of 2 atoms
+at the time 0.998, its last bits move the score of its lattice by up to 0.2.
 
 ## Comparison with the original
 

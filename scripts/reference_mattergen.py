@@ -30,10 +30,20 @@ pkg_resources lightning imports.
 
 WEIGHTS is the directory of the two files of weights listed in
 src/torchms/models/mattergen/config.yaml: the cache of torchms after a first
-from_pretrained(), "~/.cache/torchms/mattergen/mattergen-base". The model is
-loaded from it as MatterGen loads a checkpoint, with the mask of the elements
-its script of generation adds. The result is written to
-tests/data/mattergen_reference.npz and read by tests/test_mattergen.py.
+from_pretrained(). The model is loaded from it as MatterGen loads a
+checkpoint, with the mask of the elements its script of generation adds. The
+script is run once for each model, and finds which one it is given:
+
+* "~/.cache/torchms/mattergen/mattergen-base", the base model: the result is
+  written to tests/data/mattergen_reference.npz;
+* "~/.cache/torchms/mattergen/mattergen-chemical-system", the model
+  conditioned on a chemical system: the result is written to
+  tests/data/mattergen_chemical_system_reference.npz. The network is run on
+  every other structure with its own chemical system, on the other ones
+  without condition, and the sampling with the guidance of the README of
+  MatterGen, recording the scores with and without condition of each step.
+
+Both are read by tests/test_mattergen.py.
 
 The structures are the ones of tests/data/orb_reference.npz.
 
@@ -65,6 +75,11 @@ SAMPLING_NUM_ATOMS = [4, 8, 2, 6]
 # steps of the sampling which are saved, with what they draw: the first ones
 # follow each other, the last one gives the crystals MatterGen returns
 SAVED_STEPS = [0, 1, 2, 100, 300, 500, 700, 900, 998, 999]
+
+# the sampling of a model conditioned on a chemical system: one system per
+# crystal, and the factor of the guidance of the README of MatterGen
+SAMPLING_CHEMICAL_SYSTEMS = ["Li-O", "Fe-Ni-O", "Na-Cl", "Ti-O"]
+GUIDANCE = 2.0
 
 
 def load_model(mattergen: Path, weights: Path):
@@ -103,6 +118,50 @@ def chemgraphs(lattice, x, z, num_atoms):
             for i in range(len(num_atoms))
         ]
     )
+
+
+def condition(model) -> str | None:
+    """Property the model is conditioned on, None for the base model."""
+    properties = list(model.diffusion_module.model.property_embeddings_adapt)
+    assert len(properties) <= 1, properties
+
+    return properties[0] if properties else None
+
+
+def with_chemical_systems(batch, systems: list[str], conditioned: np.ndarray):
+    """Batch with a chemical system per structure, used where conditioned."""
+    from mattergen.property_embeddings import _USE_UNCONDITIONAL_EMBEDDING
+
+    unconditional = torch.from_numpy(~conditioned).reshape(-1, 1)
+
+    return batch.replace(
+        chemical_system=systems,
+        **{_USE_UNCONDITIONAL_EMBEDDING: {"chemical_system": unconditional}},
+    )
+
+
+def own_chemical_systems(z: np.ndarray, num_atoms: np.ndarray) -> list[str]:
+    """Chemical system of each structure: its elements joined by dashes."""
+    from mattergen.common.utils.data_utils import get_element_symbol
+
+    ptr = np.concatenate([[0], np.cumsum(num_atoms)])
+
+    return [
+        "-".join(
+            get_element_symbol(int(e)) for e in sorted(set(z[ptr[i] : ptr[i + 1]]))
+        )
+        for i in range(len(num_atoms))
+    ]
+
+
+def multi_hot(systems: list[str]) -> np.ndarray:
+    """Chemical systems as MatterGen encodes them, one column per atomic number."""
+    from mattergen.property_embeddings import ChemicalSystemMultiHotEmbedding
+
+    return ChemicalSystemMultiHotEmbedding.sequences_to_multi_hot(
+        ChemicalSystemMultiHotEmbedding.convert_to_list_of_str(systems),
+        torch.device("cpu"),
+    ).numpy()
 
 
 def graph(model, batch) -> dict[str, np.ndarray]:
@@ -150,6 +209,9 @@ class Recorder:
         self.drawn: list[torch.Tensor] = []
         self.posteriors: list[torch.Tensor] = []
         self.scores: list = []
+        # the scores without and with condition the guidance combines
+        self.guided: list[tuple[torch.Tensor, torch.Tensor]] = []
+        self.lerp = torch.lerp
         self.sampler = sampler
         self.score_fn = sampler._score_fn
         self.functions = (torch.randn, torch.randn_like)
@@ -170,6 +232,10 @@ class Recorder:
         self.scores.append(self.score_fn(*args, **kwargs))
         return self.scores[-1]
 
+    def record_lerp(self, start, end, weight):
+        self.guided.append((start, end))
+        return self.lerp(start, end, weight)
+
     def record_posterior(self, *args, **kwargs):
         logits, samples = self.posterior(*args, **kwargs)
         self.posteriors.append(logits)
@@ -180,6 +246,7 @@ class Recorder:
         torch.distributions.Categorical.sample = self.record(self.categorical)
         self.d3pm.sample_and_compute_posterior_q = self.record_posterior
         self.sampler._score_fn = self.record_scores
+        torch.lerp = self.record_lerp
         return self
 
     def __exit__(self, *error):
@@ -187,22 +254,36 @@ class Recorder:
         torch.distributions.Categorical.sample = self.categorical
         self.d3pm.sample_and_compute_posterior_q = self.posterior
         del self.sampler._score_fn
+        torch.lerp = self.lerp
 
 
 def sampling(model, mattergen: Path) -> dict[str, np.ndarray]:
-    """The whole sampling of a few crystals, with everything it draws."""
+    """The whole sampling of a few crystals, with everything it draws.
+
+    A conditioned model samples with the chemical systems and the guidance of
+    SAMPLING_CHEMICAL_SYSTEMS and GUIDANCE.
+    """
     import hydra
     from hydra.utils import instantiate
     from mattergen.common.data.collate import collate
     from mattergen.common.data.dataset import NumAtomsCrystalDataset
 
     config_dir = mattergen / "mattergen" / "sampling_conf"
+    conditional = condition(model) is not None
+    overrides = [f"sampler_partial.guidance_scale={GUIDANCE}"] if conditional else []
     with hydra.initialize_config_dir(str(config_dir.resolve()), version_base=None):
-        config = hydra.compose(config_name="default")
+        config = hydra.compose(config_name="default", overrides=overrides)
     sampler = instantiate(config.sampler_partial)(pl_module=model)
 
     dataset = NumAtomsCrystalDataset(num_atoms=np.array(SAMPLING_NUM_ATOMS))
-    conditions = collate([dataset[i] for i in range(len(dataset))])
+    items = [dataset[i] for i in range(len(dataset))]
+    if conditional:
+        # as the script of generation of MatterGen sets a property
+        items = [
+            item.replace(chemical_system=system)
+            for item, system in zip(items, SAMPLING_CHEMICAL_SYSTEMS)
+        ]
+    conditions = collate(items)
 
     with Recorder(model, sampler) as recorder:
         sample, mean, states = sampler.sample_with_record(conditions)
@@ -216,6 +297,16 @@ def sampling(model, mattergen: Path) -> dict[str, np.ndarray]:
     n_struct, n_atoms = len(SAMPLING_NUM_ATOMS), sum(SAMPLING_NUM_ATOMS)
     assert len(drawn) == 2 + 6 * steps and len(posteriors) == steps
     assert len(scores) == 2 * steps
+    # the guidance combines the scores of the coordinates, of the lattice and of
+    # the elements, of each call
+    guided = recorder.guided
+    assert len(guided) == (6 * steps if conditional else 0)
+
+    def unguided(call: int, shape: tuple[int, ...], position: int) -> torch.Tensor:
+        found = [pair[position] for pair in guided[3 * call : 3 * call + 3]]
+        (values,) = [v for v in found if v.shape == shape]
+        return values
+
     assert len(states) == 2 * steps
     shapes = [(n_atoms, 3), (n_struct, 3, 3), (n_atoms, 3), (n_struct, 1, 1)]
     shapes += [(n_atoms,), (n_atoms,)]
@@ -264,6 +355,30 @@ def sampling(model, mattergen: Path) -> dict[str, np.ndarray]:
         "predictor_score_l": saved([scores[2 * s + 1]["cell"] for s in SAVED_STEPS]),
         "predictor_score_logits": saved(
             [scores[2 * s + 1]["atomic_numbers"] for s in SAVED_STEPS]
+        ),
+        **(
+            {
+                f"{name}_{kind}_{field}": saved(
+                    [unguided(2 * s + call, shape, position) for s in SAVED_STEPS]
+                )
+                for call, name in enumerate(("corrector", "predictor"))
+                for position, kind in enumerate(("unconditional", "conditional"))
+                for field, shape in (
+                    ("x", (n_atoms, 3)),
+                    ("l", (n_struct, 3, 3)),
+                    ("logits", (n_atoms, 101)),
+                )
+            }
+            if conditional
+            else {}
+        ),
+        **(
+            {
+                "sampling_chemical_systems": multi_hot(SAMPLING_CHEMICAL_SYSTEMS),
+                "sampling_guidance": np.array(GUIDANCE),
+            }
+            if conditional
+            else {}
         ),
         "mean_x": mean["pos"].numpy(),
         "mean_l": mean["cell"].numpy(),
@@ -347,8 +462,19 @@ def main():
     batch = chemgraphs(data["lattice"], data["x"], data["z"], data["num_atoms"])
     print("structures", len(data["num_atoms"]), "atoms", int(data["num_atoms"].sum()))
 
+    result = {}
+    name = condition(model)
+    if name is not None:
+        assert name == "chemical_system", name
+        # every other structure with its own chemical system, the other ones
+        # without condition
+        systems = own_chemical_systems(data["z"], data["num_atoms"])
+        conditioned = np.arange(len(systems)) % 2 == 0
+        batch = with_chemical_systems(batch, systems, conditioned)
+        result.update(chemical_systems=multi_hot(systems), conditioned=conditioned)
+
     with torch.no_grad():
-        result = graph(model, batch)
+        result.update(graph(model, batch))
         result.update(network(model, batch, "clean"))
 
         # the same with the noise of the diffusion at the time of each
@@ -367,7 +493,10 @@ def main():
         result.update(sampling(model, mattergen))
         result.update(network_in_double(model, {"clean": batch, "noisy": noisy}, times))
 
-    np.savez_compressed(DATA / "mattergen_reference.npz", **result)
+    output = (
+        "mattergen_reference.npz" if name is None else f"mattergen_{name}_reference.npz"
+    )
+    np.savez_compressed(DATA / output, **result)
     print("edges", result["graph_num_edges"].tolist())
     for name in ("clean_pred_x", "clean_pred_l", "noisy_pred_x", "noisy_pred_l"):
         print(name, np.abs(result[name]).max(), np.abs(result[name]).mean())

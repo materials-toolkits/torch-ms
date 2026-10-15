@@ -29,7 +29,9 @@ The network also reads a vector of each structure, given to all its atoms.
 MatterGen adds two things, which a Config turns on: the edges also read the
 cosines of their angles with the three lattice vectors, and a read-out gives a
 symmetric 3 x 3 matrix for each structure, a sum over its edges of a scalar
-times the outer product of their direction.
+times the outer product of their direction. Its models conditioned on a
+property add, before each block, a small network which reads the features of
+an atom and the embedding of the property of its structure, see Condition.
 
 GemNet is published in "GemNet: Universal Directional Graph Neural Networks
 for Molecules", Gasteiger, Becker and Günnemann (arXiv:2106.08903). GemNet-T
@@ -51,7 +53,7 @@ import math
 from dataclasses import dataclass
 
 import torch
-from jaxtyping import Float, Int
+from jaxtyping import Bool, Float, Int
 from torch import nn
 
 from torchms.graph.graph import EdgeTuples, Graph
@@ -86,6 +88,9 @@ class Config:  # pylint: disable=too-many-instance-attributes
             cosines of its angles with the lattice vectors, as in MatterGen.
         predict_lattice: If True, the network also gives a symmetric matrix
             for each structure, as in MatterGen.
+        conditions: Names of the properties the network is conditioned on,
+            as the models of MatterGen fine-tuned on a property: one adapter
+            per property before each block. None by default.
     """
 
     latent_dim: int
@@ -107,6 +112,22 @@ class Config:  # pylint: disable=too-many-instance-attributes
     activation_scale: float
     lattice_cosines: bool
     predict_lattice: bool
+    conditions: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class Condition:
+    """A property of each structure, which conditions the network where it is active.
+
+    Args:
+        embedding: Embedding of the property of each structure, shape
+            (n_struct, hidden_dim).
+        active: Whether each structure is conditioned on it, shape (n_struct,).
+            Its adapters add nothing to the atoms of the other ones.
+    """
+
+    embedding: Float[torch.Tensor, "n_struct hidden_dim"]
+    active: Bool[torch.Tensor, "n_struct"]
 
 
 @dataclass(frozen=True)
@@ -573,6 +594,30 @@ class GemNetT(nn.Module):  # pylint: disable=too-many-instance-attributes
                 LatticeOutputBlock(config) for _ in range(config.num_blocks + 1)
             )
 
+        # adapters of the properties, named as in MatterGen
+        self.cond_adapt_layers = nn.ModuleDict(
+            {
+                name: nn.ModuleList(
+                    nn.Sequential(
+                        nn.Linear(2 * config.hidden_dim, config.hidden_dim),
+                        nn.ReLU(),
+                        nn.Linear(config.hidden_dim, config.hidden_dim),
+                    )
+                    for _ in range(config.num_blocks)
+                )
+                for name in config.conditions
+            }
+        )
+        self.cond_mixin_layers = nn.ModuleDict(
+            {
+                name: nn.ModuleList(
+                    nn.Linear(config.hidden_dim, config.hidden_dim, bias=False)
+                    for _ in range(config.num_blocks)
+                )
+                for name in config.conditions
+            }
+        )
+
         self.out_blocks = nn.ModuleList(
             OutputBlock(config) for _ in range(config.num_blocks + 1)
         )
@@ -580,7 +625,7 @@ class GemNetT(nn.Module):  # pylint: disable=too-many-instance-attributes
             InteractionBlockTripletsOnly(config) for _ in range(config.num_blocks)
         )
 
-    def forward(  # pylint: disable=too-many-locals
+    def forward(  # pylint: disable=too-many-locals,too-many-positional-arguments
         self,
         latent: Float[torch.Tensor, "n_struct latent_dim"],
         element: Int[torch.Tensor, "n_atoms"],
@@ -590,6 +635,7 @@ class GemNetT(nn.Module):  # pylint: disable=too-many-instance-attributes
         vectors: Float[torch.Tensor, "n_edges 3"],
         cosine: Float[torch.Tensor, "n_triplets"],
         lattice: Float[torch.Tensor, "n_struct 3 3"] | None = None,
+        conditions: tuple[Condition, ...] = (),
     ) -> Output:
         """Features and vector of each atom, and matrix of each structure.
 
@@ -603,11 +649,19 @@ class GemNetT(nn.Module):  # pylint: disable=too-many-instance-attributes
             cosine: Cosine of the angle of each triplet.
             lattice: Lattice vectors of each structure, as rows, read with
                 Config.lattice_cosines.
+            conditions: One Condition per property of Config.conditions, in
+                its order.
 
         Raises:
             ValueError: If the configuration reads the lattice and it is not
-                given.
+                given, or if there is not one condition per property.
         """
+        if len(conditions) != len(self.config.conditions):
+            raise ValueError(
+                f"this GemNet-T is conditioned on {list(self.config.conditions)}: "
+                f"give one Condition each, not {len(conditions)}"
+            )
+
         distance = vectors.norm(dim=-1)
         # an edge of cdvae goes to the atom which lists it, from the other one
         towards = -vectors / distance.unsqueeze(-1)
@@ -635,6 +689,7 @@ class GemNetT(nn.Module):  # pylint: disable=too-many-instance-attributes
         for i, (int_block, out_block) in enumerate(
             zip(self.int_blocks, self.out_blocks[1:]), start=1
         ):
+            h = self.adapt(i - 1, h, conditions, graph)
             h, m = int_block(h, m, rbf3, rbf_cbf3, cbf3, rbf_h, graph, angles, bonds)
             scalar = scalar + out_block(m, rbf_out)
             lattice_scores.append(self.lattice_score(i, m, rbf, towards, graph))
@@ -651,6 +706,34 @@ class GemNetT(nn.Module):  # pylint: disable=too-many-instance-attributes
                 lattice_score = lattice_score + score
 
         return Output(h, move, lattice_score)
+
+    def adapt(
+        self,
+        block: int,
+        h: Float[torch.Tensor, "n_atoms d"],
+        conditions: tuple[Condition, ...],
+        graph: Graph,
+    ) -> Float[torch.Tensor, "n_atoms d"]:
+        """Features of the atoms with the adapters of the properties, before a block."""
+        if not self.config.conditions:
+            return h
+
+        h_adapt = torch.zeros_like(h)
+        for name, condition in zip(self.config.conditions, conditions):
+            embedding = graph.unpool_structures(condition.embedding)
+            active = graph.unpool_structures(condition.active.float()).unsqueeze(-1)
+
+            adapt_layers, mixin_layers = (
+                self.cond_adapt_layers[name],
+                self.cond_mixin_layers[name],
+            )
+            assert isinstance(adapt_layers, nn.ModuleList)
+            assert isinstance(mixin_layers, nn.ModuleList)
+
+            adapted = adapt_layers[block](torch.cat([h, embedding], dim=-1))
+            h_adapt += active * mixin_layers[block](adapted)
+
+        return h + h_adapt
 
     def lattice_score(  # pylint: disable=too-many-positional-arguments
         self,

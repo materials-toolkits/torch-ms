@@ -52,6 +52,10 @@
 
 ::: torchms.models.mattergen.model
 
+::: torchms.models.mattergen.chemical_system
+
+::: torchms.models.mattergen.diffusion
+
 ::: torchms.models.mattergen.config
 
 ## Layers
