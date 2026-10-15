@@ -16,14 +16,20 @@ crystals, metal-organic frameworks and molecules. It provides:
 - **Energy above the convex hull**, from DFT energies or estimated with a pretrained model.
 
 ```{.python notest}
-from torchms.data import load_dataset
+from pathlib import Path
+
+from torchms.data import parse_cif
 from torchms.models.estimator import EnergyEstimator
 
-dataset = load_dataset("mp-20", "test")
-structures = dataset[:32]  # a batch of 32 crystals
+# every data block of the file is a structure of the batch
+structures = parse_cif(Path("structures.cif").read_text())
 
 estimator = EnergyEstimator.from_lematerial(device="cuda")
-energy, above_hull = estimator.predict_energy_above_hull(dataset)
+energy, above_hull = estimator.predict_energy_above_hull(structures)
+
+for i, (e, above) in enumerate(zip(energy, above_hull)):
+    n = int(structures.num_atoms[i])
+    print(f"{n:3d} atoms  {e / n:8.4f} eV/atom  {above:8.4f} eV/atom above hull")
 ```
 
 ## Where to go

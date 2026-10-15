@@ -371,6 +371,19 @@ class Structures:  # pylint: disable=too-many-instance-attributes
 
         return replace(self, graph=None, **{name: None for name in TUPLES_FIELDS})
 
+    def __len__(self) -> int:
+        """Number of structures of the batch.
+
+        Returns:
+            n_struct, the number of structures, not of atoms.
+
+        Examples:
+            >>> batch = Structures.collate([Structures.diamond()] * 3)
+            >>> len(batch), int(batch.num_atoms.sum())
+            (3, 24)
+        """
+        return len(self.num_atoms)
+
     def device(self) -> torch.device:
         """Get the device of the lattice tensor.
 

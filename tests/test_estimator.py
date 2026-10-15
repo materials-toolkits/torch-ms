@@ -831,6 +831,16 @@ def test_predict_energy_above_hull(tmp_path, float_model):
     np.testing.assert_allclose(above, expected[[1, 4]], atol=1e-5)
     assert energy.shape == (2,)
 
+    # a batch of Structures gives what the dataset gives
+    batch = Structures.collate(parts)
+    energy, above = estimator.predict_energy_above_hull(batch, max_atoms=10)
+    np.testing.assert_allclose(energy, estimator.predict(dataset), rtol=1e-4)
+    np.testing.assert_allclose(above, expected, atol=1e-5, equal_nan=True)
+
+    energy, above = estimator.predict_energy_above_hull(batch, np.array([1, 4]))
+    np.testing.assert_allclose(above, expected[[1, 4]], atol=1e-5)
+    assert energy.shape == (2,)
+
 
 def test_from_pretrained_loads_correction_and_hull(tmp_path, float_model, monkeypatch):
     path, _ = hull_file(tmp_path, float_model)
