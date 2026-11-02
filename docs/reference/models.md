@@ -56,7 +56,11 @@
 
 ::: torchms.models.mattergen.space_group
 
+::: torchms.models.mattergen.scalar
+
 ::: torchms.models.mattergen.band_gap
+
+::: torchms.models.mattergen.magnetic_density
 
 ::: torchms.models.mattergen.diffusion
 

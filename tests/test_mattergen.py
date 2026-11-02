@@ -33,6 +33,7 @@ from torchms.models.mattergen import (
     MatterGen,
     MatterGenBandGap,
     MatterGenChemicalSystem,
+    MatterGenMagneticDensity,
     MatterGenSpaceGroup,
     StepNoise,
 )
@@ -43,6 +44,7 @@ NAME = "mattergen-base"
 CHEMICAL_SYSTEM_NAME = "mattergen-chemical-system"
 SPACE_GROUP_NAME = "mattergen-space-group"
 BAND_GAP_NAME = "mattergen-dft-band-gap"
+MAGNETIC_DENSITY_NAME = "mattergen-dft-mag-density"
 
 # a network of 512 features on 50 neighbours per atom and their triplets:
 # slower than the default timeout
@@ -106,18 +108,21 @@ def test_pinned_checkpoints(tmp_path):
         CHEMICAL_SYSTEM_NAME,
         SPACE_GROUP_NAME,
         BAND_GAP_NAME,
+        MAGNETIC_DENSITY_NAME,
     }
     assert Config.load().default_weights == NAME
     assert Config.load().chemical_system.default_weights == CHEMICAL_SYSTEM_NAME
     assert MatterGenChemicalSystem().default_weights() == CHEMICAL_SYSTEM_NAME
     assert MatterGenSpaceGroup().default_weights() == SPACE_GROUP_NAME
     assert MatterGenBandGap().default_weights() == BAND_GAP_NAME
+    assert MatterGenMagneticDensity().default_weights() == MAGNETIC_DENSITY_NAME
 
     for name, directory in (
         (NAME, "mattergen_base"),
         (CHEMICAL_SYSTEM_NAME, "chemical_system"),
         (SPACE_GROUP_NAME, "space_group"),
         (BAND_GAP_NAME, "dft_band_gap"),
+        (MAGNETIC_DENSITY_NAME, "dft_mag_density"),
     ):
         for checkpoint in weights.CHECKPOINTS["mattergen"][name]:
             # a commit of the repository of the authors, not a branch
@@ -586,7 +591,13 @@ def nested(sections: dict[str, dict[str, object]]) -> dict[str, object]:
 def upstream_state(model: MatterGen) -> dict[str, torch.Tensor]:
     """Parameters of a model under the names of MatterGen."""
     upstream = Config.load().upstream
-    renamed = {new: old for old, new in upstream.renamed_parameters.items()}
+    # the renames of the property of the model: two properties share names
+    renamed = {
+        new: old
+        for old, new in upstream.renamed_parameters.items()
+        if not old.startswith("property_embeddings_adapt.")
+        or old.startswith(f"property_embeddings_adapt.{model.CONDITION}.")
+    }
     state = {}
     for name, values in model.state_dict().items():
         for new, old in renamed.items():
@@ -857,8 +868,8 @@ def test_each_fine_tuned_model_refuses_the_weights_of_the_other_one(
 def band_gap_model() -> MatterGenBandGap:
     torch.manual_seed(0)
     model = MatterGenBandGap(narrow()).eval().requires_grad_(False)
-    model.band_gap_mean.fill_(0.8)
-    model.band_gap_std.fill_(1.4)
+    model.property_mean.fill_(0.8)
+    model.property_std.fill_(1.4)
 
     return model
 
@@ -878,7 +889,7 @@ def test_band_gap_guidance(band_gap_model):
 def test_band_gap_embedding(band_gap_model):
     # the gap standardized, then a sine and a cosine per frequency, as the time
     embedding = band_gap_model.embed_condition(torch.tensor([0.8, 2.2]))
-    frequencies = band_gap_model.band_gap_frequencies
+    frequencies = band_gap_model.property_frequencies
 
     assert embedding.shape == (2, 64)
     assert torch.equal(embedding[0], band_gap_model.embed_time(torch.zeros(1))[0])
@@ -912,12 +923,34 @@ def test_band_gap_load_pretrained(band_gap_model, space_group_model):
     other.load_pretrained(
         state, nested(Config.load().upstream_sections("dft_band_gap"))
     )
-    assert torch.equal(other.band_gap_std, torch.tensor([1.4]))
+    assert torch.equal(other.property_std, torch.tensor([1.4]))
 
     with pytest.raises(InvalidWeights, match="Missing"):
         other.load_pretrained(upstream_state(space_group_model))
     with pytest.raises(InvalidWeights, match="Missing"):
         MatterGenSpaceGroup(space_group_model.config).load_pretrained(state)
+
+
+def test_magnetic_density_shares_the_model_of_a_number(band_gap_model):
+    # the same network as the band gap, its own property and its own weights
+    model = MatterGenMagneticDensity(narrow())
+    assert model.CONDITION == "dft_mag_density"
+    assert model.gemnet.config.conditions == ("dft_mag_density",)
+    assert model.guidance([0.15]).scale == 2.0
+
+    state = upstream_state(model)
+    prefix = "diffusion_module.model.property_embeddings_adapt.dft_mag_density."
+    assert prefix + "scaler.stds" in state
+    model.load_pretrained(
+        state, nested(Config.load().upstream_sections("dft_mag_density"))
+    )
+
+    with pytest.raises(InvalidWeights, match="Missing"):
+        model.load_pretrained(upstream_state(band_gap_model))
+    with pytest.raises(InvalidWeights, match="no .*dft_mag_density"):
+        model.load_pretrained(
+            state, nested(Config.load().upstream_sections("dft_band_gap"))
+        )
 
 
 # the pretrained model against the real MatterGen
@@ -1319,6 +1352,7 @@ FINE_TUNED = {
     "chemical_system": (MatterGenChemicalSystem, CHEMICAL_SYSTEM_NAME),
     "space_group": (MatterGenSpaceGroup, SPACE_GROUP_NAME),
     "dft_band_gap": (MatterGenBandGap, BAND_GAP_NAME),
+    "dft_mag_density": (MatterGenMagneticDensity, MAGNETIC_DENSITY_NAME),
 }
 
 

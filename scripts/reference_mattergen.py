@@ -37,13 +37,15 @@ script is run once for each model, and finds which one it is given:
 * "~/.cache/torchms/mattergen/mattergen-base", the base model: the result is
   written to tests/data/mattergen_reference.npz;
 * "~/.cache/torchms/mattergen/mattergen-chemical-system",
-  "~/.cache/torchms/mattergen/mattergen-space-group" and
-  "~/.cache/torchms/mattergen/mattergen-dft-band-gap", the models conditioned
-  on a chemical system, a space group and a band gap: the result is written to
+  "~/.cache/torchms/mattergen/mattergen-space-group",
+  "~/.cache/torchms/mattergen/mattergen-dft-band-gap" and
+  "~/.cache/torchms/mattergen/mattergen-dft-mag-density", the models
+  conditioned on a chemical system, a space group, a band gap and a magnetic
+  density: the result is written to
   tests/data/mattergen_<property>_reference.npz. The network is run on every
   other structure with its own chemical system or space group (pymatgen,
-  symprec 0.1), or a band gap from 0 to 6 eV, on the other ones without
-  condition, and the sampling with the guidance of the README of MatterGen,
+  symprec 0.1), or a band gap from 0 to 6 eV, or a magnetic density from 0 to
+  0.2, on the other ones without condition, and the sampling with the guidance of the README of MatterGen,
   recording the scores with and without condition of each step.
 
 Both are read by tests/test_mattergen.py.
@@ -85,6 +87,7 @@ SAMPLING_CONDITIONS = {
     "chemical_system": ["Li-O", "Fe-Ni-O", "Na-Cl", "Ti-O"],
     "space_group": [225, 194, 221, 166],
     "dft_band_gap": [0.0, 1.5, 3.0, 6.0],
+    "dft_mag_density": [0.0, 0.05, 0.15, 0.3],
 }
 GUIDANCE = 2.0
 
@@ -530,8 +533,10 @@ def main():
         elif name == "space_group":
             values = own_space_groups(data)
         else:
-            # the test structures have no band gap: a range of them
-            values = np.linspace(0.0, 6.0, len(data["num_atoms"])).tolist()
+            # the test structures have no band gap and no magnetic density: a
+            # range of them
+            stop = {"dft_band_gap": 6.0, "dft_mag_density": 0.2}[name]
+            values = np.linspace(0.0, stop, len(data["num_atoms"])).tolist()
         conditioned = np.arange(len(values)) % 2 == 0
         batch = with_condition(batch, name, values, conditioned)
         result.update(

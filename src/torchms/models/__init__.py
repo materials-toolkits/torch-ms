@@ -4,8 +4,9 @@ Supervised models predict a property of a structure: OrbV3, MACE, M3GNet and
 CHGNet its total energy, ALIGNN its formation energy.
 
 Generative models generate structures: CDVAE, DiffCSPGeneration and
-MatterGen, MatterGenChemicalSystem for given elements, MatterGenSpaceGroup and
-MatterGenBandGap towards a space group or a band gap, and DiffCSP for a given
+MatterGen, MatterGenChemicalSystem for given elements, MatterGenSpaceGroup,
+MatterGenBandGap and MatterGenMagneticDensity towards a space group, a band gap
+or a magnetic density, and DiffCSP for a given
 composition.
 
 All of them are pretrained models of other projects, rewritten with the graphs
@@ -30,6 +31,7 @@ from torchms.models.mattergen import (
     MatterGen,
     MatterGenBandGap,
     MatterGenChemicalSystem,
+    MatterGenMagneticDensity,
     MatterGenSpaceGroup,
 )
 from torchms.models.orb import OrbV3
@@ -45,6 +47,7 @@ __all__ = [
     "MatterGen",
     "MatterGenBandGap",
     "MatterGenChemicalSystem",
+    "MatterGenMagneticDensity",
     "MatterGenSpaceGroup",
     "OrbV3",
 ]

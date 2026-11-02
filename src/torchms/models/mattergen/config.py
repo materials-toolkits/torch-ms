@@ -193,6 +193,8 @@ class Config(YamlConfig):
             own.
         dft_band_gap: What the model conditioned on a band gap has of its
             own.
+        dft_mag_density: What the model conditioned on a magnetic density
+            has of its own.
     """
 
     graph: GraphConfig
@@ -206,19 +208,25 @@ class Config(YamlConfig):
     chemical_system: ConditionConfig
     space_group: ConditionConfig
     dft_band_gap: ConditionConfig
+    dft_mag_density: ConditionConfig
 
     def condition(self, name: str) -> ConditionConfig:
         """What the model fine-tuned on a property has of its own.
 
         Args:
-            name: The property: "chemical_system", "space_group" or
-                "dft_band_gap".
+            name: The property: "chemical_system", "space_group",
+                "dft_band_gap" or "dft_mag_density".
 
         Examples:
             >>> Config.load().condition("space_group").default_weights
             'mattergen-space-group'
         """
-        if name not in ("chemical_system", "space_group", "dft_band_gap"):
+        if name not in (
+            "chemical_system",
+            "space_group",
+            "dft_band_gap",
+            "dft_mag_density",
+        ):
             raise ValueError(f"no model of MatterGen is conditioned on {name}")
 
         condition = getattr(self, name)
