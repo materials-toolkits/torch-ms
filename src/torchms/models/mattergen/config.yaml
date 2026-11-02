@@ -1,8 +1,8 @@
 # MatterGen: weights, graph and hyperparameters, read by model.py. The base
 # model, which generates crystals without condition (MatterGen), and the models
-# fine-tuned on a chemical system (MatterGenChemicalSystem) and on a space group
-# (MatterGenSpaceGroup), whose own values are in the sections "chemical_system"
-# and "space_group".
+# fine-tuned on a chemical system (MatterGenChemicalSystem), a space group
+# (MatterGenSpaceGroup) and a band gap (MatterGenBandGap), whose own values are
+# in the sections "chemical_system", "space_group" and "dft_band_gap".
 
 default_weights: mattergen-base
 
@@ -30,6 +30,12 @@ checkpoints:
       sha256: 1b6ab06739f4319d75f4a19960840ec3c8d3d32ee842c996876ef9d8b188e4bb
     - url: https://huggingface.co/microsoft/mattergen/resolve/5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/space_group/config.yaml
       sha256: 75ebcb5bcf3fc2f1c78aeb9a99c88bd99ebd61fcdaa5fe9463344a7c29df62ac
+  # the same for the band gaps from DFT ("dft_band_gap" in their checkpoints)
+  mattergen-dft-band-gap:
+    - url: https://huggingface.co/microsoft/mattergen/resolve/5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/dft_band_gap/checkpoints/last.ckpt
+      sha256: 864ebbfd360e0a8287287d290a552da6b6bd92d67418a6a40be419ed3acd5e7e
+    - url: https://huggingface.co/microsoft/mattergen/resolve/5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/dft_band_gap/config.yaml
+      sha256: 0e14dfe5ce3906fb5c6d80f9ef000278a9c679f639f7712e7690f7c4a9431e6e
 
 unused_parameters: []
 
@@ -138,6 +144,9 @@ upstream:
     property_embeddings_adapt.chemical_system.conditional_embedding_module.embedding.weight: chemical_system_embedding.weight
     property_embeddings_adapt.chemical_system.conditional_embedding_module.embedding.bias: chemical_system_embedding.bias
     property_embeddings_adapt.space_group.conditional_embedding_module.embedding.weight: space_group_embedding.weight
+    property_embeddings_adapt.dft_band_gap.conditional_embedding_module.div_term: band_gap_frequencies
+    property_embeddings_adapt.dft_band_gap.scaler.means: band_gap_mean
+    property_embeddings_adapt.dft_band_gap.scaler.stds: band_gap_std
   # configuration of the training the rewrite is written for (config.yaml of
   # the weights), by section
   sections:
@@ -260,3 +269,39 @@ space_group:
       hidden_dim: *hidden_dim
     lightning_module.diffusion_module.model.property_embeddings_adapt.space_group.scaler:
       _target_: torch.nn.Identity
+
+# the model fine-tuned on the band gap from DFT, in eV: the same network with
+# an adapter before each block, and the guidance of its sampling
+dft_band_gap:
+  default_weights: mattergen-dft-band-gap
+  # factor of the guidance, as in the README of MatterGen for the magnetic
+  # density, another number
+  guidance_scale: 2.0
+  upstream_sections:
+    lightning_module.diffusion_module.model:
+      _target_: mattergen.adapter.GemNetTAdapter
+      atom_type_diffusion: mask
+      denoise_atom_types: true
+      hidden_dim: *hidden_dim
+      property_embeddings: {}
+    lightning_module.diffusion_module.model.gemnet:
+      _target_: mattergen.common.gemnet.gemnet_ctrl.GemNetTCtrl
+      condition_on_adapt: [dft_band_gap]
+      cutoff: *radius
+      emb_size_atom: *hidden_dim
+      emb_size_edge: *hidden_dim
+      latent_dim: *hidden_dim
+      max_cell_images_per_dim: *max_image_shift
+      max_neighbors: *max_neighbors
+      num_blocks: *num_blocks
+      num_targets: 1
+      otf_graph: true
+      regress_stress: true
+    lightning_module.diffusion_module.model.property_embeddings_adapt.dft_band_gap:
+      _target_: mattergen.property_embeddings.PropertyEmbedding
+      name: dft_band_gap
+    lightning_module.diffusion_module.model.property_embeddings_adapt.dft_band_gap.conditional_embedding_module:
+      _target_: mattergen.diffusion.model_utils.NoiseLevelEncoding
+      d_model: *hidden_dim
+    lightning_module.diffusion_module.model.property_embeddings_adapt.dft_band_gap.scaler:
+      _target_: mattergen.common.utils.data_utils.StandardScalerTorch

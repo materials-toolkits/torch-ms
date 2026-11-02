@@ -93,7 +93,7 @@ Every field of `gemnet.Config` is required but `conditions`: a model gives the v
 | `activation_scale` | the SiLU is divided by it | 0.6 | 0.6 |
 | `lattice_cosines` | the edges read their cosines with the lattice vectors | false | true |
 | `predict_lattice` | a symmetric matrix for each structure | false | true |
-| `conditions` | names of the properties with an adapter, `()` by default | `()` | `("chemical_system",)` or `("space_group",)` for the fine-tuned models |
+| `conditions` | names of the properties with an adapter, `()` by default | `()` | `("chemical_system",)`, `("space_group",)` or `("dft_band_gap",)` for the fine-tuned models |
 
 ## What to know
 

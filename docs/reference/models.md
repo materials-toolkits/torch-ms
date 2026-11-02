@@ -56,6 +56,8 @@
 
 ::: torchms.models.mattergen.space_group
 
+::: torchms.models.mattergen.band_gap
+
 ::: torchms.models.mattergen.diffusion
 
 ::: torchms.models.mattergen.config

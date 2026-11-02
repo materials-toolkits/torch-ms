@@ -5,13 +5,15 @@ directory): model.py has its denoiser, its three diffusions, of the lattice,
 of the fractional coordinates and of the elements, and its sampling without
 condition (MatterGen) or guided towards a chemical system
 (MatterGenChemicalSystem, in chemical_system.py) or a space group
-(MatterGenSpaceGroup, in space_group.py); diffusion.py has the arithmetic of a
+(MatterGenSpaceGroup, in space_group.py) or a band gap (MatterGenBandGap, in
+band_gap.py); diffusion.py has the arithmetic of a
 step. Its network, GemNet-T, is in torchms.models.layers. The weights of the
-three models are listed in config.yaml, with their hyperparameters,
+four models are listed in config.yaml, with their hyperparameters,
 which config.py reads into a Config.
 """
 
 from torchms.models.mattergen.config import Config
+from torchms.models.mattergen.band_gap import MatterGenBandGap
 from torchms.models.mattergen.chemical_system import MatterGenChemicalSystem
 from torchms.models.mattergen.diffusion import Denoised, Guidance, StepNoise
 from torchms.models.mattergen.model import InvalidWeights, MatterGen
@@ -23,6 +25,7 @@ __all__ = [
     "Guidance",
     "InvalidWeights",
     "MatterGen",
+    "MatterGenBandGap",
     "MatterGenChemicalSystem",
     "MatterGenSpaceGroup",
     "StepNoise",

@@ -36,15 +36,15 @@ script is run once for each model, and finds which one it is given:
 
 * "~/.cache/torchms/mattergen/mattergen-base", the base model: the result is
   written to tests/data/mattergen_reference.npz;
-* "~/.cache/torchms/mattergen/mattergen-chemical-system" and
-  "~/.cache/torchms/mattergen/mattergen-space-group", the models conditioned
-  on a chemical system and on a space group: the result is written to
-  tests/data/mattergen_chemical_system_reference.npz and
-  tests/data/mattergen_space_group_reference.npz. The network is run on every
+* "~/.cache/torchms/mattergen/mattergen-chemical-system",
+  "~/.cache/torchms/mattergen/mattergen-space-group" and
+  "~/.cache/torchms/mattergen/mattergen-dft-band-gap", the models conditioned
+  on a chemical system, a space group and a band gap: the result is written to
+  tests/data/mattergen_<property>_reference.npz. The network is run on every
   other structure with its own chemical system or space group (pymatgen,
-  symprec 0.1), on the other ones without condition, and the sampling with the
-  guidance of the README of MatterGen, recording the scores with and without
-  condition of each step.
+  symprec 0.1), or a band gap from 0 to 6 eV, on the other ones without
+  condition, and the sampling with the guidance of the README of MatterGen,
+  recording the scores with and without condition of each step.
 
 Both are read by tests/test_mattergen.py.
 
@@ -84,6 +84,7 @@ SAVED_STEPS = [0, 1, 2, 100, 300, 500, 700, 900, 998, 999]
 SAMPLING_CONDITIONS = {
     "chemical_system": ["Li-O", "Fe-Ni-O", "Na-Cl", "Ti-O"],
     "space_group": [225, 194, 221, 166],
+    "dft_band_gap": [0.0, 1.5, 3.0, 6.0],
 }
 GUIDANCE = 2.0
 
@@ -154,8 +155,10 @@ def saved_values(name: str, values: list) -> np.ndarray:
     """Property of each structure as the rewrite reads it."""
     if name == "chemical_system":
         return multi_hot(values)
+    if name == "space_group":
+        return np.array(values, dtype=np.int64)
 
-    return np.array(values, dtype=np.int64)
+    return np.array(values, dtype=np.float32)
 
 
 def with_condition(batch, name: str, values: list, conditioned: np.ndarray):
@@ -524,8 +527,11 @@ def main():
         # the other ones without condition
         if name == "chemical_system":
             values = own_chemical_systems(data["z"], data["num_atoms"])
-        else:
+        elif name == "space_group":
             values = own_space_groups(data)
+        else:
+            # the test structures have no band gap: a range of them
+            values = np.linspace(0.0, 6.0, len(data["num_atoms"])).tolist()
         conditioned = np.arange(len(values)) % 2 == 0
         batch = with_condition(batch, name, values, conditioned)
         result.update(

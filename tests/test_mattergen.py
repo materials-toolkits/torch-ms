@@ -31,6 +31,7 @@ from torchms.models.mattergen import (
     Guidance,
     InvalidWeights,
     MatterGen,
+    MatterGenBandGap,
     MatterGenChemicalSystem,
     MatterGenSpaceGroup,
     StepNoise,
@@ -41,6 +42,7 @@ DATA = Path(__file__).parent / "data"
 NAME = "mattergen-base"
 CHEMICAL_SYSTEM_NAME = "mattergen-chemical-system"
 SPACE_GROUP_NAME = "mattergen-space-group"
+BAND_GAP_NAME = "mattergen-dft-band-gap"
 
 # a network of 512 features on 50 neighbours per atom and their triplets:
 # slower than the default timeout
@@ -103,16 +105,19 @@ def test_pinned_checkpoints(tmp_path):
         NAME,
         CHEMICAL_SYSTEM_NAME,
         SPACE_GROUP_NAME,
+        BAND_GAP_NAME,
     }
     assert Config.load().default_weights == NAME
     assert Config.load().chemical_system.default_weights == CHEMICAL_SYSTEM_NAME
     assert MatterGenChemicalSystem().default_weights() == CHEMICAL_SYSTEM_NAME
     assert MatterGenSpaceGroup().default_weights() == SPACE_GROUP_NAME
+    assert MatterGenBandGap().default_weights() == BAND_GAP_NAME
 
     for name, directory in (
         (NAME, "mattergen_base"),
         (CHEMICAL_SYSTEM_NAME, "chemical_system"),
         (SPACE_GROUP_NAME, "space_group"),
+        (BAND_GAP_NAME, "dft_band_gap"),
     ):
         for checkpoint in weights.CHECKPOINTS["mattergen"][name]:
             # a commit of the repository of the authors, not a branch
@@ -845,6 +850,76 @@ def test_each_fine_tuned_model_refuses_the_weights_of_the_other_one(
         MatterGenChemicalSystem(conditional.config).load_pretrained(space)
 
 
+# the model conditioned on a band gap, with random weights
+
+
+@pytest.fixture(scope="module")
+def band_gap_model() -> MatterGenBandGap:
+    torch.manual_seed(0)
+    model = MatterGenBandGap(narrow()).eval().requires_grad_(False)
+    model.band_gap_mean.fill_(0.8)
+    model.band_gap_std.fill_(1.4)
+
+    return model
+
+
+def test_band_gap_guidance(band_gap_model):
+    guidance = band_gap_model.guidance([0.0, 3.5], scale=1.0)
+
+    assert torch.equal(guidance.values, torch.tensor([0.0, 3.5]))
+    assert guidance.scale == 1.0
+    assert band_gap_model.guidance([1.0]).scale == 2.0
+
+    for wrong in (float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="finite"):
+            band_gap_model.guidance([wrong])
+
+
+def test_band_gap_embedding(band_gap_model):
+    # the gap standardized, then a sine and a cosine per frequency, as the time
+    embedding = band_gap_model.embed_condition(torch.tensor([0.8, 2.2]))
+    frequencies = band_gap_model.band_gap_frequencies
+
+    assert embedding.shape == (2, 64)
+    assert torch.equal(embedding[0], band_gap_model.embed_time(torch.zeros(1))[0])
+    assert torch.allclose(embedding[1, 0::2], torch.sin(frequencies))
+    assert torch.allclose(embedding[1, 1::2], torch.cos(frequencies))
+
+
+def test_band_gap_network(band_gap_model):
+    structures = band_gap_model.transform()(make_batch())
+
+    free = band_gap_model(structures, TIMES)
+    mixed = band_gap_model(
+        structures, TIMES, torch.tensor([3.0, 3.0]), torch.tensor([True, False])
+    )
+    other = band_gap_model(structures, TIMES, torch.tensor([0.0, 3.0]))
+    first = structures.batch == 0
+
+    assert torch.equal(mixed.x[~first], free.x[~first])
+    assert not torch.allclose(mixed.x[first], free.x[first])
+    assert not torch.allclose(other.x[first], mixed.x[first])
+    assert torch.equal(mixed.logits > -1e9, free.logits > -1e9)
+
+
+def test_band_gap_load_pretrained(band_gap_model, space_group_model):
+    state = upstream_state(band_gap_model)
+    prefix = "diffusion_module.model.property_embeddings_adapt.dft_band_gap."
+    assert torch.equal(state[prefix + "scaler.means"], torch.tensor([0.8]))
+    assert prefix + "conditional_embedding_module.div_term" in state
+
+    other = MatterGenBandGap(band_gap_model.config)
+    other.load_pretrained(
+        state, nested(Config.load().upstream_sections("dft_band_gap"))
+    )
+    assert torch.equal(other.band_gap_std, torch.tensor([1.4]))
+
+    with pytest.raises(InvalidWeights, match="Missing"):
+        other.load_pretrained(upstream_state(space_group_model))
+    with pytest.raises(InvalidWeights, match="Missing"):
+        MatterGenSpaceGroup(space_group_model.config).load_pretrained(state)
+
+
 # the pretrained model against the real MatterGen
 
 
@@ -1243,6 +1318,7 @@ def compare_sampling_scores(
 FINE_TUNED = {
     "chemical_system": (MatterGenChemicalSystem, CHEMICAL_SYSTEM_NAME),
     "space_group": (MatterGenSpaceGroup, SPACE_GROUP_NAME),
+    "dft_band_gap": (MatterGenBandGap, BAND_GAP_NAME),
 }
 
 
