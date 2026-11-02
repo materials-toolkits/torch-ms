@@ -159,8 +159,8 @@ class UpstreamConfig:
 
 
 @dataclass(frozen=True)
-class ChemicalSystemConfig:
-    """What the model conditioned on a chemical system has of its own.
+class ConditionConfig:
+    """What a model fine-tuned on a property has of its own.
 
     Args:
         default_weights: Name of its weights loaded by from_pretrained.
@@ -189,6 +189,8 @@ class Config(YamlConfig):
         upstream: What is checked in the configuration of MatterGen.
         chemical_system: What the model conditioned on a chemical system has
             of its own.
+        space_group: What the model conditioned on a space group has of its
+            own.
     """
 
     graph: GraphConfig
@@ -199,48 +201,66 @@ class Config(YamlConfig):
     elements: ElementsConfig
     sampling: SamplingConfig
     upstream: UpstreamConfig
-    chemical_system: ChemicalSystemConfig
+    chemical_system: ConditionConfig
+    space_group: ConditionConfig
 
-    def decoder_config(self, conditional: bool = False) -> gemnet.Config:
+    def condition(self, name: str) -> ConditionConfig:
+        """What the model fine-tuned on a property has of its own.
+
+        Args:
+            name: The property: "chemical_system" or "space_group".
+
+        Examples:
+            >>> Config.load().condition("space_group").default_weights
+            'mattergen-space-group'
+        """
+        if name not in ("chemical_system", "space_group"):
+            raise ValueError(f"no model of MatterGen is conditioned on {name}")
+
+        condition = getattr(self, name)
+        assert isinstance(condition, ConditionConfig)
+        return condition
+
+    def decoder_config(self, condition: str | None = None) -> gemnet.Config:
         """Hyperparameters of GemNet-T, which reads the embedding of the time.
 
         Its embedding of the elements has a row for the mask.
 
         Args:
-            conditional: If True, the ones of the model conditioned on a
-                chemical system, with its adapter.
+            condition: The property of a fine-tuned model, which has its
+                adapter. None for the base model.
 
         Examples:
             >>> decoder = Config.load().decoder_config()
             >>> decoder.latent_dim, decoder.num_elements, decoder.predict_lattice
             (512, 101, True)
-            >>> Config.load().decoder_config(conditional=True).conditions
-            ('chemical_system',)
+            >>> Config.load().decoder_config("space_group").conditions
+            ('space_group',)
         """
         return gemnet.Config(
             latent_dim=self.model.hidden_dim,
             num_elements=self.model.num_classes,
             radius=self.graph.radius,
             hidden_dim=self.model.hidden_dim,
-            conditions=("chemical_system",) if conditional else (),
+            conditions=() if condition is None else (condition,),
             **self.decoder,
         )
 
     def upstream_sections(
-        self, conditional: bool = False
+        self, condition: str | None = None
     ) -> dict[str, dict[str, object]]:
         """Sections checked in the configuration of a training of MatterGen.
 
         Args:
-            conditional: If True, the ones of the model conditioned on a
-                chemical system.
+            condition: The property of a fine-tuned model, None for the base
+                model.
 
         Examples:
-            >>> sections = Config.load().upstream_sections(conditional=True)
+            >>> sections = Config.load().upstream_sections("chemical_system")
             >>> sections["lightning_module.diffusion_module.model"]["_target_"]
             'mattergen.adapter.GemNetTAdapter'
         """
-        if not conditional:
+        if condition is None:
             return dict(self.upstream.sections)
 
-        return {**self.upstream.sections, **self.chemical_system.upstream_sections}
+        return {**self.upstream.sections, **self.condition(condition).upstream_sections}

@@ -12,9 +12,13 @@
 from __future__ import annotations
 
 import torch
+import torch.nn.functional as F
+from jaxtyping import Bool, Float
+from torch import nn
 
 from torchms.data.constants import symbol_to_number
 from torchms.models.mattergen.diffusion import Guidance
+from torchms.models.mattergen.config import Config
 from torchms.models.mattergen.model import MatterGen
 
 
@@ -41,7 +45,7 @@ class MatterGenChemicalSystem(MatterGen):  # pylint: disable=abstract-method
         ...     denoised = model(
         ...         structures,
         ...         torch.tensor([0.1, 0.9]),
-        ...         guidance.chemical_systems,
+        ...         guidance.values,
         ...         torch.tensor([True, False]),
         ...     )
         >>> kept = denoised.logits[0] > -1e9
@@ -53,7 +57,34 @@ class MatterGenChemicalSystem(MatterGen):  # pylint: disable=abstract-method
         generates 8 crystals of lithium and oxygen.
     """
 
-    CONDITIONAL = True
+    CONDITION = "chemical_system"
+
+    def __init__(self, config: Config | None = None):
+        super().__init__(config)
+        network = self.config.model
+
+        # a chemical system, one value per atomic number from 0
+        self.chemical_system_embedding = nn.Linear(
+            network.num_elements + 1, network.hidden_dim
+        )
+
+    def embed_condition(
+        self, values: Float[torch.Tensor, "n_struct num_classes"]
+    ) -> Float[torch.Tensor, "n_struct hidden_dim"]:
+        return self.chemical_system_embedding(values)
+
+    def kept_classes(
+        self,
+        values: Float[torch.Tensor, "n_struct num_classes"],
+        conditioned: Bool[torch.Tensor, "n_struct"],
+    ) -> Float[torch.Tensor, "n_struct num_classes"]:
+        """The elements of the chemical system of each conditioned crystal.
+
+        The classes are the elements from hydrogen, then the mask, which is
+        never kept. A crystal without condition keeps every class.
+        """
+        keep = F.pad(values[:, 1:], (0, 1))
+        return torch.where(conditioned.unsqueeze(1), keep, torch.ones_like(keep))
 
     def guidance(
         self, chemical_systems: list[str], scale: float | None = None
@@ -71,7 +102,7 @@ class MatterGenChemicalSystem(MatterGen):  # pylint: disable=abstract-method
 
         Examples:
             >>> guidance = MatterGenChemicalSystem().guidance(["Li-O", "Fe"])
-            >>> guidance.chemical_systems.nonzero().tolist(), guidance.scale
+            >>> guidance.values.nonzero().tolist(), guidance.scale
             ([[0, 3], [0, 8], [1, 26]], 2.0)
         """
         num_elements = self.config.model.num_elements

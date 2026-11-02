@@ -147,6 +147,9 @@ guidance = model.guidance(["Li-O"] * 64)
 structures = model.sample(model.sample_num_atoms(64), guidance=guidance)
 ```
 
+`MatterGenSpaceGroup` is used the same way, with a space group per crystal:
+`model.guidance([225] * 64)`. The space group is followed, not imposed.
+
 ## Layers for your own model
 
 `torchms.models.layers` has the bases of distances and of angles of the models, and two

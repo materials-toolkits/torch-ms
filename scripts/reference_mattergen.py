@@ -36,12 +36,15 @@ script is run once for each model, and finds which one it is given:
 
 * "~/.cache/torchms/mattergen/mattergen-base", the base model: the result is
   written to tests/data/mattergen_reference.npz;
-* "~/.cache/torchms/mattergen/mattergen-chemical-system", the model
-  conditioned on a chemical system: the result is written to
-  tests/data/mattergen_chemical_system_reference.npz. The network is run on
-  every other structure with its own chemical system, on the other ones
-  without condition, and the sampling with the guidance of the README of
-  MatterGen, recording the scores with and without condition of each step.
+* "~/.cache/torchms/mattergen/mattergen-chemical-system" and
+  "~/.cache/torchms/mattergen/mattergen-space-group", the models conditioned
+  on a chemical system and on a space group: the result is written to
+  tests/data/mattergen_chemical_system_reference.npz and
+  tests/data/mattergen_space_group_reference.npz. The network is run on every
+  other structure with its own chemical system or space group (pymatgen,
+  symprec 0.1), on the other ones without condition, and the sampling with the
+  guidance of the README of MatterGen, recording the scores with and without
+  condition of each step.
 
 Both are read by tests/test_mattergen.py.
 
@@ -76,9 +79,12 @@ SAMPLING_NUM_ATOMS = [4, 8, 2, 6]
 # follow each other, the last one gives the crystals MatterGen returns
 SAVED_STEPS = [0, 1, 2, 100, 300, 500, 700, 900, 998, 999]
 
-# the sampling of a model conditioned on a chemical system: one system per
+# the sampling of a conditioned model: one chemical system or space group per
 # crystal, and the factor of the guidance of the README of MatterGen
-SAMPLING_CHEMICAL_SYSTEMS = ["Li-O", "Fe-Ni-O", "Na-Cl", "Ti-O"]
+SAMPLING_CONDITIONS = {
+    "chemical_system": ["Li-O", "Fe-Ni-O", "Na-Cl", "Ti-O"],
+    "space_group": [225, 194, 221, 166],
+}
 GUIDANCE = 2.0
 
 
@@ -128,16 +134,60 @@ def condition(model) -> str | None:
     return properties[0] if properties else None
 
 
-def with_chemical_systems(batch, systems: list[str], conditioned: np.ndarray):
-    """Batch with a chemical system per structure, used where conditioned."""
+def batch_values(name: str, values: list):
+    """Property of a batch as MatterGen stores it: strings or numbers."""
+    if name == "chemical_system":
+        return values
+
+    return torch.tensor(values, dtype=torch.float)
+
+
+def item_value(name: str, value):
+    """Property of one crystal as SetProperty of MatterGen stores it."""
+    if name == "chemical_system":
+        return value
+
+    return torch.tensor(value, dtype=torch.float)
+
+
+def saved_values(name: str, values: list) -> np.ndarray:
+    """Property of each structure as the rewrite reads it."""
+    if name == "chemical_system":
+        return multi_hot(values)
+
+    return np.array(values, dtype=np.int64)
+
+
+def with_condition(batch, name: str, values: list, conditioned: np.ndarray):
+    """Batch with a property per structure, used where conditioned."""
     from mattergen.property_embeddings import _USE_UNCONDITIONAL_EMBEDDING
 
     unconditional = torch.from_numpy(~conditioned).reshape(-1, 1)
 
     return batch.replace(
-        chemical_system=systems,
-        **{_USE_UNCONDITIONAL_EMBEDDING: {"chemical_system": unconditional}},
+        **{name: batch_values(name, values)},
+        **{_USE_UNCONDITIONAL_EMBEDDING: {name: unconditional}},
     )
+
+
+def own_space_groups(data) -> list[int]:
+    """Space group of each structure, from pymatgen with a tolerance of 0.1 Å."""
+    from pymatgen.core import Lattice, Structure
+    from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
+
+    ptr = np.concatenate([[0], np.cumsum(data["num_atoms"])])
+
+    return [
+        SpacegroupAnalyzer(
+            Structure(
+                Lattice(data["lattice"][i]),
+                data["z"][ptr[i] : ptr[i + 1]].tolist(),
+                data["x"][ptr[i] : ptr[i + 1]],
+            ),
+            symprec=0.1,
+        ).get_space_group_number()
+        for i in range(len(data["num_atoms"]))
+    ]
 
 
 def own_chemical_systems(z: np.ndarray, num_atoms: np.ndarray) -> list[str]:
@@ -260,8 +310,8 @@ class Recorder:
 def sampling(model, mattergen: Path) -> dict[str, np.ndarray]:
     """The whole sampling of a few crystals, with everything it draws.
 
-    A conditioned model samples with the chemical systems and the guidance of
-    SAMPLING_CHEMICAL_SYSTEMS and GUIDANCE.
+    A conditioned model samples with the chemical systems or the space groups
+    of SAMPLING_CONDITIONS and the guidance GUIDANCE.
     """
     import hydra
     from hydra.utils import instantiate
@@ -269,7 +319,8 @@ def sampling(model, mattergen: Path) -> dict[str, np.ndarray]:
     from mattergen.common.data.dataset import NumAtomsCrystalDataset
 
     config_dir = mattergen / "mattergen" / "sampling_conf"
-    conditional = condition(model) is not None
+    name = condition(model)
+    conditional = name is not None
     overrides = [f"sampler_partial.guidance_scale={GUIDANCE}"] if conditional else []
     with hydra.initialize_config_dir(str(config_dir.resolve()), version_base=None):
         config = hydra.compose(config_name="default", overrides=overrides)
@@ -279,9 +330,10 @@ def sampling(model, mattergen: Path) -> dict[str, np.ndarray]:
     items = [dataset[i] for i in range(len(dataset))]
     if conditional:
         # as the script of generation of MatterGen sets a property
+        assert name is not None
         items = [
-            item.replace(chemical_system=system)
-            for item, system in zip(items, SAMPLING_CHEMICAL_SYSTEMS)
+            item.replace(**{name: item_value(name, value)})
+            for item, value in zip(items, SAMPLING_CONDITIONS[name])
         ]
     conditions = collate(items)
 
@@ -358,23 +410,25 @@ def sampling(model, mattergen: Path) -> dict[str, np.ndarray]:
         ),
         **(
             {
-                f"{name}_{kind}_{field}": saved(
+                f"{step_name}_{kind}_{field}": saved(
                     [unguided(2 * s + call, shape, position) for s in SAVED_STEPS]
                 )
-                for call, name in enumerate(("corrector", "predictor"))
+                for call, step_name in enumerate(("corrector", "predictor"))
                 for position, kind in enumerate(("unconditional", "conditional"))
                 for field, shape in (
                     ("x", (n_atoms, 3)),
                     ("l", (n_struct, 3, 3)),
                     ("logits", (n_atoms, 101)),
                 )
+                # the corrector does not read the scores of the elements
+                if field != "logits" or step_name == "predictor"
             }
             if conditional
             else {}
         ),
         **(
             {
-                "sampling_chemical_systems": multi_hot(SAMPLING_CHEMICAL_SYSTEMS),
+                f"sampling_{name}s": saved_values(name, SAMPLING_CONDITIONS[name]),
                 "sampling_guidance": np.array(GUIDANCE),
             }
             if conditional
@@ -465,13 +519,18 @@ def main():
     result = {}
     name = condition(model)
     if name is not None:
-        assert name == "chemical_system", name
-        # every other structure with its own chemical system, the other ones
-        # without condition
-        systems = own_chemical_systems(data["z"], data["num_atoms"])
-        conditioned = np.arange(len(systems)) % 2 == 0
-        batch = with_chemical_systems(batch, systems, conditioned)
-        result.update(chemical_systems=multi_hot(systems), conditioned=conditioned)
+        assert name in SAMPLING_CONDITIONS, name
+        # every other structure with its own chemical system or space group,
+        # the other ones without condition
+        if name == "chemical_system":
+            values = own_chemical_systems(data["z"], data["num_atoms"])
+        else:
+            values = own_space_groups(data)
+        conditioned = np.arange(len(values)) % 2 == 0
+        batch = with_condition(batch, name, values, conditioned)
+        result.update(
+            {f"{name}s": saved_values(name, values), "conditioned": conditioned}
+        )
 
     with torch.no_grad():
         result.update(graph(model, batch))

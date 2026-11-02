@@ -38,20 +38,21 @@ class Denoised:
 
 @dataclass(frozen=True)
 class Guidance:
-    """Condition of the sampling of a conditioned model, see MatterGenChemicalSystem.
+    """Condition of the sampling of a model fine-tuned on a property.
 
     The scores are the ones without condition plus scale times their
     difference with the ones with the condition: 0 is the model without
     condition, 1 the model with it, more than 1 follows the condition more.
+    The guidance method of each model builds it.
 
     Args:
-        chemical_systems: Elements each crystal can have, 1 in the column of
-            their atomic number, shape (n_struct, num_elements + 1): the
-            column 0 is not read. See MatterGenChemicalSystem.guidance.
+        values: Property of each crystal, as its model reads it, its first
+            dimension n_struct: the chemical systems of
+            MatterGenChemicalSystem, the space groups of MatterGenSpaceGroup.
         scale: Factor of the guidance, gamma of MatterGen.
     """
 
-    chemical_systems: Float[torch.Tensor, "n_struct num_classes"]
+    values: torch.Tensor
     scale: float
 
 

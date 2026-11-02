@@ -123,8 +123,9 @@ class MatterGen(PretrainedModel[Config]):
 
     CONFIG = Config
     GRAPH_FIELDS = ("graph", "triplets", "bonds")
-    # whether the network reads a chemical system: MatterGenChemicalSystem
-    CONDITIONAL = False
+    # property the network was fine-tuned on: "chemical_system" for
+    # MatterGenChemicalSystem, "space_group" for MatterGenSpaceGroup
+    CONDITION: str | None = None
 
     time_frequencies: torch.Tensor
     logit_offset: torch.Tensor
@@ -143,13 +144,8 @@ class MatterGen(PretrainedModel[Config]):
                 network.hidden_dim, network.time_max_period, endpoint=False
             ),
         )
-        self.gemnet = GemNetT(self.config.decoder_config(self.CONDITIONAL))
+        self.gemnet = GemNetT(self.config.decoder_config(self.CONDITION))
         self.fc_atom = nn.Linear(network.hidden_dim, network.num_classes)
-        if self.CONDITIONAL:
-            # a chemical system, one value per atomic number from 0
-            self.chemical_system_embedding = nn.Linear(
-                network.num_elements + 1, network.hidden_dim
-            )
 
         # added to the scores of the elements: 0 for an allowed one
         allowed = torch.zeros(network.num_classes)
@@ -186,8 +182,8 @@ class MatterGen(PretrainedModel[Config]):
         return self.config.model.mask
 
     def default_weights(self) -> str:
-        if self.CONDITIONAL:
-            return self.config.chemical_system.default_weights
+        if self.CONDITION is not None:
+            return self.config.condition(self.CONDITION).default_weights
 
         return self.config.default_weights
 
@@ -227,13 +223,12 @@ class MatterGen(PretrainedModel[Config]):
         Raises:
             InvalidWeights: If parameters are missing or unknown, or if the
                 model was trained with another configuration: the base model
-                and the model conditioned on a chemical system refuse the
-                weights of each other, and of the models conditioned on other
-                properties.
+                and the models fine-tuned on a property refuse the weights of
+                each other.
         """
         if configuration is not None:
             check_configuration(
-                configuration, self.config.upstream_sections(self.CONDITIONAL)
+                configuration, self.config.upstream_sections(self.CONDITION)
             )
 
         prefix = self.config.upstream.prefix
@@ -316,7 +311,7 @@ class MatterGen(PretrainedModel[Config]):
         self,
         structures: Structures,
         times: Float[torch.Tensor, "n_struct"],
-        chemical_systems: Float[torch.Tensor, "n_struct num_classes"] | None = None,
+        values: torch.Tensor | None = None,
         conditioned: Bool[torch.Tensor, "n_struct"] | None = None,
     ) -> Denoised:
         """Scores of noisy crystals, from the network.
@@ -325,26 +320,22 @@ class MatterGen(PretrainedModel[Config]):
             structures: Noisy crystals with their graph, see transform. An atom
                 without element has the atomic number of the mask, see mask.
             times: Time of each crystal, from 0 to 1: how much noise it has.
-            chemical_systems: Chemical system of each crystal, see Guidance,
-                read by a conditioned model. None for a network without
-                condition.
-            conditioned: Which crystals are conditioned on their chemical
-                system, all of them by default. The scores of their elements
-                outside of it are lowered as the ones not allowed.
+            values: Property of each crystal, read by a model fine-tuned on
+                it, see Guidance. None for a network without condition.
+            conditioned: Which crystals are conditioned on their property, all
+                of them by default.
 
         Raises:
             ValueError: If an atom has an element after fermium, if the
-                structures do not have their graph, or if chemical systems are
-                given to a model which is not conditioned.
+                structures do not have their graph, or if values are given to
+                the base model.
         """
         self.check_graphs(structures)
         graph = attached_graph(structures, self)
         angles = attached_tuples(structures, "triplets", self)
         bonds = attached_tuples(structures, "bonds", self)
 
-        conditions, keep = self.chemical_system_conditions(
-            times, chemical_systems, conditioned
-        )
+        conditions, keep = self.property_conditions(times, values, conditioned)
 
         vectors = edges_vectors(graph)
         output = self.gemnet(
@@ -369,57 +360,68 @@ class MatterGen(PretrainedModel[Config]):
 
         logits = self.fc_atom(output.features) + self.logit_offset
         if keep is not None:
-            # as MatterGen: the elements outside of the chemical system are
+            # as MatterGen: the elements outside of a chemical system are
             # lowered after the ones which are not allowed
             keep = graph.unpool_structures(keep)
             logits = logits + (1 - keep) * self.config.model.masked_logit
 
         return Denoised(x=x, lattice=output.lattice, logits=logits)
 
-    def chemical_system_conditions(
+    def property_conditions(
         self,
         times: Float[torch.Tensor, "n_struct"],
-        chemical_systems: Float[torch.Tensor, "n_struct num_classes"] | None,
+        values: torch.Tensor | None,
         conditioned: Bool[torch.Tensor, "n_struct"] | None,
     ) -> tuple[
         tuple[Condition, ...], Float[torch.Tensor, "n_struct num_classes"] | None
     ]:
         """Condition of GemNet-T, and the classes of the elements kept for each crystal.
 
-        Without chemical system, a conditioned model has its condition
-        inactive and keeps every class.
+        Without values, a fine-tuned model has its condition inactive, as the
+        zero embedding of MatterGen, and keeps every class.
         """
-        if chemical_systems is not None and not self.CONDITIONAL:
+        if values is not None and self.CONDITION is None:
             raise ValueError(f"{type(self).__name__} is not conditioned")
-        if not self.CONDITIONAL:
+        if self.CONDITION is None:
             return (), None
 
-        n_struct = len(times)
-        num_systems = self.config.model.num_elements + 1
-        if chemical_systems is None:
-            chemical_systems = times.new_zeros((n_struct, num_systems))
-            conditioned = torch.zeros(n_struct, dtype=torch.bool, device=times.device)
-        elif conditioned is None:
-            conditioned = torch.ones(n_struct, dtype=torch.bool, device=times.device)
+        n_struct, device = len(times), times.device
+        if values is None:
+            embedding = times.new_zeros((n_struct, self.config.model.hidden_dim))
+            inactive = torch.zeros(n_struct, dtype=torch.bool, device=device)
+            return (Condition(embedding, inactive),), None
 
-        # elements of the system, from hydrogen, then the mask, which is never kept
-        keep = F.pad(chemical_systems[:, 1:], (0, 1))
-        keep = torch.where(conditioned.unsqueeze(1), keep, torch.ones_like(keep))
-        condition = Condition(
-            self.chemical_system_embedding(chemical_systems), conditioned
-        )
+        if conditioned is None:
+            conditioned = torch.ones(n_struct, dtype=torch.bool, device=device)
 
-        return (condition,), keep
+        condition = Condition(self.embed_condition(values), conditioned)
+
+        return (condition,), self.kept_classes(values, conditioned)
+
+    def embed_condition(
+        self, values: torch.Tensor
+    ) -> Float[torch.Tensor, "n_struct hidden_dim"]:
+        """Embedding of the property of each crystal, for a fine-tuned model."""
+        raise NotImplementedError(f"{type(self).__name__} is not conditioned")
+
+    def kept_classes(
+        self, values: torch.Tensor, conditioned: Bool[torch.Tensor, "n_struct"]
+    ) -> Float[torch.Tensor, "n_struct num_classes"] | None:
+        """Classes of the elements each crystal can take, 1 for a kept one.
+
+        None, every class, but for a chemical system.
+        """
+        del values, conditioned
 
     def forward(
         self,
         structures: Structures,
         times: Float[torch.Tensor, "n_struct"],
-        chemical_systems: Float[torch.Tensor, "n_struct num_classes"] | None = None,
+        values: torch.Tensor | None = None,
         conditioned: Bool[torch.Tensor, "n_struct"] | None = None,
     ) -> Denoised:
         """Scores of noisy crystals, see denoise."""
-        return self.denoise(structures, times, chemical_systems, conditioned)
+        return self.denoise(structures, times, values, conditioned)
 
     # the three diffusions
 
@@ -529,10 +531,10 @@ class MatterGen(PretrainedModel[Config]):
         if guidance is None or abs(guidance.scale) < 1e-15:
             return self.unguided_scores(structures, times, None)
         if abs(guidance.scale - 1) < 1e-15:
-            return self.unguided_scores(structures, times, guidance.chemical_systems)
+            return self.unguided_scores(structures, times, guidance.values)
 
         unconditional = self.unguided_scores(structures, times, None)
-        conditional = self.unguided_scores(structures, times, guidance.chemical_systems)
+        conditional = self.unguided_scores(structures, times, guidance.values)
 
         return guided_scores(unconditional, conditional, guidance.scale)
 
@@ -540,11 +542,11 @@ class MatterGen(PretrainedModel[Config]):
         self,
         structures: Structures,
         times: Float[torch.Tensor, "n_struct"],
-        chemical_systems: Float[torch.Tensor, "n_struct num_classes"] | None,
+        values: torch.Tensor | None,
     ) -> Denoised:
-        """Scores of noisy crystals, with or without a chemical system, see scores."""
+        """Scores of noisy crystals, with or without their property, see scores."""
         graph = attached_graph(structures, self)
-        denoised = self.denoise(structures, times, chemical_systems)
+        denoised = self.denoise(structures, times, values)
 
         num_atoms = structures.num_atoms
         deviation = graph.unpool_structures(self.coordinate_deviation(times, num_atoms))

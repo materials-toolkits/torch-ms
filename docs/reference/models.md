@@ -54,6 +54,8 @@
 
 ::: torchms.models.mattergen.chemical_system
 
+::: torchms.models.mattergen.space_group
+
 ::: torchms.models.mattergen.diffusion
 
 ::: torchms.models.mattergen.config

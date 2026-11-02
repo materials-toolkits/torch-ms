@@ -32,6 +32,7 @@ from torchms.models.mattergen import (
     InvalidWeights,
     MatterGen,
     MatterGenChemicalSystem,
+    MatterGenSpaceGroup,
     StepNoise,
 )
 from torchms.models.mattergen.diffusion import guided_scores, symmetric_noise
@@ -39,6 +40,7 @@ from torchms.models.mattergen.diffusion import guided_scores, symmetric_noise
 DATA = Path(__file__).parent / "data"
 NAME = "mattergen-base"
 CHEMICAL_SYSTEM_NAME = "mattergen-chemical-system"
+SPACE_GROUP_NAME = "mattergen-space-group"
 
 # a network of 512 features on 50 neighbours per atom and their triplets:
 # slower than the default timeout
@@ -97,14 +99,20 @@ TIMES = torch.tensor([0.05, 0.7])
 
 
 def test_pinned_checkpoints(tmp_path):
-    assert set(weights.CHECKPOINTS["mattergen"]) == {NAME, CHEMICAL_SYSTEM_NAME}
+    assert set(weights.CHECKPOINTS["mattergen"]) == {
+        NAME,
+        CHEMICAL_SYSTEM_NAME,
+        SPACE_GROUP_NAME,
+    }
     assert Config.load().default_weights == NAME
     assert Config.load().chemical_system.default_weights == CHEMICAL_SYSTEM_NAME
     assert MatterGenChemicalSystem().default_weights() == CHEMICAL_SYSTEM_NAME
+    assert MatterGenSpaceGroup().default_weights() == SPACE_GROUP_NAME
 
     for name, directory in (
         (NAME, "mattergen_base"),
         (CHEMICAL_SYSTEM_NAME, "chemical_system"),
+        (SPACE_GROUP_NAME, "space_group"),
     ):
         for checkpoint in weights.CHECKPOINTS["mattergen"][name]:
             # a commit of the repository of the authors, not a branch
@@ -635,8 +643,8 @@ def conditional() -> MatterGenChemicalSystem:
 def test_guidance(conditional):
     guidance = conditional.guidance(["Zn-S", "Li-Fe-O"], scale=1.5)
 
-    assert guidance.chemical_systems.shape == (2, 101)
-    assert guidance.chemical_systems.nonzero().tolist() == [
+    assert guidance.values.shape == (2, 101)
+    assert guidance.values.nonzero().tolist() == [
         [0, 16],
         [0, 30],
         [1, 3],
@@ -653,7 +661,7 @@ def test_guidance(conditional):
 
 def test_conditional_network(conditional):
     structures = conditional.transform()(make_batch())
-    systems = conditional.guidance(["Zn-S", "Zn-S"]).chemical_systems
+    systems = conditional.guidance(["Zn-S", "Zn-S"]).values
 
     free = conditional(structures, TIMES)
     mixed = conditional(structures, TIMES, systems, torch.tensor([True, False]))
@@ -693,7 +701,7 @@ def test_the_base_model_reads_no_chemical_system(model):
 
 def test_guided_scores(conditional):
     structures = conditional.transform()(noisy(make_batch()))
-    systems = conditional.guidance(["Zn-S", "Si"]).chemical_systems
+    systems = conditional.guidance(["Zn-S", "Si"]).values
 
     free = conditional.scores(structures, TIMES)
     with_system = conditional.unguided_scores(structures, TIMES, systems)
@@ -743,7 +751,7 @@ def test_conditional_load_pretrained_checks_the_parameters(conditional, model):
         "diffusion_module.model.gemnet.cond_mixin_layers.chemical_system.0.weight"
         in state
     )
-    configuration = nested(Config.load().upstream_sections(conditional=True))
+    configuration = nested(Config.load().upstream_sections("chemical_system"))
 
     other = MatterGenChemicalSystem(conditional.config)
     other.load_pretrained(state, configuration)
@@ -759,6 +767,82 @@ def test_conditional_load_pretrained_checks_the_parameters(conditional, model):
         )
     with pytest.raises(InvalidWeights, match="Missing"):
         other.load_pretrained(upstream_state(model))
+
+
+# the model conditioned on a space group, with random weights
+
+
+@pytest.fixture(scope="module")
+def space_group_model() -> MatterGenSpaceGroup:
+    torch.manual_seed(0)
+    return MatterGenSpaceGroup(narrow()).eval().requires_grad_(False)
+
+
+def test_space_group_guidance(space_group_model):
+    guidance = space_group_model.guidance([225, 1, 230], scale=0.5)
+
+    assert torch.equal(guidance.values, torch.tensor([225, 1, 230]))
+    assert guidance.scale == 0.5
+    assert space_group_model.guidance(torch.tensor([194])).scale == 2.0
+
+    for wrong in (0, 231):
+        with pytest.raises(ValueError, match="no space group"):
+            space_group_model.guidance([wrong])
+
+
+def test_space_group_network(space_group_model):
+    structures = space_group_model.transform()(make_batch())
+    groups = space_group_model.guidance([216, 216]).values
+
+    free = space_group_model(structures, TIMES)
+    mixed = space_group_model(structures, TIMES, groups, torch.tensor([True, False]))
+    other = space_group_model(structures, TIMES, torch.tensor([225, 216]))
+    first = structures.batch == 0
+
+    # only the conditioned crystal changes, with its space group, and no
+    # element is lowered by a space group
+    assert torch.equal(mixed.x[~first], free.x[~first])
+    assert torch.equal(mixed.logits[~first], free.logits[~first])
+    assert not torch.allclose(mixed.x[first], free.x[first])
+    assert not torch.allclose(other.x[first], mixed.x[first])
+    assert torch.equal(mixed.logits > -1e9, free.logits > -1e9)
+
+
+def test_space_group_sample():
+    torch.manual_seed(0)
+    model = MatterGenSpaceGroup(short_diffusion()).eval().requires_grad_(False)
+    num_atoms = torch.tensor([3, 2])
+
+    guided = model.sample(
+        num_atoms, generator=generator(), guidance=model.guidance([225, 194])
+    )
+    free = model.sample(num_atoms, generator=generator())
+    assert guided.lattice.isfinite().all()
+    assert not torch.equal(guided.x, free.x)
+
+
+def test_each_fine_tuned_model_refuses_the_weights_of_the_other_one(
+    conditional, space_group_model
+):
+    chemical, space = upstream_state(conditional), upstream_state(space_group_model)
+    assert (
+        "diffusion_module.model.property_embeddings_adapt.space_group."
+        "conditional_embedding_module.embedding.weight"
+    ) in space
+
+    other = MatterGenSpaceGroup(space_group_model.config)
+    other.load_pretrained(space, nested(Config.load().upstream_sections("space_group")))
+
+    with pytest.raises(
+        InvalidWeights, match="no .*property_embeddings_adapt.space_group"
+    ):
+        other.load_pretrained(
+            space, nested(Config.load().upstream_sections("chemical_system"))
+        )
+    with pytest.raises(InvalidWeights, match="Missing"):
+        other.load_pretrained(chemical)
+    with pytest.raises(InvalidWeights, match="Missing"):
+        MatterGenChemicalSystem(conditional.config).load_pretrained(space)
 
 
 # the pretrained model against the real MatterGen
@@ -927,6 +1011,22 @@ def within_rounding(
     )
 
 
+def condition_values(
+    pretrained: MatterGen, expected: dict[str, torch.Tensor], prefix: str
+) -> torch.Tensor | None:
+    """Property of each structure of a reference, as the fine-tuned model reads it.
+
+    Args:
+        prefix: "" for the structures of the tests, "sampling_" for the
+            crystals of the sampling.
+    """
+    if pretrained.CONDITION is None:
+        return None
+
+    values = expected[f"{prefix}{pretrained.CONDITION}s"]
+    return values.float() if pretrained.CONDITION == "chemical_system" else values
+
+
 def compare_network(
     pretrained: MatterGen,
     structures: Structures,
@@ -937,14 +1037,14 @@ def compare_network(
     assert defined.sum() >= 15
     atoms = defined[structures.batch]
 
-    systems = expected.get("chemical_systems")
+    values = condition_values(pretrained, expected, "")
     conditioned = expected.get("conditioned")
 
     def evaluate(crystals: Structures) -> tuple[torch.Tensor, ...]:
         denoised = pretrained(
             pretrained.transform()(crystals),
             expected[f"{prefix}_times"],
-            None if systems is None else systems.float(),
+            values,
             conditioned,
         )
         return denoised.x, denoised.lattice, denoised.logits
@@ -1109,9 +1209,9 @@ def compare_sampling_scores(
         no tie of their neighbours.
     """
     steps = expected["sampling_steps"].tolist()
-    systems = None
+    values = None
     if kind == "conditional":
-        systems = expected["sampling_chemical_systems"].float()
+        values = condition_values(pretrained, expected, "sampling_")
 
     compared = 0
     for i, step in enumerate(steps):
@@ -1124,47 +1224,55 @@ def compare_sampling_scores(
 
             def evaluate(given: Structures) -> tuple[torch.Tensor, ...]:
                 scores = pretrained.unguided_scores(
-                    pretrained.transform()(given), times, systems
+                    pretrained.transform()(given), times, values
                 )
                 return scores.x, scores.lattice
 
             found = evaluate(crystals.without_graphs())
             spread = rounding_spread(evaluate, crystals.without_graphs())
-            for values, moved, field in zip(found, spread, ("x", "l")):
+            for scores, moved, field in zip(found, spread, ("x", "l")):
                 wanted = expected[f"{call}_{kind}_{field}"][i]
-                assert within_rounding(values, wanted, moved), (step, name, field)
+                assert within_rounding(scores, wanted, moved), (step, name, field)
             compared += 1
 
     return compared
 
 
-# the model conditioned on a chemical system against the real MatterGen
+# the models fine-tuned on a property against the real MatterGen
+
+FINE_TUNED = {
+    "chemical_system": (MatterGenChemicalSystem, CHEMICAL_SYSTEM_NAME),
+    "space_group": (MatterGenSpaceGroup, SPACE_GROUP_NAME),
+}
 
 
-@pytest.fixture(scope="module")
-def pretrained_conditional() -> MatterGenChemicalSystem:
-    paths = weights.checkpoint_paths("mattergen", CHEMICAL_SYSTEM_NAME)
-    if not all(path.exists() for path in paths):
-        pytest.skip(f"weights of {CHEMICAL_SYSTEM_NAME} are not in the cache")
+@pytest.fixture(scope="module", params=sorted(FINE_TUNED))
+def fine_tuned(request) -> MatterGen:
+    model, name = FINE_TUNED[request.param]
+    if not all(path.exists() for path in weights.checkpoint_paths("mattergen", name)):
+        pytest.skip(f"weights of {name} are not in the cache")
 
-    return MatterGenChemicalSystem.from_pretrained(CHEMICAL_SYSTEM_NAME, device="cpu")
-
-
-CONDITIONAL_REFERENCE = "mattergen_chemical_system_reference.npz"
+    return model.from_pretrained(name, device="cpu")
 
 
-def test_pretrained_conditional_network_matches_mattergen(pretrained_conditional):
-    """The denoiser conditioned on a chemical system, every other structure without it."""
-    structures, expected = reference(CONDITIONAL_REFERENCE)
+def fine_tuned_reference(
+    model: MatterGen,
+) -> tuple[Structures, dict[str, torch.Tensor]]:
+    return reference(f"mattergen_{model.CONDITION}_reference.npz")
+
+
+def test_pretrained_fine_tuned_network_matches_mattergen(fine_tuned):
+    """The denoiser conditioned on a property, every other structure without it."""
+    structures, expected = fine_tuned_reference(fine_tuned)
     assert expected["conditioned"].sum() == 20
 
-    compare_network(pretrained_conditional, structures, expected, "clean")
+    compare_network(fine_tuned, structures, expected, "clean")
 
 
-def test_pretrained_conditional_network_matches_mattergen_on_noisy_structures(
-    pretrained_conditional,
+def test_pretrained_fine_tuned_network_matches_mattergen_on_noisy_structures(
+    fine_tuned,
 ):
-    structures, expected = reference(CONDITIONAL_REFERENCE)
+    structures, expected = fine_tuned_reference(fine_tuned)
     noisy_structures = Structures(
         lattice=expected["noisy_l"],
         x=expected["noisy_x"],
@@ -1172,22 +1280,25 @@ def test_pretrained_conditional_network_matches_mattergen_on_noisy_structures(
         num_atoms=structures.num_atoms,
     )
 
-    compare_network(pretrained_conditional, noisy_structures, expected, "noisy")
+    compare_network(fine_tuned, noisy_structures, expected, "noisy")
 
 
-def test_pretrained_guidance_matches_mattergen(pretrained_conditional):
+def test_pretrained_guidance_matches_mattergen(fine_tuned):
     """The scores of the guided sampling of MatterGen, from its two unguided scores."""
-    _, expected = reference(CONDITIONAL_REFERENCE)
+    _, expected = fine_tuned_reference(fine_tuned)
     scale = float(expected["sampling_guidance"])
-    assert scale == pretrained_conditional.config.chemical_system.guidance_scale
+    assert scale == fine_tuned.config.condition(fine_tuned.CONDITION).guidance_scale
 
     for call in ("corrector", "predictor"):
         for i in range(len(expected["sampling_steps"])):
+            # the corrector does not read the scores of the elements: they are
+            # only saved for the predictor
+            no_logits = torch.zeros_like(expected["predictor_score_logits"])
             unconditional, conditional = (
                 Denoised(
                     x=expected[f"{call}_{kind}_x"][i],
                     lattice=expected[f"{call}_{kind}_l"][i],
-                    logits=expected[f"{call}_{kind}_logits"][i],
+                    logits=expected.get(f"{call}_{kind}_logits", no_logits)[i],
                 )
                 for kind in ("unconditional", "conditional")
             )
@@ -1199,22 +1310,21 @@ def test_pretrained_guidance_matches_mattergen(pretrained_conditional):
                 assert torch.equal(guided.logits, expected["predictor_score_logits"][i])
 
 
-def test_pretrained_guided_steps_match_mattergen(pretrained_conditional):
+def test_pretrained_guided_steps_match_mattergen(fine_tuned):
     """Steps of the guided sampling of MatterGen, given its scores and its noise."""
-    _, expected = reference(CONDITIONAL_REFERENCE)
-    check_steps(pretrained_conditional, expected)
+    _, expected = fine_tuned_reference(fine_tuned)
+    check_steps(fine_tuned, expected)
 
-    # the crystals generated only have elements of their chemical systems
-    systems = expected["sampling_chemical_systems"].bool()
-    batch = torch.arange(4).repeat_interleave(expected["sampling_num_atoms"])
-    assert systems[batch, expected["mean_z"]].all()
+    if fine_tuned.CONDITION == "chemical_system":
+        # the crystals generated only have elements of their chemical systems
+        systems = expected["sampling_chemical_systems"].bool()
+        batch = torch.arange(4).repeat_interleave(expected["sampling_num_atoms"])
+        assert systems[batch, expected["mean_z"]].all()
 
 
-def test_pretrained_conditional_scores_of_the_sampling_match_mattergen(
-    pretrained_conditional,
-):
+def test_pretrained_fine_tuned_scores_of_the_sampling_match_mattergen(fine_tuned):
     """Both scores the guidance mixes, where the graphs of the crystals are defined."""
-    _, expected = reference(CONDITIONAL_REFERENCE)
+    _, expected = fine_tuned_reference(fine_tuned)
 
     for kind in ("unconditional", "conditional"):
-        assert compare_sampling_scores(pretrained_conditional, expected, kind) >= 2
+        assert compare_sampling_scores(fine_tuned, expected, kind) >= 2
