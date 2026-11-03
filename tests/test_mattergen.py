@@ -33,6 +33,7 @@ from torchms.models.mattergen import (
     MatterGen,
     MatterGenBandGap,
     MatterGenChemicalSystem,
+    MatterGenChemicalSystemEnergyAboveHull,
     MatterGenMagneticDensity,
     MatterGenSpaceGroup,
     StepNoise,
@@ -45,6 +46,7 @@ CHEMICAL_SYSTEM_NAME = "mattergen-chemical-system"
 SPACE_GROUP_NAME = "mattergen-space-group"
 BAND_GAP_NAME = "mattergen-dft-band-gap"
 MAGNETIC_DENSITY_NAME = "mattergen-dft-mag-density"
+ENERGY_ABOVE_HULL_NAME = "mattergen-chemical-system-energy-above-hull"
 
 # a network of 512 features on 50 neighbours per atom and their triplets:
 # slower than the default timeout
@@ -109,6 +111,7 @@ def test_pinned_checkpoints(tmp_path):
         SPACE_GROUP_NAME,
         BAND_GAP_NAME,
         MAGNETIC_DENSITY_NAME,
+        ENERGY_ABOVE_HULL_NAME,
     }
     assert Config.load().default_weights == NAME
     assert Config.load().chemical_system.default_weights == CHEMICAL_SYSTEM_NAME
@@ -116,6 +119,8 @@ def test_pinned_checkpoints(tmp_path):
     assert MatterGenSpaceGroup().default_weights() == SPACE_GROUP_NAME
     assert MatterGenBandGap().default_weights() == BAND_GAP_NAME
     assert MatterGenMagneticDensity().default_weights() == MAGNETIC_DENSITY_NAME
+    joint = MatterGenChemicalSystemEnergyAboveHull()
+    assert joint.default_weights() == ENERGY_ABOVE_HULL_NAME
 
     for name, directory in (
         (NAME, "mattergen_base"),
@@ -123,6 +128,7 @@ def test_pinned_checkpoints(tmp_path):
         (SPACE_GROUP_NAME, "space_group"),
         (BAND_GAP_NAME, "dft_band_gap"),
         (MAGNETIC_DENSITY_NAME, "dft_mag_density"),
+        (ENERGY_ABOVE_HULL_NAME, "chemical_system_energy_above_hull"),
     ):
         for checkpoint in weights.CHECKPOINTS["mattergen"][name]:
             # a commit of the repository of the authors, not a branch
@@ -592,12 +598,7 @@ def upstream_state(model: MatterGen) -> dict[str, torch.Tensor]:
     """Parameters of a model under the names of MatterGen."""
     upstream = Config.load().upstream
     # the renames of the property of the model: two properties share names
-    renamed = {
-        new: old
-        for old, new in upstream.renamed_parameters.items()
-        if not old.startswith("property_embeddings_adapt.")
-        or old.startswith(f"property_embeddings_adapt.{model.CONDITION}.")
-    }
+    renamed = {new: old for old, new in upstream.renamed_parameters.items()}
     state = {}
     for name, values in model.state_dict().items():
         for new, old in renamed.items():
@@ -659,8 +660,9 @@ def conditional() -> MatterGenChemicalSystem:
 def test_guidance(conditional):
     guidance = conditional.guidance(["Zn-S", "Li-Fe-O"], scale=1.5)
 
-    assert guidance.values.shape == (2, 101)
-    assert guidance.values.nonzero().tolist() == [
+    (systems,) = guidance.values
+    assert systems.shape == (2, 101)
+    assert systems.nonzero().tolist() == [
         [0, 16],
         [0, 30],
         [1, 3],
@@ -699,7 +701,7 @@ def test_the_base_model_reads_no_chemical_system(model):
     systems = torch.zeros(2, 101)
 
     with pytest.raises(ValueError, match="not conditioned"):
-        model(structures, TIMES, systems)
+        model(structures, TIMES, (systems,))
 
     with pytest.raises(ValueError, match="one Condition each"):
         model.gemnet(
@@ -797,7 +799,7 @@ def space_group_model() -> MatterGenSpaceGroup:
 def test_space_group_guidance(space_group_model):
     guidance = space_group_model.guidance([225, 1, 230], scale=0.5)
 
-    assert torch.equal(guidance.values, torch.tensor([225, 1, 230]))
+    assert torch.equal(guidance.values[0], torch.tensor([225, 1, 230]))
     assert guidance.scale == 0.5
     assert space_group_model.guidance(torch.tensor([194])).scale == 2.0
 
@@ -812,7 +814,7 @@ def test_space_group_network(space_group_model):
 
     free = space_group_model(structures, TIMES)
     mixed = space_group_model(structures, TIMES, groups, torch.tensor([True, False]))
-    other = space_group_model(structures, TIMES, torch.tensor([225, 216]))
+    other = space_group_model(structures, TIMES, (torch.tensor([225, 216]),))
     first = structures.batch == 0
 
     # only the conditioned crystal changes, with its space group, and no
@@ -868,8 +870,9 @@ def test_each_fine_tuned_model_refuses_the_weights_of_the_other_one(
 def band_gap_model() -> MatterGenBandGap:
     torch.manual_seed(0)
     model = MatterGenBandGap(narrow()).eval().requires_grad_(False)
-    model.property_mean.fill_(0.8)
-    model.property_std.fill_(1.4)
+    scaler = model.property_embeddings_adapt["dft_band_gap"].scaler
+    scaler.means.fill_(0.8)
+    scaler.stds.fill_(1.4)
 
     return model
 
@@ -877,7 +880,7 @@ def band_gap_model() -> MatterGenBandGap:
 def test_band_gap_guidance(band_gap_model):
     guidance = band_gap_model.guidance([0.0, 3.5], scale=1.0)
 
-    assert torch.equal(guidance.values, torch.tensor([0.0, 3.5]))
+    assert torch.equal(guidance.values[0], torch.tensor([0.0, 3.5]))
     assert guidance.scale == 1.0
     assert band_gap_model.guidance([1.0]).scale == 2.0
 
@@ -888,8 +891,9 @@ def test_band_gap_guidance(band_gap_model):
 
 def test_band_gap_embedding(band_gap_model):
     # the gap standardized, then a sine and a cosine per frequency, as the time
-    embedding = band_gap_model.embed_condition(torch.tensor([0.8, 2.2]))
-    frequencies = band_gap_model.property_frequencies
+    property_embedding = band_gap_model.property_embeddings_adapt["dft_band_gap"]
+    embedding = property_embedding(torch.tensor([0.8, 2.2]))
+    frequencies = property_embedding.conditional_embedding_module.div_term
 
     assert embedding.shape == (2, 64)
     assert torch.equal(embedding[0], band_gap_model.embed_time(torch.zeros(1))[0])
@@ -902,9 +906,9 @@ def test_band_gap_network(band_gap_model):
 
     free = band_gap_model(structures, TIMES)
     mixed = band_gap_model(
-        structures, TIMES, torch.tensor([3.0, 3.0]), torch.tensor([True, False])
+        structures, TIMES, (torch.tensor([3.0, 3.0]),), torch.tensor([True, False])
     )
-    other = band_gap_model(structures, TIMES, torch.tensor([0.0, 3.0]))
+    other = band_gap_model(structures, TIMES, (torch.tensor([0.0, 3.0]),))
     first = structures.batch == 0
 
     assert torch.equal(mixed.x[~first], free.x[~first])
@@ -923,7 +927,8 @@ def test_band_gap_load_pretrained(band_gap_model, space_group_model):
     other.load_pretrained(
         state, nested(Config.load().upstream_sections("dft_band_gap"))
     )
-    assert torch.equal(other.property_std, torch.tensor([1.4]))
+    scaler = other.property_embeddings_adapt["dft_band_gap"].scaler
+    assert torch.equal(scaler.stds, torch.tensor([1.4]))
 
     with pytest.raises(InvalidWeights, match="Missing"):
         other.load_pretrained(upstream_state(space_group_model))
@@ -934,7 +939,7 @@ def test_band_gap_load_pretrained(band_gap_model, space_group_model):
 def test_magnetic_density_shares_the_model_of_a_number(band_gap_model):
     # the same network as the band gap, its own property and its own weights
     model = MatterGenMagneticDensity(narrow())
-    assert model.CONDITION == "dft_mag_density"
+    assert model.CONDITIONS == ("dft_mag_density",)
     assert model.gemnet.config.conditions == ("dft_mag_density",)
     assert model.guidance([0.15]).scale == 2.0
 
@@ -951,6 +956,76 @@ def test_magnetic_density_shares_the_model_of_a_number(band_gap_model):
         model.load_pretrained(
             state, nested(Config.load().upstream_sections("dft_band_gap"))
         )
+
+
+# the model conditioned on a chemical system and the energy above the hull
+
+
+@pytest.fixture(scope="module")
+def joint_model() -> MatterGenChemicalSystemEnergyAboveHull:
+    torch.manual_seed(0)
+    return MatterGenChemicalSystemEnergyAboveHull(narrow()).eval().requires_grad_(False)
+
+
+def test_joint_guidance(joint_model):
+    guidance = joint_model.guidance(["Zn-S", "Fe-O"], [0.0, 0.05], scale=1.5)
+    systems, energies = guidance.values
+
+    assert systems is not None and energies is not None
+    assert systems.nonzero().tolist() == [[0, 16], [0, 30], [1, 8], [1, 26]]
+    assert torch.equal(energies, torch.tensor([0.0, 0.05]))
+    assert guidance.scale == 1.5
+    assert joint_model.guidance(None, [0.0]).values[0] is None
+
+    with pytest.raises(ValueError, match="give values for each"):
+        joint_model.guidance(["Li-O"])
+    with pytest.raises(ValueError, match="give values for each"):
+        joint_model.guidance(None, None)
+    with pytest.raises(ValueError, match="finite"):
+        joint_model.guidance(["Li-O"], [float("nan")])
+    with pytest.raises(ValueError, match="not conditioned"):
+        MatterGen(narrow()).guidance(["Li-O"])
+
+
+def test_joint_network(joint_model):
+    structures = joint_model.transform()(make_batch())
+    guidance = joint_model.guidance(["Zn-S", "Zn-S"], [0.0, 0.0])
+    systems, energies = guidance.values
+
+    free = joint_model(structures, TIMES)
+    both = joint_model(structures, TIMES, guidance.values)
+    system_only = joint_model(structures, TIMES, (systems, None))
+    energy_only = joint_model(structures, TIMES, (None, energies))
+    first = structures.batch == 0
+
+    # each property changes the scores; only the chemical system lowers elements
+    assert not torch.allclose(both.x[first], system_only.x[first])
+    assert not torch.allclose(energy_only.x[first], free.x[first])
+    assert torch.equal(energy_only.logits > -1e9, free.logits > -1e9)
+    kept = (system_only.logits[first] > -1e9).nonzero()[:, 1].unique() + 1
+    assert kept.tolist() == [16, 30]
+
+    with pytest.raises(ValueError, match="one value each"):
+        joint_model(structures, TIMES, (systems,))
+
+
+def test_joint_load_pretrained(joint_model, conditional):
+    state = upstream_state(joint_model)
+    prefix = "diffusion_module.model.property_embeddings_adapt."
+    assert prefix + "energy_above_hull.scaler.means" in state
+    assert (
+        prefix + "chemical_system.conditional_embedding_module.embedding.weight"
+        in state
+    )
+
+    other = MatterGenChemicalSystemEnergyAboveHull(joint_model.config)
+    sections = Config.load().upstream_sections("chemical_system_energy_above_hull")
+    other.load_pretrained(state, nested(sections))
+
+    with pytest.raises(InvalidWeights, match="Missing"):
+        other.load_pretrained(upstream_state(conditional))
+    with pytest.raises(InvalidWeights, match="Unexpected"):
+        MatterGenChemicalSystem(conditional.config).load_pretrained(state)
 
 
 # the pretrained model against the real MatterGen
@@ -1121,18 +1196,24 @@ def within_rounding(
 
 def condition_values(
     pretrained: MatterGen, expected: dict[str, torch.Tensor], prefix: str
-) -> torch.Tensor | None:
-    """Property of each structure of a reference, as the fine-tuned model reads it.
+) -> tuple[torch.Tensor, ...] | None:
+    """Properties of each structure of a reference, as the fine-tuned model reads them.
 
     Args:
         prefix: "" for the structures of the tests, "sampling_" for the
             crystals of the sampling.
     """
-    if pretrained.CONDITION is None:
+    if not pretrained.CONDITIONS:
         return None
 
-    values = expected[f"{prefix}{pretrained.CONDITION}s"]
-    return values.float() if pretrained.CONDITION == "chemical_system" else values
+    return tuple(
+        (
+            expected[f"{prefix}{name}s"].float()
+            if name == "chemical_system"
+            else expected[f"{prefix}{name}s"]
+        )
+        for name in pretrained.CONDITIONS
+    )
 
 
 def compare_network(
@@ -1353,6 +1434,10 @@ FINE_TUNED = {
     "space_group": (MatterGenSpaceGroup, SPACE_GROUP_NAME),
     "dft_band_gap": (MatterGenBandGap, BAND_GAP_NAME),
     "dft_mag_density": (MatterGenMagneticDensity, MAGNETIC_DENSITY_NAME),
+    "chemical_system_energy_above_hull": (
+        MatterGenChemicalSystemEnergyAboveHull,
+        ENERGY_ABOVE_HULL_NAME,
+    ),
 }
 
 
@@ -1368,7 +1453,7 @@ def fine_tuned(request) -> MatterGen:
 def fine_tuned_reference(
     model: MatterGen,
 ) -> tuple[Structures, dict[str, torch.Tensor]]:
-    return reference(f"mattergen_{model.CONDITION}_reference.npz")
+    return reference(f"mattergen_{model.fine_tuning()}_reference.npz")
 
 
 def test_pretrained_fine_tuned_network_matches_mattergen(fine_tuned):
@@ -1397,7 +1482,9 @@ def test_pretrained_guidance_matches_mattergen(fine_tuned):
     """The scores of the guided sampling of MatterGen, from its two unguided scores."""
     _, expected = fine_tuned_reference(fine_tuned)
     scale = float(expected["sampling_guidance"])
-    assert scale == fine_tuned.config.condition(fine_tuned.CONDITION).guidance_scale
+    fine_tuning = fine_tuned.fine_tuning()
+    assert fine_tuning is not None
+    assert scale == fine_tuned.config.condition(fine_tuning).guidance_scale
 
     for call in ("corrector", "predictor"):
         for i in range(len(expected["sampling_steps"])):
@@ -1425,7 +1512,7 @@ def test_pretrained_guided_steps_match_mattergen(fine_tuned):
     _, expected = fine_tuned_reference(fine_tuned)
     check_steps(fine_tuned, expected)
 
-    if fine_tuned.CONDITION == "chemical_system":
+    if "chemical_system" in fine_tuned.CONDITIONS:
         # the crystals generated only have elements of their chemical systems
         systems = expected["sampling_chemical_systems"].bool()
         batch = torch.arange(4).repeat_interleave(expected["sampling_num_atoms"])

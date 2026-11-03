@@ -175,7 +175,7 @@ class ConditionConfig:
 
 
 @dataclass(frozen=True, kw_only=True)
-class Config(YamlConfig):
+class Config(YamlConfig):  # pylint: disable=too-many-instance-attributes
     """Configuration of MatterGen, the one of config.yaml by default.
 
     Args:
@@ -195,6 +195,8 @@ class Config(YamlConfig):
             own.
         dft_mag_density: What the model conditioned on a magnetic density
             has of its own.
+        chemical_system_energy_above_hull: What the model conditioned on a
+            chemical system and the energy above the hull has of its own.
     """
 
     graph: GraphConfig
@@ -209,44 +211,40 @@ class Config(YamlConfig):
     space_group: ConditionConfig
     dft_band_gap: ConditionConfig
     dft_mag_density: ConditionConfig
+    chemical_system_energy_above_hull: ConditionConfig
 
     def condition(self, name: str) -> ConditionConfig:
-        """What the model fine-tuned on a property has of its own.
+        """What a fine-tuned model has of its own.
 
         Args:
-            name: The property: "chemical_system", "space_group",
-                "dft_band_gap" or "dft_mag_density".
+            name: The fine-tuned model, its properties joined by "_" as
+                MatterGen names its checkpoints: "space_group",
+                "chemical_system_energy_above_hull".
 
         Examples:
             >>> Config.load().condition("space_group").default_weights
             'mattergen-space-group'
         """
-        if name not in (
-            "chemical_system",
-            "space_group",
-            "dft_band_gap",
-            "dft_mag_density",
-        ):
-            raise ValueError(f"no model of MatterGen is conditioned on {name}")
+        condition = getattr(self, name, None)
+        if not isinstance(condition, ConditionConfig):
+            raise ValueError(f"no model of MatterGen is fine-tuned as {name}")
 
-        condition = getattr(self, name)
-        assert isinstance(condition, ConditionConfig)
         return condition
 
-    def decoder_config(self, condition: str | None = None) -> gemnet.Config:
+    def decoder_config(self, conditions: tuple[str, ...] = ()) -> gemnet.Config:
         """Hyperparameters of GemNet-T, which reads the embedding of the time.
 
         Its embedding of the elements has a row for the mask.
 
         Args:
-            condition: The property of a fine-tuned model, which has its
-                adapter. None for the base model.
+            conditions: The properties of a fine-tuned model, each with its
+                adapter, none for the base model.
 
         Examples:
             >>> decoder = Config.load().decoder_config()
             >>> decoder.latent_dim, decoder.num_elements, decoder.predict_lattice
             (512, 101, True)
-            >>> Config.load().decoder_config("space_group").conditions
+            >>> Config.load().decoder_config(("space_group",)).conditions
             ('space_group',)
         """
         return gemnet.Config(
@@ -254,17 +252,17 @@ class Config(YamlConfig):
             num_elements=self.model.num_classes,
             radius=self.graph.radius,
             hidden_dim=self.model.hidden_dim,
-            conditions=() if condition is None else (condition,),
+            conditions=conditions,
             **self.decoder,
         )
 
     def upstream_sections(
-        self, condition: str | None = None
+        self, fine_tuning: str | None = None
     ) -> dict[str, dict[str, object]]:
         """Sections checked in the configuration of a training of MatterGen.
 
         Args:
-            condition: The property of a fine-tuned model, None for the base
+            fine_tuning: A fine-tuned model, see condition, None for the base
                 model.
 
         Examples:
@@ -272,7 +270,10 @@ class Config(YamlConfig):
             >>> sections["lightning_module.diffusion_module.model"]["_target_"]
             'mattergen.adapter.GemNetTAdapter'
         """
-        if condition is None:
+        if fine_tuning is None:
             return dict(self.upstream.sections)
 
-        return {**self.upstream.sections, **self.condition(condition).upstream_sections}
+        return {
+            **self.upstream.sections,
+            **self.condition(fine_tuning).upstream_sections,
+        }

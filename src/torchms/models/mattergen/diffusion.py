@@ -36,6 +36,11 @@ class Denoised:
     logits: Float[torch.Tensor, "n_atoms num_classes"]
 
 
+# value of each property of a fine-tuned model for each crystal, None for a
+# property without condition
+PropertyValues = tuple[torch.Tensor | None, ...]
+
+
 @dataclass(frozen=True)
 class Guidance:
     """Condition of the sampling of a model fine-tuned on a property.
@@ -46,13 +51,15 @@ class Guidance:
     The guidance method of each model builds it.
 
     Args:
-        values: Property of each crystal, as its model reads it, its first
-            dimension n_struct: the chemical systems of
-            MatterGenChemicalSystem, the space groups of MatterGenSpaceGroup.
+        values: For each property of the model, in the order of its
+            CONDITIONS, its value for each crystal as the model reads it, the
+            first dimension n_struct: the chemical systems as 1 per atomic
+            number, the space groups, the numbers. None for a property the
+            sampling is not conditioned on.
         scale: Factor of the guidance, gamma of MatterGen.
     """
 
-    values: torch.Tensor
+    values: PropertyValues
     scale: float
 
 

@@ -6,7 +6,8 @@ CHGNet its total energy, ALIGNN its formation energy.
 Generative models generate structures: CDVAE, DiffCSPGeneration and
 MatterGen, MatterGenChemicalSystem for given elements, MatterGenSpaceGroup,
 MatterGenBandGap and MatterGenMagneticDensity towards a space group, a band gap
-or a magnetic density, and DiffCSP for a given
+or a magnetic density, MatterGenChemicalSystemEnergyAboveHull for given elements
+near the hull, and DiffCSP for a given
 composition.
 
 All of them are pretrained models of other projects, rewritten with the graphs
@@ -31,6 +32,7 @@ from torchms.models.mattergen import (
     MatterGen,
     MatterGenBandGap,
     MatterGenChemicalSystem,
+    MatterGenChemicalSystemEnergyAboveHull,
     MatterGenMagneticDensity,
     MatterGenSpaceGroup,
 )
@@ -47,6 +49,7 @@ __all__ = [
     "MatterGen",
     "MatterGenBandGap",
     "MatterGenChemicalSystem",
+    "MatterGenChemicalSystemEnergyAboveHull",
     "MatterGenMagneticDensity",
     "MatterGenSpaceGroup",
     "OrbV3",

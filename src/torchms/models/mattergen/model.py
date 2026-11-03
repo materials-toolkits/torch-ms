@@ -53,7 +53,7 @@ with and without it (classifier-free guidance).
 from __future__ import annotations
 
 import os
-from typing import Mapping
+from typing import Mapping, Sequence
 
 import torch
 import torch.nn.functional as F
@@ -83,9 +83,11 @@ from torchms.models.estimator.weights import download
 from torchms.models.layers.basis import sinusoidal_frequencies, sinusoids
 from torchms.models.layers.gemnet import Condition, GemNetT
 from torchms.models.mattergen.config import Config
+from torchms.models.mattergen.properties import PropertyEmbedding, property_embedding
 from torchms.models.mattergen.diffusion import (
     Denoised,
     Guidance,
+    PropertyValues,
     StepNoise,
     ancestral_coefficients,
     guided_scores,
@@ -123,9 +125,9 @@ class MatterGen(PretrainedModel[Config]):
 
     CONFIG = Config
     GRAPH_FIELDS = ("graph", "triplets", "bonds")
-    # property the network was fine-tuned on: "chemical_system" for
-    # MatterGenChemicalSystem, "space_group" for MatterGenSpaceGroup
-    CONDITION: str | None = None
+    # properties the network was fine-tuned on, in the order of MatterGen:
+    # ("chemical_system",) for MatterGenChemicalSystem, none for the base model
+    CONDITIONS: tuple[str, ...] = ()
 
     time_frequencies: torch.Tensor
     logit_offset: torch.Tensor
@@ -144,8 +146,12 @@ class MatterGen(PretrainedModel[Config]):
                 network.hidden_dim, network.time_max_period, endpoint=False
             ),
         )
-        self.gemnet = GemNetT(self.config.decoder_config(self.CONDITION))
+        self.gemnet = GemNetT(self.config.decoder_config(self.CONDITIONS))
         self.fc_atom = nn.Linear(network.hidden_dim, network.num_classes)
+        # embeddings of the properties, named as in MatterGen
+        self.property_embeddings_adapt = nn.ModuleDict(
+            {name: property_embedding(name, self.config) for name in self.CONDITIONS}
+        )
 
         # added to the scores of the elements: 0 for an allowed one
         allowed = torch.zeros(network.num_classes)
@@ -181,9 +187,15 @@ class MatterGen(PretrainedModel[Config]):
         """Atomic number of an atom which has no element yet."""
         return self.config.model.mask
 
+    @classmethod
+    def fine_tuning(cls) -> str | None:
+        """Its properties joined by "_", its section of config.yaml; None if base."""
+        return "_".join(cls.CONDITIONS) or None
+
     def default_weights(self) -> str:
-        if self.CONDITION is not None:
-            return self.config.condition(self.CONDITION).default_weights
+        fine_tuning = self.fine_tuning()
+        if fine_tuning is not None:
+            return self.config.condition(fine_tuning).default_weights
 
         return self.config.default_weights
 
@@ -228,7 +240,7 @@ class MatterGen(PretrainedModel[Config]):
         """
         if configuration is not None:
             check_configuration(
-                configuration, self.config.upstream_sections(self.CONDITION)
+                configuration, self.config.upstream_sections(self.fine_tuning())
             )
 
         prefix = self.config.upstream.prefix
@@ -311,7 +323,7 @@ class MatterGen(PretrainedModel[Config]):
         self,
         structures: Structures,
         times: Float[torch.Tensor, "n_struct"],
-        values: torch.Tensor | None = None,
+        values: PropertyValues | None = None,
         conditioned: Bool[torch.Tensor, "n_struct"] | None = None,
     ) -> Denoised:
         """Scores of noisy crystals, from the network.
@@ -320,15 +332,16 @@ class MatterGen(PretrainedModel[Config]):
             structures: Noisy crystals with their graph, see transform. An atom
                 without element has the atomic number of the mask, see mask.
             times: Time of each crystal, from 0 to 1: how much noise it has.
-            values: Property of each crystal, read by a model fine-tuned on
-                it, see Guidance. None for a network without condition.
-            conditioned: Which crystals are conditioned on their property, all
-                of them by default.
+            values: Value of each property of CONDITIONS for each crystal, as
+                Guidance.values: None for a property without condition. None
+                for a network without condition.
+            conditioned: Which crystals are conditioned on their properties,
+                all of them by default.
 
         Raises:
             ValueError: If an atom has an element after fermium, if the
-                structures do not have their graph, or if values are given to
-                the base model.
+                structures do not have their graph, or if the values are not
+                one per property of the model.
         """
         self.check_graphs(structures)
         graph = attached_graph(structures, self)
@@ -370,54 +383,94 @@ class MatterGen(PretrainedModel[Config]):
     def property_conditions(
         self,
         times: Float[torch.Tensor, "n_struct"],
-        values: torch.Tensor | None,
+        values: PropertyValues | None,
         conditioned: Bool[torch.Tensor, "n_struct"] | None,
     ) -> tuple[
         tuple[Condition, ...], Float[torch.Tensor, "n_struct num_classes"] | None
     ]:
-        """Condition of GemNet-T, and the classes of the elements kept for each crystal.
+        """Condition of GemNet-T per property, and the classes of the elements kept.
 
-        Without values, a fine-tuned model has its condition inactive, as the
-        zero embedding of MatterGen, and keeps every class.
+        A property without value has its condition inactive, as the zero
+        embedding of the adapters of MatterGen. Only a chemical system keeps
+        fewer classes.
         """
-        if values is not None and self.CONDITION is None:
+        if values is None:
+            values = (None,) * len(self.CONDITIONS)
+        if values and not self.CONDITIONS:
             raise ValueError(f"{type(self).__name__} is not conditioned")
-        if self.CONDITION is None:
-            return (), None
+        if len(values) != len(self.CONDITIONS):
+            raise ValueError(
+                f"{type(self).__name__} is conditioned on {list(self.CONDITIONS)}: "
+                f"give one value each, not {len(values)}"
+            )
 
         n_struct, device = len(times), times.device
-        if values is None:
-            embedding = times.new_zeros((n_struct, self.config.model.hidden_dim))
-            inactive = torch.zeros(n_struct, dtype=torch.bool, device=device)
-            return (Condition(embedding, inactive),), None
-
         if conditioned is None:
             conditioned = torch.ones(n_struct, dtype=torch.bool, device=device)
+        inactive = torch.zeros(n_struct, dtype=torch.bool, device=device)
+        zeros = times.new_zeros((n_struct, self.config.model.hidden_dim))
 
-        condition = Condition(self.embed_condition(values), conditioned)
+        conditions, keep = [], None
+        for name, value in zip(self.CONDITIONS, values):
+            if value is None:
+                conditions.append(Condition(zeros, inactive))
+                continue
 
-        return (condition,), self.kept_classes(values, conditioned)
+            embedding = self.property_embeddings_adapt[name]
+            assert isinstance(embedding, PropertyEmbedding)
+            conditions.append(Condition(embedding(value), conditioned))
+            kept = embedding.kept_classes(value, conditioned)
+            if kept is not None:
+                keep = kept
 
-    def embed_condition(
-        self, values: torch.Tensor
-    ) -> Float[torch.Tensor, "n_struct hidden_dim"]:
-        """Embedding of the property of each crystal, for a fine-tuned model."""
-        raise NotImplementedError(f"{type(self).__name__} is not conditioned")
+        return tuple(conditions), keep
 
-    def kept_classes(
-        self, values: torch.Tensor, conditioned: Bool[torch.Tensor, "n_struct"]
-    ) -> Float[torch.Tensor, "n_struct num_classes"] | None:
-        """Classes of the elements each crystal can take, 1 for a kept one.
+    def guidance(
+        self,
+        *values: Sequence[object] | torch.Tensor | None,
+        scale: float | None = None,
+    ) -> Guidance:
+        """Guidance of the sampling of a fine-tuned model towards its properties.
 
-        None, every class, but for a chemical system.
+        Args:
+            values: One value per crystal for each property of CONDITIONS, in
+                their order, or None for a property the sampling is not
+                conditioned on: chemical systems as "Li-O", space groups from
+                1 to 230, numbers in the unit of the training set of MatterGen.
+            scale: Factor of the guidance, the one of the configuration by
+                default, 2 as in the README of MatterGen.
+
+        Raises:
+            ValueError: If the model is not fine-tuned, if the values are not
+                one per property or all None, or if a value is not one of its
+                property.
         """
-        del values, conditioned
+        fine_tuning = self.fine_tuning()
+        if fine_tuning is None:
+            raise ValueError(f"{type(self).__name__} is not conditioned")
+        if len(values) != len(self.CONDITIONS) or all(v is None for v in values):
+            raise ValueError(
+                f"{type(self).__name__} is conditioned on {list(self.CONDITIONS)}: "
+                "give values for each, None for one without condition"
+            )
+
+        device = self.time_frequencies.device
+        parsed = []
+        for name, value in zip(self.CONDITIONS, values):
+            embedding = self.property_embeddings_adapt[name]
+            assert isinstance(embedding, PropertyEmbedding)
+            parsed.append(None if value is None else embedding.parse(value, device))
+
+        if scale is None:
+            scale = self.config.condition(fine_tuning).guidance_scale
+
+        return Guidance(tuple(parsed), scale)
 
     def forward(
         self,
         structures: Structures,
         times: Float[torch.Tensor, "n_struct"],
-        values: torch.Tensor | None = None,
+        values: PropertyValues | None = None,
         conditioned: Bool[torch.Tensor, "n_struct"] | None = None,
     ) -> Denoised:
         """Scores of noisy crystals, see denoise."""
@@ -542,9 +595,9 @@ class MatterGen(PretrainedModel[Config]):
         self,
         structures: Structures,
         times: Float[torch.Tensor, "n_struct"],
-        values: torch.Tensor | None,
+        values: PropertyValues | None,
     ) -> Denoised:
-        """Scores of noisy crystals, with or without their property, see scores."""
+        """Scores of noisy crystals, with or without their properties, see scores."""
         graph = attached_graph(structures, self)
         denoised = self.denoise(structures, times, values)
 

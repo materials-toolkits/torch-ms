@@ -38,14 +38,15 @@ script is run once for each model, and finds which one it is given:
   written to tests/data/mattergen_reference.npz;
 * "~/.cache/torchms/mattergen/mattergen-chemical-system",
   "~/.cache/torchms/mattergen/mattergen-space-group",
-  "~/.cache/torchms/mattergen/mattergen-dft-band-gap" and
-  "~/.cache/torchms/mattergen/mattergen-dft-mag-density", the models
-  conditioned on a chemical system, a space group, a band gap and a magnetic
-  density: the result is written to
-  tests/data/mattergen_<property>_reference.npz. The network is run on every
-  other structure with its own chemical system or space group (pymatgen,
-  symprec 0.1), or a band gap from 0 to 6 eV, or a magnetic density from 0 to
-  0.2, on the other ones without condition, and the sampling with the guidance of the README of MatterGen,
+  "~/.cache/torchms/mattergen/mattergen-dft-band-gap",
+  "~/.cache/torchms/mattergen/mattergen-dft-mag-density" and
+  "~/.cache/torchms/mattergen/mattergen-chemical-system-energy-above-hull",
+  the models conditioned on a chemical system, a space group, a band gap, a
+  magnetic density, and a chemical system with the energy above the hull: the
+  result is written to tests/data/mattergen_<properties>_reference.npz. The
+  network is run on every other structure with its own chemical system or
+  space group (pymatgen, symprec 0.1), or a number of NUMBER_RANGES, on the
+  other ones without condition, and the sampling with the guidance of the README of MatterGen,
   recording the scores with and without condition of each step.
 
 Both are read by tests/test_mattergen.py.
@@ -88,7 +89,11 @@ SAMPLING_CONDITIONS = {
     "space_group": [225, 194, 221, 166],
     "dft_band_gap": [0.0, 1.5, 3.0, 6.0],
     "dft_mag_density": [0.0, 0.05, 0.15, 0.3],
+    "energy_above_hull": [0.0, 0.0, 0.05, 0.1],
 }
+
+# the numbers given to the test structures go from 0 to these values
+NUMBER_RANGES = {"dft_band_gap": 6.0, "dft_mag_density": 0.2, "energy_above_hull": 0.2}
 GUIDANCE = 2.0
 
 
@@ -130,12 +135,9 @@ def chemgraphs(lattice, x, z, num_atoms):
     )
 
 
-def condition(model) -> str | None:
-    """Property the model is conditioned on, None for the base model."""
-    properties = list(model.diffusion_module.model.property_embeddings_adapt)
-    assert len(properties) <= 1, properties
-
-    return properties[0] if properties else None
+def conditions(model) -> list[str]:
+    """Properties the model is conditioned on, in their order, none for the base model."""
+    return list(model.diffusion_module.model.property_embeddings_adapt)
 
 
 def batch_values(name: str, values: list):
@@ -164,15 +166,15 @@ def saved_values(name: str, values: list) -> np.ndarray:
     return np.array(values, dtype=np.float32)
 
 
-def with_condition(batch, name: str, values: list, conditioned: np.ndarray):
-    """Batch with a property per structure, used where conditioned."""
+def with_conditions(batch, values: dict[str, list], conditioned: np.ndarray):
+    """Batch with properties per structure, all used where conditioned."""
     from mattergen.property_embeddings import _USE_UNCONDITIONAL_EMBEDDING
 
     unconditional = torch.from_numpy(~conditioned).reshape(-1, 1)
 
     return batch.replace(
-        **{name: batch_values(name, values)},
-        **{_USE_UNCONDITIONAL_EMBEDDING: {name: unconditional}},
+        **{name: batch_values(name, value) for name, value in values.items()},
+        **{_USE_UNCONDITIONAL_EMBEDDING: {name: unconditional for name in values}},
     )
 
 
@@ -325,8 +327,8 @@ def sampling(model, mattergen: Path) -> dict[str, np.ndarray]:
     from mattergen.common.data.dataset import NumAtomsCrystalDataset
 
     config_dir = mattergen / "mattergen" / "sampling_conf"
-    name = condition(model)
-    conditional = name is not None
+    names = conditions(model)
+    conditional = bool(names)
     overrides = [f"sampler_partial.guidance_scale={GUIDANCE}"] if conditional else []
     with hydra.initialize_config_dir(str(config_dir.resolve()), version_base=None):
         config = hydra.compose(config_name="default", overrides=overrides)
@@ -336,15 +338,19 @@ def sampling(model, mattergen: Path) -> dict[str, np.ndarray]:
     items = [dataset[i] for i in range(len(dataset))]
     if conditional:
         # as the script of generation of MatterGen sets a property
-        assert name is not None
         items = [
-            item.replace(**{name: item_value(name, value)})
-            for item, value in zip(items, SAMPLING_CONDITIONS[name])
+            item.replace(
+                **{
+                    name: item_value(name, SAMPLING_CONDITIONS[name][i])
+                    for name in names
+                }
+            )
+            for i, item in enumerate(items)
         ]
-    conditions = collate(items)
+    condition_batch = collate(items)
 
     with Recorder(model, sampler) as recorder:
-        sample, mean, states = sampler.sample_with_record(conditions)
+        sample, mean, states = sampler.sample_with_record(condition_batch)
 
     # positions and cell of the prior, then at each step the noise of the
     # corrector of the positions and of the cell, of the predictor of the
@@ -434,7 +440,10 @@ def sampling(model, mattergen: Path) -> dict[str, np.ndarray]:
         ),
         **(
             {
-                f"sampling_{name}s": saved_values(name, SAMPLING_CONDITIONS[name]),
+                **{
+                    f"sampling_{name}s": saved_values(name, SAMPLING_CONDITIONS[name])
+                    for name in names
+                },
                 "sampling_guidance": np.array(GUIDANCE),
             }
             if conditional
@@ -523,25 +532,25 @@ def main():
     print("structures", len(data["num_atoms"]), "atoms", int(data["num_atoms"].sum()))
 
     result = {}
-    name = condition(model)
-    if name is not None:
-        assert name in SAMPLING_CONDITIONS, name
+    names = conditions(model)
+    if names:
         # every other structure with its own chemical system or space group,
-        # the other ones without condition
-        if name == "chemical_system":
-            values = own_chemical_systems(data["z"], data["num_atoms"])
-        elif name == "space_group":
-            values = own_space_groups(data)
-        else:
-            # the test structures have no band gap and no magnetic density: a
-            # range of them
-            stop = {"dft_band_gap": 6.0, "dft_mag_density": 0.2}[name]
-            values = np.linspace(0.0, stop, len(data["num_atoms"])).tolist()
-        conditioned = np.arange(len(values)) % 2 == 0
-        batch = with_condition(batch, name, values, conditioned)
-        result.update(
-            {f"{name}s": saved_values(name, values), "conditioned": conditioned}
-        )
+        # or a number of a range, the other ones without condition
+        values = {}
+        for name in names:
+            assert name in SAMPLING_CONDITIONS, name
+            if name == "chemical_system":
+                values[name] = own_chemical_systems(data["z"], data["num_atoms"])
+            elif name == "space_group":
+                values[name] = own_space_groups(data)
+            else:
+                # the test structures have none of these numbers: a range
+                stop = NUMBER_RANGES[name]
+                values[name] = np.linspace(0.0, stop, len(data["num_atoms"])).tolist()
+        conditioned = np.arange(len(data["num_atoms"])) % 2 == 0
+        batch = with_conditions(batch, values, conditioned)
+        result.update({f"{name}s": saved_values(name, v) for name, v in values.items()})
+        result.update(conditioned=conditioned)
 
     with torch.no_grad():
         result.update(graph(model, batch))
@@ -564,7 +573,9 @@ def main():
         result.update(network_in_double(model, {"clean": batch, "noisy": noisy}, times))
 
     output = (
-        "mattergen_reference.npz" if name is None else f"mattergen_{name}_reference.npz"
+        f"mattergen_{'_'.join(names)}_reference.npz"
+        if names
+        else "mattergen_reference.npz"
     )
     np.savez_compressed(DATA / output, **result)
     print("edges", result["graph_num_edges"].tolist())

@@ -3,23 +3,25 @@
 MatterGen is the diffusion model of crystals of Zeni, Pinsler, Zügner, Fowler, Horton, Fu
 et al. ([MatterGen](https://github.com/microsoft/mattergen), commit `9242366`, version
 1.0.3, MIT, [Nature 2025](https://doi.org/10.1038/s41586-025-08628-5)), in
-`torchms/models/mattergen/`. Five of its models are rewritten: the base model, which
+`torchms/models/mattergen/`. Six of its models are rewritten: the base model, which
 generates crystals of given numbers of atoms with their elements, without condition, and
-the models fine-tuned on a chemical system, a space group, the band gap and the magnetic
-density, which generate them with given elements or towards one of these properties: see
+the models fine-tuned on a chemical system, a space group, the band gap, the magnetic
+density, and a chemical system with the energy above the hull, which generate them with
+given elements or towards these properties: see
 [Conditioned on a chemical system](#conditioned-on-a-chemical-system),
 [Conditioned on a space group](#conditioned-on-a-space-group),
-[Conditioned on a band gap](#conditioned-on-a-band-gap) and
-[Conditioned on a magnetic density](#conditioned-on-a-magnetic-density).
+[Conditioned on a band gap](#conditioned-on-a-band-gap),
+[Conditioned on a magnetic density](#conditioned-on-a-magnetic-density) and
+[Conditioned on a chemical system and the energy above the hull](#conditioned-on-a-chemical-system-and-the-energy-above-the-hull).
 
 | | |
 |---|---|
-| Class | `MatterGen`; `MatterGenChemicalSystem` for a chemical system, `MatterGenSpaceGroup` for a space group, `MatterGenBandGap` for a band gap, `MatterGenMagneticDensity` for a magnetic density |
+| Class | `MatterGen`; `MatterGenChemicalSystem` for a chemical system, `MatterGenSpaceGroup` for a space group, `MatterGenBandGap` for a band gap, `MatterGenMagneticDensity` for a magnetic density, `MatterGenChemicalSystemEnergyAboveHull` for both |
 | Does | samples the elements, the lattice and the coordinates of crystals of given numbers of atoms |
 | Source | [MatterGen](https://github.com/microsoft/mattergen), commit `9242366` (1.0.3) |
 | License | MIT; its diffusion of the elements and its sampler are adapted from Google Research code under Apache-2.0 |
 | Paper | [A generative model for inorganic materials design](https://doi.org/10.1038/s41586-025-08628-5), Nature 639, 624 (2025), [arXiv:2312.03687](https://arxiv.org/abs/2312.03687) |
-| Weights | `mattergen-base`, of the authors (`mattergen_base` on [Hugging Face](https://huggingface.co/microsoft/mattergen)), trained on Alex-MP-20, 461 MB; `mattergen-chemical-system` (`chemical_system`), `mattergen-space-group` (`space_group`), `mattergen-dft-band-gap` (`dft_band_gap`) and `mattergen-dft-mag-density` (`dft_mag_density`), fine-tuned from it, 512 MB each |
+| Weights | `mattergen-base`, of the authors (`mattergen_base` on [Hugging Face](https://huggingface.co/microsoft/mattergen)), trained on Alex-MP-20, 461 MB; `mattergen-chemical-system` (`chemical_system`), `mattergen-space-group` (`space_group`), `mattergen-dft-band-gap` (`dft_band_gap`) `mattergen-dft-mag-density` (`dft_mag_density`) and `mattergen-chemical-system-energy-above-hull` (`chemical_system_energy_above_hull`), fine-tuned from it, 512 MB each |
 | Network | [GemNet-T](gemnet.md), 512 features, 4 blocks, 44.6 M parameters |
 | Transform | `AddRadiusGraph(7.0, max_image_shift=5)`, `KeepNearestNeighbors(50)`, `MirrorEdges()`, `AddTriplets()`, `AddBonds()` |
 | Difference with the original | a step of the sampling: identical, given the same scores and noise. The network: as near to MatterGen in double precision as MatterGen in single precision is, up to 1.6e-2 on the score of a lattice (values up to 5.6) |
@@ -85,9 +87,8 @@ categorical distribution of these logits. The noise of the last step is `element
 The number of atoms is not generated. MatterGen draws it from the numbers of atoms of its
 training set, a table of its code; `sample_num_atoms` draws from it: from 1 to 20 atoms.
 
-Not included: the models conditioned on the other properties (bulk modulus, and the two
-which combine two properties: magnetic density and HHI score, chemical system and energy
-above the hull), the model of MP-20 and the
+Not included: the models conditioned on the other properties (bulk modulus, and magnetic
+density with HHI score), the model of MP-20 and the
 prediction of a structure from its composition, the training, the fine-tuning, the datasets
 and the evaluation. The checkpoints hold only tensors and are read with
 `weights_only=True`. The configuration stored with them is checked: each model refuses the
@@ -117,10 +118,13 @@ structures = model.sample(num_atoms, guidance=guidance)   # 4000 calls of the ne
   not allowed: its atoms can only take them.
 - **The guidance** (classifier-free) mixes the scores without and with the condition,
   `unconditional + scale (conditional - unconditional)`, for the coordinates, the lattice
-  and the elements: two calls of the network per score. `guidance(systems, scale)` gives a
-  `Guidance`; its factor is 2 by default, the one of the README of MatterGen. 0 is the
+  and the elements: two calls of the network per score. `guidance(systems, scale=…)` gives
+  a `Guidance`, which holds one value per crystal for each property of the model; its
+  factor is 2 by default, the one of the README of MatterGen. 0 is the
   model without condition, 1 the model with it. Without guidance, `sample` samples the
-  fine-tuned model without condition: these are not the crystals of `MatterGen`.
+  fine-tuned model without condition: these are not the crystals of `MatterGen`. The design
+  note [Classifier-free guidance](../design/guidance.md) says how the scores are mixed, what
+  is imposed and what is followed, and how far a number can be from the training set.
 - `model(structures, times, guidance.values, conditioned)` is the network alone, with a
   mask of the conditioned crystals; `scores(structures, times, guidance)` the mixed scores.
 
@@ -204,9 +208,8 @@ in double precision as MatterGen is.
 
 ## Conditioned on a band gap
 
-`MatterGenBandGap` is MatterGen fine-tuned on the band gap from DFT, in eV
-(`ScalarPropertyMatterGen`, shared with the magnetic density). It works as the two models
-above: the band gap of a crystal is standardized by the mean and the deviation of
+`MatterGenBandGap` is MatterGen fine-tuned on the band gap from DFT, in eV. It works as the
+two models above: the band gap of a crystal is standardized by the mean and the deviation of
 the training set, which are in the weights (0.798 and 1.408 eV), then embedded by sines and
 cosines as the time, with frequencies also in the weights. Like the space group, **the band
 gap is followed, not imposed**: nothing in the sampling checks it.
@@ -244,8 +247,8 @@ MgTe and NH4Cl.
 ## Conditioned on a magnetic density
 
 `MatterGenMagneticDensity` is MatterGen fine-tuned on the magnetic density from DFT. It is
-the model of the band gap with another number: both are `ScalarPropertyMatterGen`, with the
-statistics of their own training set in their weights (here a mean of 0.0042 and a deviation
+the model of the band gap with another number, embedded the same way, with the statistics
+of its own training set in its weights (here a mean of 0.0042 and a deviation
 of 0.0158). The code of MatterGen names no unit; its README asks for 0.15 with a guidance of
 2, the default here. The density is followed, not imposed.
 
@@ -277,6 +280,56 @@ GdAs and Fe4Co2.
 As for the chemical systems, the scores of the elements of the conditioned structures without
 noise are twice as far from MatterGen in double precision as MatterGen is, on average; the
 tests accept them as within what a change of the last bits of the inputs does to the rewrite.
+
+## Conditioned on a chemical system and the energy above the hull
+
+`MatterGenChemicalSystemEnergyAboveHull` is MatterGen fine-tuned on two properties together:
+the chemical system and the energy above the hull, in eV/atom. MatterGen has no model of the
+energy above the hull alone. The network has an adapter per property before each block and
+adds their outputs. The chemical system restricts the elements as in
+`MatterGenChemicalSystem`; the energy is standardized by the statistics of the training set
+(0.046 and 0.030 eV/atom in the weights) and embedded as the band gap. Either property can be
+left without condition with `None`.
+
+```{.python notest}
+from torchms.models import MatterGenChemicalSystemEnergyAboveHull
+
+model = MatterGenChemicalSystemEnergyAboveHull.from_pretrained(device="cuda")
+guidance = model.guidance(["Li-Fe-P-O"] * 8, [0.0] * 8)   # systems, eV/atom; factor 2
+structures = model.sample(num_atoms, guidance=guidance)
+model.guidance(None, [0.0] * 8)                             # the energy alone
+```
+
+With a generator of seed 0, 8 crystals of 8 chemical systems were sampled at 0 and at 0.2
+eV/atom above the hull (281 s each on a GPU of 8 GB), with the same numbers of atoms and the
+same noise. Every atom has an element of its system. Their energy above the hull, estimated
+by `EnergyEstimator` without relaxation, has a median of 0.057 eV/atom at 0 and 0.116 at 0.2:
+GaN goes from 0.008 to 0.147, SiC from −0.002 to 0.090, a Cu–Zn–Sn–S crystal from 0.012 to
+0.121, while three systems go the other way. Eight pairs, unrelaxed: an indication, not a
+measure.
+
+Higher targets work only up to a point: the median reaches 0.210 eV/atom at 0.5, 15
+deviations from the mean of the training set, and falls back to 0.080 at 1. The model
+follows the energy up to about 0.2 to 0.5 eV/atom; the numbers of every system are in the
+design note [Classifier-free guidance](../design/guidance.md#the-range-of-a-number).
+
+### Comparison with the original
+
+As for the other fine-tuned models: every other structure of the tests conditioned on its
+own chemical system and an energy from 0 to 0.2 eV/atom, and the guided sampling of 4 crystals
+towards Li-O, Fe-Ni-O, Na-Cl and Ti-O at 0, 0, 0.05 and 0.1 eV/atom, where MatterGen
+generated Li2O2, Fe3NiO4, NaCl and Ti4O2.
+
+| | |
+|---|---|
+| Mixed scores of the guidance, and a step of the guided sampling given its scores and its noise | identical |
+| Elements of the crystals MatterGen returns | identical |
+| Network, conditioned structures without noise (12, 56 atoms): coordinates, lattice, elements, largest / mean difference with MatterGen in double precision | 1.9e-3 / 6.6e-5, 1.2e-2 / 2.8e-4, 3.3e-2 / 2.7e-3; MatterGen in single precision 1.9e-3 / 6.2e-5, 1.2e-2 / 2.0e-4, 3.1e-2 / 2.4e-3 |
+| Network, conditioned structures with noise (14, 72 atoms): coordinates, lattice, elements, largest / mean | 2.4e-2 / 4.8e-4, 6.6e-2 / 3.0e-3, 3.6e-1 / 7.3e-3; MatterGen 1.4e-2 / 3.8e-4, 6.6e-2 / 3.0e-3, 1.7e-1 / 4.7e-3 |
+
+The scores of the elements of the noisy structures are up to twice as far from MatterGen in
+double precision as MatterGen is; the tests accept them as within what a change of the last
+bits of the inputs does to the rewrite.
 
 ## Comparison with the original
 
