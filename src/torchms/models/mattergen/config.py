@@ -197,6 +197,8 @@ class Config(YamlConfig):  # pylint: disable=too-many-instance-attributes
             has of its own.
         chemical_system_energy_above_hull: What the model conditioned on a
             chemical system and the energy above the hull has of its own.
+        ml_bulk_modulus: What the model conditioned on a bulk modulus has of
+            its own.
     """
 
     graph: GraphConfig
@@ -212,6 +214,7 @@ class Config(YamlConfig):  # pylint: disable=too-many-instance-attributes
     dft_band_gap: ConditionConfig
     dft_mag_density: ConditionConfig
     chemical_system_energy_above_hull: ConditionConfig
+    ml_bulk_modulus: ConditionConfig
 
     def condition(self, name: str) -> ConditionConfig:
         """What a fine-tuned model has of its own.
@@ -230,6 +233,32 @@ class Config(YamlConfig):  # pylint: disable=too-many-instance-attributes
             raise ValueError(f"no model of MatterGen is fine-tuned as {name}")
 
         return condition
+
+    def log10_scaled(self, fine_tuning: str | None, name: str) -> bool:
+        """Whether a number is standardized after its decimal logarithm.
+
+        As the scaler of the property in the configuration of the training of
+        MatterGen, which is checked when the weights are loaded.
+
+        Args:
+            fine_tuning: A fine-tuned model, see condition; None is the base
+                model, which has no property.
+            name: One of its properties.
+
+        Examples:
+            >>> config = Config.load()
+            >>> config.log10_scaled("ml_bulk_modulus", "ml_bulk_modulus")
+            True
+            >>> config.log10_scaled("dft_band_gap", "dft_band_gap")
+            False
+        """
+        if fine_tuning is None:
+            return False
+        sections = self.condition(fine_tuning).upstream_sections
+        model = "lightning_module.diffusion_module.model"
+        scaler = sections.get(f"{model}.property_embeddings_adapt.{name}.scaler", {})
+
+        return bool(scaler.get("log10_transform", False))
 
     def decoder_config(self, conditions: tuple[str, ...] = ()) -> gemnet.Config:
         """Hyperparameters of GemNet-T, which reads the embedding of the time.

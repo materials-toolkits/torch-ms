@@ -32,6 +32,7 @@ from torchms.models.mattergen import (
     InvalidWeights,
     MatterGen,
     MatterGenBandGap,
+    MatterGenBulkModulus,
     MatterGenChemicalSystem,
     MatterGenChemicalSystemEnergyAboveHull,
     MatterGenMagneticDensity,
@@ -39,6 +40,7 @@ from torchms.models.mattergen import (
     StepNoise,
 )
 from torchms.models.mattergen.diffusion import guided_scores, symmetric_noise
+from torchms.models.mattergen.properties import NoiseLevelEncoding, StandardScaler
 
 DATA = Path(__file__).parent / "data"
 NAME = "mattergen-base"
@@ -47,6 +49,7 @@ SPACE_GROUP_NAME = "mattergen-space-group"
 BAND_GAP_NAME = "mattergen-dft-band-gap"
 MAGNETIC_DENSITY_NAME = "mattergen-dft-mag-density"
 ENERGY_ABOVE_HULL_NAME = "mattergen-chemical-system-energy-above-hull"
+BULK_MODULUS_NAME = "mattergen-ml-bulk-modulus"
 
 # a network of 512 features on 50 neighbours per atom and their triplets:
 # slower than the default timeout
@@ -112,6 +115,7 @@ def test_pinned_checkpoints(tmp_path):
         BAND_GAP_NAME,
         MAGNETIC_DENSITY_NAME,
         ENERGY_ABOVE_HULL_NAME,
+        BULK_MODULUS_NAME,
     }
     assert Config.load().default_weights == NAME
     assert Config.load().chemical_system.default_weights == CHEMICAL_SYSTEM_NAME
@@ -121,6 +125,7 @@ def test_pinned_checkpoints(tmp_path):
     assert MatterGenMagneticDensity().default_weights() == MAGNETIC_DENSITY_NAME
     joint = MatterGenChemicalSystemEnergyAboveHull()
     assert joint.default_weights() == ENERGY_ABOVE_HULL_NAME
+    assert MatterGenBulkModulus().default_weights() == BULK_MODULUS_NAME
 
     for name, directory in (
         (NAME, "mattergen_base"),
@@ -129,6 +134,7 @@ def test_pinned_checkpoints(tmp_path):
         (BAND_GAP_NAME, "dft_band_gap"),
         (MAGNETIC_DENSITY_NAME, "dft_mag_density"),
         (ENERGY_ABOVE_HULL_NAME, "chemical_system_energy_above_hull"),
+        (BULK_MODULUS_NAME, "ml_bulk_modulus"),
     ):
         for checkpoint in weights.CHECKPOINTS["mattergen"][name]:
             # a commit of the repository of the authors, not a branch
@@ -958,6 +964,48 @@ def test_magnetic_density_shares_the_model_of_a_number(band_gap_model):
         )
 
 
+def test_bulk_modulus_is_standardized_after_its_logarithm(band_gap_model):
+    # the network of the other numbers, the logarithm of the bulk modulus
+    model = MatterGenBulkModulus(narrow()).eval().requires_grad_(False)
+    property_embedding = model.property_embeddings_adapt["ml_bulk_modulus"]
+    scaler = property_embedding.scaler
+    encoding = property_embedding.conditional_embedding_module
+    assert isinstance(scaler, StandardScaler) and scaler.log10
+    assert isinstance(encoding, NoiseLevelEncoding)
+    scaler.means.fill_(1.7)
+    scaler.stds.fill_(0.4)
+    assert model.CONDITIONS == ("ml_bulk_modulus",)
+    band_gap_scaler = band_gap_model.property_embeddings_adapt["dft_band_gap"].scaler
+    assert isinstance(band_gap_scaler, StandardScaler) and not band_gap_scaler.log10
+
+    # 10^1.7 GPa is the mean: the embedding of 0, as the time 0
+    embedding = property_embedding(torch.tensor([10**1.7, 10**2.1]))
+    assert torch.allclose(embedding[0], model.embed_time(torch.zeros(1))[0], atol=1e-6)
+    assert torch.allclose(embedding[1, 0::2], torch.sin(encoding.div_term), atol=1e-5)
+
+    values = model.guidance([400.0]).values[0]
+    assert values is not None and torch.equal(values, torch.tensor([400.0]))
+    for wrong in (0.0, -50.0, float("nan")):
+        with pytest.raises(ValueError, match="positive|finite"):
+            model.guidance([wrong])
+
+    state = upstream_state(model)
+    model.load_pretrained(
+        state, nested(Config.load().upstream_sections("ml_bulk_modulus"))
+    )
+    # a training without the logarithm is refused
+    sections = Config.load().upstream_sections("ml_bulk_modulus")
+    name = (
+        "lightning_module.diffusion_module.model.property_embeddings_adapt."
+        "ml_bulk_modulus.scaler"
+    )
+    configuration = nested(
+        {**sections, name: {**sections[name], "log10_transform": False}}
+    )
+    with pytest.raises(InvalidWeights, match="log10_transform"):
+        model.load_pretrained(state, configuration)
+
+
 # the model conditioned on a chemical system and the energy above the hull
 
 
@@ -1438,6 +1486,7 @@ FINE_TUNED = {
         MatterGenChemicalSystemEnergyAboveHull,
         ENERGY_ABOVE_HULL_NAME,
     ),
+    "ml_bulk_modulus": (MatterGenBulkModulus, BULK_MODULUS_NAME),
 }
 
 

@@ -147,9 +147,10 @@ guidance = model.guidance(["Li-O"] * 64)
 structures = model.sample(model.sample_num_atoms(64), guidance=guidance)
 ```
 
-`MatterGenSpaceGroup`, `MatterGenBandGap` and `MatterGenMagneticDensity` are used the same
-way, with a space group, a band gap in eV or a magnetic density per crystal:
-`model.guidance([225] * 64)`, `model.guidance([3.0] * 64)`, `model.guidance([0.15] * 64)`.
+`MatterGenSpaceGroup`, `MatterGenBandGap`, `MatterGenMagneticDensity` and
+`MatterGenBulkModulus` are used the same way, with a space group, a band gap in eV, a
+magnetic density or a bulk modulus in GPa per crystal: `model.guidance([225] * 64)`,
+`model.guidance([3.0] * 64)`, `model.guidance([0.15] * 64)`, `model.guidance([400.0] * 64)`.
 These are followed, not imposed. `MatterGenChemicalSystemEnergyAboveHull` takes both a
 chemical system and an energy above the hull per crystal, either one `None`:
 `model.guidance(["Li-O"] * 64, [0.0] * 64)`.

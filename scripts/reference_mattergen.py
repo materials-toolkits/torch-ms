@@ -39,11 +39,13 @@ script is run once for each model, and finds which one it is given:
 * "~/.cache/torchms/mattergen/mattergen-chemical-system",
   "~/.cache/torchms/mattergen/mattergen-space-group",
   "~/.cache/torchms/mattergen/mattergen-dft-band-gap",
-  "~/.cache/torchms/mattergen/mattergen-dft-mag-density" and
-  "~/.cache/torchms/mattergen/mattergen-chemical-system-energy-above-hull",
-  the models conditioned on a chemical system, a space group, a band gap, a
-  magnetic density, and a chemical system with the energy above the hull: the
-  result is written to tests/data/mattergen_<properties>_reference.npz. The
+  "~/.cache/torchms/mattergen/mattergen-dft-mag-density",
+  "~/.cache/torchms/mattergen/mattergen-chemical-system-energy-above-hull" and
+  "~/.cache/torchms/mattergen/mattergen-ml-bulk-modulus", the models
+  conditioned on a chemical system, a space group, a band gap, a magnetic
+  density, a chemical system with the energy above the hull, and a bulk
+  modulus: the result is written to
+  tests/data/mattergen_<properties>_reference.npz. The
   network is run on every other structure with its own chemical system or
   space group (pymatgen, symprec 0.1), or a number of NUMBER_RANGES, on the
   other ones without condition, and the sampling with the guidance of the README of MatterGen,
@@ -90,10 +92,18 @@ SAMPLING_CONDITIONS = {
     "dft_band_gap": [0.0, 1.5, 3.0, 6.0],
     "dft_mag_density": [0.0, 0.05, 0.15, 0.3],
     "energy_above_hull": [0.0, 0.0, 0.05, 0.1],
+    # GPa, up to the 400 of the model card of MatterGen
+    "ml_bulk_modulus": [20.0, 50.0, 150.0, 400.0],
 }
 
-# the numbers given to the test structures go from 0 to these values
-NUMBER_RANGES = {"dft_band_gap": 6.0, "dft_mag_density": 0.2, "energy_above_hull": 0.2}
+# the numbers given to the test structures go from the first value to the
+# second one: positive for the bulk modulus, whose logarithm is taken
+NUMBER_RANGES = {
+    "dft_band_gap": (0.0, 6.0),
+    "dft_mag_density": (0.0, 0.2),
+    "energy_above_hull": (0.0, 0.2),
+    "ml_bulk_modulus": (10.0, 400.0),
+}
 GUIDANCE = 2.0
 
 
@@ -545,8 +555,8 @@ def main():
                 values[name] = own_space_groups(data)
             else:
                 # the test structures have none of these numbers: a range
-                stop = NUMBER_RANGES[name]
-                values[name] = np.linspace(0.0, stop, len(data["num_atoms"])).tolist()
+                start, stop = NUMBER_RANGES[name]
+                values[name] = np.linspace(start, stop, len(data["num_atoms"])).tolist()
         conditioned = np.arange(len(data["num_atoms"])) % 2 == 0
         batch = with_conditions(batch, values, conditioned)
         result.update({f"{name}s": saved_values(name, v) for name, v in values.items()})

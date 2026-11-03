@@ -64,6 +64,8 @@
 
 ::: torchms.models.mattergen.chemical_system_energy_above_hull
 
+::: torchms.models.mattergen.bulk_modulus
+
 ::: torchms.models.mattergen.diffusion
 
 ::: torchms.models.mattergen.config

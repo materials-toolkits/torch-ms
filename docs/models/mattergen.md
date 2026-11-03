@@ -3,25 +3,26 @@
 MatterGen is the diffusion model of crystals of Zeni, Pinsler, Zügner, Fowler, Horton, Fu
 et al. ([MatterGen](https://github.com/microsoft/mattergen), commit `9242366`, version
 1.0.3, MIT, [Nature 2025](https://doi.org/10.1038/s41586-025-08628-5)), in
-`torchms/models/mattergen/`. Six of its models are rewritten: the base model, which
+`torchms/models/mattergen/`. Seven of its models are rewritten: the base model, which
 generates crystals of given numbers of atoms with their elements, without condition, and
 the models fine-tuned on a chemical system, a space group, the band gap, the magnetic
-density, and a chemical system with the energy above the hull, which generate them with
-given elements or towards these properties: see
+density, a chemical system with the energy above the hull, and the bulk modulus, which
+generate them with given elements or towards these properties: see
 [Conditioned on a chemical system](#conditioned-on-a-chemical-system),
 [Conditioned on a space group](#conditioned-on-a-space-group),
 [Conditioned on a band gap](#conditioned-on-a-band-gap),
-[Conditioned on a magnetic density](#conditioned-on-a-magnetic-density) and
-[Conditioned on a chemical system and the energy above the hull](#conditioned-on-a-chemical-system-and-the-energy-above-the-hull).
+[Conditioned on a magnetic density](#conditioned-on-a-magnetic-density),
+[Conditioned on a chemical system and the energy above the hull](#conditioned-on-a-chemical-system-and-the-energy-above-the-hull)
+and [Conditioned on a bulk modulus](#conditioned-on-a-bulk-modulus).
 
 | | |
 |---|---|
-| Class | `MatterGen`; `MatterGenChemicalSystem` for a chemical system, `MatterGenSpaceGroup` for a space group, `MatterGenBandGap` for a band gap, `MatterGenMagneticDensity` for a magnetic density, `MatterGenChemicalSystemEnergyAboveHull` for both |
+| Class | `MatterGen`; `MatterGenChemicalSystem` for a chemical system, `MatterGenSpaceGroup` for a space group, `MatterGenBandGap` for a band gap, `MatterGenMagneticDensity` for a magnetic density, `MatterGenChemicalSystemEnergyAboveHull` for both, `MatterGenBulkModulus` for a bulk modulus |
 | Does | samples the elements, the lattice and the coordinates of crystals of given numbers of atoms |
 | Source | [MatterGen](https://github.com/microsoft/mattergen), commit `9242366` (1.0.3) |
 | License | MIT; its diffusion of the elements and its sampler are adapted from Google Research code under Apache-2.0 |
 | Paper | [A generative model for inorganic materials design](https://doi.org/10.1038/s41586-025-08628-5), Nature 639, 624 (2025), [arXiv:2312.03687](https://arxiv.org/abs/2312.03687) |
-| Weights | `mattergen-base`, of the authors (`mattergen_base` on [Hugging Face](https://huggingface.co/microsoft/mattergen)), trained on Alex-MP-20, 461 MB; `mattergen-chemical-system` (`chemical_system`), `mattergen-space-group` (`space_group`), `mattergen-dft-band-gap` (`dft_band_gap`) `mattergen-dft-mag-density` (`dft_mag_density`) and `mattergen-chemical-system-energy-above-hull` (`chemical_system_energy_above_hull`), fine-tuned from it, 512 MB each |
+| Weights | `mattergen-base`, of the authors (`mattergen_base` on [Hugging Face](https://huggingface.co/microsoft/mattergen)), trained on Alex-MP-20, 461 MB; `mattergen-chemical-system` (`chemical_system`), `mattergen-space-group` (`space_group`), `mattergen-dft-band-gap` (`dft_band_gap`), `mattergen-dft-mag-density` (`dft_mag_density`), `mattergen-chemical-system-energy-above-hull` (`chemical_system_energy_above_hull`) and `mattergen-ml-bulk-modulus` (`ml_bulk_modulus`), fine-tuned from it, 512 MB each |
 | Network | [GemNet-T](gemnet.md), 512 features, 4 blocks, 44.6 M parameters |
 | Transform | `AddRadiusGraph(7.0, max_image_shift=5)`, `KeepNearestNeighbors(50)`, `MirrorEdges()`, `AddTriplets()`, `AddBonds()` |
 | Difference with the original | a step of the sampling: identical, given the same scores and noise. The network: as near to MatterGen in double precision as MatterGen in single precision is, up to 1.6e-2 on the score of a lattice (values up to 5.6) |
@@ -330,6 +331,46 @@ generated Li2O2, Fe3NiO4, NaCl and Ti4O2.
 The scores of the elements of the noisy structures are up to twice as far from MatterGen in
 double precision as MatterGen is; the tests accept them as within what a change of the last
 bits of the inputs does to the rewrite.
+
+## Conditioned on a bulk modulus
+
+`MatterGenBulkModulus` is MatterGen fine-tuned on the bulk modulus, in GPa, predicted by a
+machine-learned potential for the crystals of its training set, not computed by DFT. It is
+the model of the band gap with another number, with one difference: the bulk modulus is
+standardized after its decimal logarithm, as in MatterGen, by the statistics of the
+logarithms in the weights (1.708, 51 GPa, and 0.364, a factor of 2.3). It must be positive.
+The model card of MatterGen asks for 400 GPa; the README gives no guidance factor, the
+default is 2. The bulk modulus is followed, not imposed.
+
+```{.python notest}
+from torchms.models import MatterGenBulkModulus
+
+model = MatterGenBulkModulus.from_pretrained(device="cuda")
+structures = model.sample(model.sample_num_atoms(8), guidance=model.guidance([400.0] * 8))
+```
+
+With a generator of seed 0, 16 crystals, 8 asked at 30 GPa and 8 at 400, take 537 s on a
+GPU of 8 GB. Their bulk modulus was estimated from the curvature of the energy of
+`EnergyEstimator` against the volume, the crystals scaled by ±6% without relaxation: a
+median of 38 GPa (27 to 75) for the ones asked at 30, and of 347 GPa (334 to 387) for the
+ones asked at 400. These are all alloys of the stiffest metals: OsIr4, WOs3, RuRe2Ir, OsIr7,
+W4Re7Os9, WOs4, B Re Os5 Ir10, and pure rhenium, estimated at 354 GPa (about 370 measured).
+The ones asked at 30 are salts and intermetallics of heavy, soft elements (Cs, Tl, Sr, rare
+earths). Eight crystals per value, unrelaxed, and an estimate of the bulk modulus without
+the relaxation of the atoms: an indication, not a measure.
+
+### Comparison with the original
+
+As for the band gap, with bulk moduli from 10 to 400 GPa for the 40 structures of the tests
+and 20, 50, 150 and 400 GPa for the guided sampling, where MatterGen generated BaBr3, Tm2Cd6,
+HgNb and Re2Os4.
+
+| | |
+|---|---|
+| Mixed scores of the guidance, and a step of the guided sampling given its scores and its noise | identical |
+| Elements of the crystals MatterGen returns | identical |
+| Network, conditioned structures without noise (12, 56 atoms): coordinates, lattice, elements, largest / mean difference with MatterGen in double precision | 1.5e-3 / 9.6e-5, 1.2e-2 / 2.4e-4, 5.8e-2 / 3.3e-3; MatterGen in single precision 1.5e-3 / 9.9e-5, 1.2e-2 / 2.6e-4, 9.5e-2 / 3.4e-3 |
+| Network, conditioned structures with noise (14, 66 atoms): coordinates, lattice, elements, largest | 4.4e-4, 4.6e-4, 5.0e-3; MatterGen 6.6e-4, 4.6e-4, 8.7e-3 |
 
 ## Comparison with the original
 

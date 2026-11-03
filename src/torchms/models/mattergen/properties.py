@@ -17,9 +17,10 @@ kinds:
 * a chemical system, the elements a crystal can have: 1 per atomic number
   through a linear layer. The scores of the other elements are lowered;
 * a space group, from 1 to 230: a learned vector per group;
-* a number (band gap, magnetic density, energy above the hull): standardized
-  by the statistics of the training set, then embedded by sines and cosines
-  as the time.
+* a number (band gap, magnetic density, energy above the hull, bulk
+  modulus): standardized by the statistics of the training set, for the bulk
+  modulus the ones of its decimal logarithm, then embedded by sines and
+  cosines as the time.
 """
 
 from __future__ import annotations
@@ -93,6 +94,10 @@ class NoiseLevelEncoding(nn.Module):
 class StandardScaler(nn.Module):
     """A number minus the mean of the training set, over its deviation.
 
+    Args:
+        log10: Whether the number is first replaced by its decimal logarithm,
+            the statistics being the ones of the logarithms.
+
     Attributes:
         means: Mean of the training set, from the weights.
         stds: Its deviation, from the weights.
@@ -101,12 +106,15 @@ class StandardScaler(nn.Module):
     means: torch.Tensor
     stds: torch.Tensor
 
-    def __init__(self):
+    def __init__(self, log10: bool = False):
         super().__init__()
+        self.log10 = log10
         self.register_buffer("means", torch.zeros(1))
         self.register_buffer("stds", torch.ones(1))
 
     def forward(self, x: Float[torch.Tensor, "n"]) -> Float[torch.Tensor, "n"]:
+        if self.log10:
+            x = torch.log10(x)
         return (x - self.means) / self.stds
 
 
@@ -221,6 +229,38 @@ class ChemicalSystemEmbedding(PropertyEmbedding):
         return torch.where(conditioned.unsqueeze(1), keep, torch.ones_like(keep))
 
 
+class NumberEmbedding(PropertyEmbedding):
+    """Embedding of a number: standardized, then sines and cosines.
+
+    Args:
+        name: Name of the property in MatterGen.
+        config: Configuration of the model.
+        log10: Whether the number is standardized after its decimal
+            logarithm, which needs it positive.
+    """
+
+    def __init__(self, name: str, config: Config, log10: bool = False):
+        super().__init__(name, NoiseLevelEncoding(config), StandardScaler(log10))
+        self.log10 = log10
+
+    def parse(
+        self, values: Sequence[object] | torch.Tensor, device: torch.device
+    ) -> Float[torch.Tensor, "n_struct"]:
+        """A number per crystal.
+
+        Raises:
+            ValueError: If a value is not a finite number, or is not positive
+                for a number standardized after its logarithm.
+        """
+        numbers = super().parse(values, device)
+        if self.log10 and not (numbers > 0).all():
+            raise ValueError(
+                f"values of {self.name} must be positive: {numbers.tolist()}"
+            )
+
+        return numbers
+
+
 class SpaceGroupEmbedding(PropertyEmbedding):
     """Embedding of a space group: a learned vector per group."""
 
@@ -243,8 +283,17 @@ class SpaceGroupEmbedding(PropertyEmbedding):
         return numbers
 
 
-def property_embedding(name: str, config: Config) -> PropertyEmbedding:
+def property_embedding(
+    name: str, config: Config, fine_tuning: str | None = None
+) -> PropertyEmbedding:
     """Embedding of a property of MatterGen, from its name.
+
+    Args:
+        name: Name of the property in MatterGen.
+        config: Configuration of the model.
+        fine_tuning: The model fine-tuned on it, see Config.condition: a
+            number is standardized after its decimal logarithm if its
+            configuration says so, see Config.log10_scaled.
 
     Examples:
         >>> embedding = property_embedding("energy_above_hull", Config.load())
@@ -260,4 +309,4 @@ def property_embedding(name: str, config: Config) -> PropertyEmbedding:
     if name == SPACE_GROUP:
         return SpaceGroupEmbedding(config)
 
-    return PropertyEmbedding(name, NoiseLevelEncoding(config), StandardScaler())
+    return NumberEmbedding(name, config, config.log10_scaled(fine_tuning, name))

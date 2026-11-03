@@ -149,8 +149,9 @@ class MatterGen(PretrainedModel[Config]):
         self.gemnet = GemNetT(self.config.decoder_config(self.CONDITIONS))
         self.fc_atom = nn.Linear(network.hidden_dim, network.num_classes)
         # embeddings of the properties, named as in MatterGen
+        tuning = self.fine_tuning()
         self.property_embeddings_adapt = nn.ModuleDict(
-            {name: property_embedding(name, self.config) for name in self.CONDITIONS}
+            {c: property_embedding(c, self.config, tuning) for c in self.CONDITIONS}
         )
 
         # added to the scores of the elements: 0 for an allowed one
