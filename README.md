@@ -2,17 +2,22 @@
 
 ## Installation
 
+> [!WARNING]
+> TorchMS is in alpha (0.1.0): its interface may change between commits without notice.
+> Pin a commit (see below) for results that can be reproduced.
+
 TorchMS is a library: add it to the dependencies of your project. It needs Python 3.10 or
-later.
+later. It is not on PyPI yet and is installed from its GitHub repository.
 
 ```bash
-uv add "torchms @ git+https://gitlab.univ-artois.fr/astrid.klipfel/torch-ms.git"
+uv add "torchms @ git+https://github.com/materials-toolkits/torch-ms.git"
 # or
-pip install "torchms @ git+https://gitlab.univ-artois.fr/astrid.klipfel/torch-ms.git"
+pip install "torchms @ git+https://github.com/materials-toolkits/torch-ms.git"
 ```
 
 Use `torchms[hub]` instead of `torchms` to load the published datasets and the energy
-estimator from Hugging Face.
+estimator from Hugging Face. To pin a commit, end the address with it:
+`git+https://github.com/materials-toolkits/torch-ms.git@3dd18de`.
 
 ## Datasets
 

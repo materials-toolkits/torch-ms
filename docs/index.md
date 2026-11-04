@@ -54,6 +54,7 @@ for i, (e, above) in enumerate(zip(energy, above_hull)):
 
 ## Status
 
-The library is under development. The datasets and the energy estimator described here are
+The library is an alpha version (0.1.0), under development: its interface may change
+between commits, see [Installation](guide/installation.md) to pin one. The datasets and the energy estimator described here are
 built and checked against their sources; the pages of each dataset list what was verified and
 the known issues of the source data.

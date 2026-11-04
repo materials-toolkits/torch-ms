@@ -1,19 +1,24 @@
 # Installation
 
 TorchMS is a library: add it to the dependencies of your project, then import `torchms`. It
-needs Python 3.10 or later and PyTorch 2.11 or later, and is installed from its git
-repository.
+needs Python 3.10 or later and PyTorch 2.11 or later, and is installed from its
+[GitHub repository](https://github.com/materials-toolkits/torch-ms): it is not on PyPI yet.
+
+!!! warning "Alpha version"
+
+    TorchMS is in alpha (0.1.0): its interface may change between commits without notice.
+    Pin a commit ([A fixed version](#a-fixed-version)) for results that can be reproduced.
 
 === "uv"
 
     ```bash
-    uv add "torchms @ git+https://gitlab.univ-artois.fr/astrid.klipfel/torch-ms.git"
+    uv add "torchms @ git+https://github.com/materials-toolkits/torch-ms.git"
     ```
 
 === "pip"
 
     ```bash
-    pip install "torchms @ git+https://gitlab.univ-artois.fr/astrid.klipfel/torch-ms.git"
+    pip install "torchms @ git+https://github.com/materials-toolkits/torch-ms.git"
     ```
 
 Check the installation:
@@ -39,13 +44,13 @@ Face. This needs `huggingface_hub`, which comes with the `hub` extra:
 === "uv"
 
     ```bash
-    uv add "torchms[hub] @ git+https://gitlab.univ-artois.fr/astrid.klipfel/torch-ms.git"
+    uv add "torchms[hub] @ git+https://github.com/materials-toolkits/torch-ms.git"
     ```
 
 === "pip"
 
     ```bash
-    pip install "torchms[hub] @ git+https://gitlab.univ-artois.fr/astrid.klipfel/torch-ms.git"
+    pip install "torchms[hub] @ git+https://github.com/materials-toolkits/torch-ms.git"
     ```
 
 Without it, the rest of the library works: `HDF5Dataset("file.hdf5")` reads a local file.
@@ -56,7 +61,7 @@ The commands above install the last commit of `main`. For results that can be re
 end the address with a tag, a branch or a commit:
 
 ```bash
-uv add "torchms @ git+https://gitlab.univ-artois.fr/astrid.klipfel/torch-ms.git@3dd18de"
+uv add "torchms @ git+https://github.com/materials-toolkits/torch-ms.git@3dd18de"
 ```
 
 uv writes the commit in `uv.lock` in any case; `uv lock --upgrade-package torchms` moves to
