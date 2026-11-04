@@ -1,5 +1,6 @@
 site_name: TorchMS
 site_description: Datasets, graphs and energy estimation for crystal generation
+site_url: https://materials-toolkits.github.io/torch-ms/
 docs_dir: docs
 
 theme:
