@@ -16,6 +16,7 @@ from .hdf5 import HDF5Dataset
 from .loader import OnDevice
 from .memory import InMemoryDataset, MixedDataset, mix
 from .split import load_split, random_split, save_split, split_indices
+from .vasp import VaspDataset, parse_poscar
 
 __all__ = [
     "AutoLoader",
@@ -31,12 +32,14 @@ __all__ = [
     "InMemoryDataset",
     "MixedDataset",
     "OnDevice",
+    "VaspDataset",
     "available_datasets",
     "dataset_url",
     "load_dataset",
     "load_split",
     "mix",
     "parse_cif",
+    "parse_poscar",
     "random_split",
     "save_split",
     "split_indices",

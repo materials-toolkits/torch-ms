@@ -30,6 +30,10 @@
 
 ::: torchms.data.cif
 
+## VASP files
+
+::: torchms.data.vasp
+
 ## Preprocessing
 
 ::: torchms.data.preprocessing

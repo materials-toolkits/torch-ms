@@ -11,7 +11,11 @@ import torch
 
 from torchms.data import parse_cif
 from torchms.data.batching import Structures
-from torchms.data.constants import symbol_to_number
+from torchms.data.constants import (
+    get_spacegroup,
+    get_symmetry_operations,
+    symbol_to_number,
+)
 
 from torchms.data.compare import (
     compare_atoms,
@@ -139,7 +143,6 @@ class TestMultipleFiles:
             assert not errors, "\n".join(errors)
 
 
-@pytest.mark.skip(reason="Only P1 structures are supported")
 class TestNonP1Symmetry:
     """Tests for CIF files with non-P1 spacegroups (symmetry expansion)."""
 
@@ -324,7 +327,6 @@ class TestNonP1Symmetry:
         assert not errors, "\n".join(errors)
 
 
-@pytest.mark.skip(reason="Only P1 structures are supported")
 class TestProperties:
     """Tests for energy and band gap parsing in CIF files."""
 
@@ -426,7 +428,6 @@ Si 0.0 0.0 0.0 Si
         structures = parser.parse(cif_content)
         assert torch.isclose(structures.band_gap[0], torch.tensor(2.5))
 
-    @pytest.mark.skip(reason="Only P1 structures are supported")
     def test_custom_regex_multiple_overrides(self):
         """Test multiple regex overrides at once."""
         from torchms.data.cif import CifParser
@@ -473,7 +474,6 @@ Si 0.0 0.0 0.0 Si
         with pytest.raises(re.error):
             CifParser(regex_overrides={"band_gap": r"[invalid("})
 
-    @pytest.mark.skip(reason="Only P1 structures are supported")
     def test_empty_override_uses_default(self, silicon_cif_fixture):
         """Test that empty overrides use default patterns."""
         from torchms.data.cif import CifParser
@@ -493,7 +493,7 @@ class TestPymatgen:
         "cif_name",
         [
             "AgO_kpath_test",
-            "bad_occo",
+            "bad_occu",
             "bcc_1927",
             "btet_1915",
             "C26H16BeN2O2S2",
@@ -544,13 +544,14 @@ class TestPymatgen:
             "V2O3",
         ],
     )
-    @pytest.mark.skip(reason="Only P1 structures are supported")
     def test_pymatgen_cif(self, cif_name: str):
         """Test parsing of pymatgen CIF files."""
         cif_path = Path(__file__).parent / "cif" / "pymatgen" / f"{cif_name}.cif"
         expected_cell, expected_x, expected_z = load_expected(cif_path)
         cif_string = cif_path.read_text()
-        structures = parse_cif(cif_string)
+        # the expected structure is the one of ase.io.read: the last block
+        parsed = parse_cif(cif_string)
+        structures = parsed.select(torch.tensor([len(parsed.num_atoms) - 1]))
 
         errors = compare_cell_parameters(
             expected_cell, compute_cell_parameters(structures.lattice[0])
@@ -662,3 +663,193 @@ class TestCifDatasetLoader:
         )
         sender = batch.graph.edge_index[0, batch.triplets.index]
         assert (sender[0] == sender[1]).all()
+
+
+class TestSymmetry:
+    """Symmetry operations, loops and mixed sites of a CIF block."""
+
+    HEADER = """data_test
+_cell_length_a 4.0
+_cell_length_b 4.0
+_cell_length_c 4.0
+_cell_angle_alpha 90.0
+_cell_angle_beta 90.0
+_cell_angle_gamma 90.0
+"""
+
+    @pytest.mark.parametrize(
+        "operation, rotation, translation",
+        [
+            ("x, y, z", [[1, 0, 0], [0, 1, 0], [0, 0, 1]], [0, 0, 0]),
+            ("-x+1/2,y,-z", [[-1, 0, 0], [0, 1, 0], [0, 0, -1]], [0.5, 0, 0]),
+            ("x-y, x, z+1/2", [[1, -1, 0], [1, 0, 0], [0, 0, 1]], [0, 0, 0.5]),
+            ("1/4+Y, 0.75-X, -Z", [[0, 1, 0], [-1, 0, 0], [0, 0, -1]], [0.25, 0.75, 0]),
+        ],
+    )
+    def test_symmetry_operation(self, operation, rotation, translation):
+        from torchms.data.cif import parse_symmetry_operation
+
+        matrix = parse_symmetry_operation(operation)
+        assert matrix[:3, :3].tolist() == rotation
+        assert matrix[:3, 3].tolist() == translation
+        assert matrix[3].tolist() == [0, 0, 0, 1]
+
+    @pytest.mark.parametrize("operation", ["x, y", "x, y, w", "x, y, z+a"])
+    def test_symmetry_operation_errors(self, operation):
+        from torchms.data.cif import parse_symmetry_operation
+
+        with pytest.raises(ValueError):
+            parse_symmetry_operation(operation)
+
+    def test_listed_operations_win_over_the_number(self):
+        """The operations of the block are its setting: a shifted inversion here."""
+        cif = self.HEADER + """_symmetry_Int_Tables_number 2
+loop_
+_symmetry_equiv_pos_as_xyz
+'x, y, z'
+'-x+1/2, -y, -z'
+loop_
+_atom_site_label
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+Na1 0.1 0.2 0.3
+"""
+        structures = parse_cif(cif)
+        assert torch.allclose(
+            structures.x.double(),
+            torch.tensor([[0.1, 0.2, 0.3], [0.4, 0.8, 0.7]], dtype=torch.float64),
+            atol=1e-6,
+        )
+
+    def test_images_merge_across_the_cell(self):
+        """0.0 and 0.9999 are the same coordinate."""
+        cif = self.HEADER + """loop_
+_space_group_symop_operation_xyz
+'x, y, z'
+'-x, -y, -z'
+loop_
+_atom_site_label
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+Na1 0.0001 0.5 0.5
+"""
+        assert parse_cif(cif).num_atoms.tolist() == [1]
+
+    def test_a_loop_ends_at_the_next_loop(self):
+        """The anisotropic loop after the atom sites is not read as atoms."""
+        cif = self.HEADER + """_symmetry_Int_Tables_number 1
+loop_
+_atom_site_label
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+_atom_site_U_iso_or_equiv
+Na1 0.0 0.0 0.0 0.01(2)
+Cl1 0.5 0.5 0.5 0.02
+loop_
+_atom_site_aniso_label
+_atom_site_aniso_U_11
+Na1 0.03009(17)
+"""
+        structures = parse_cif(cif)
+        assert structures.z.tolist() == [11, 17]
+
+    def test_mixed_site_is_its_most_occupied_element(self):
+        cif = self.HEADER + """_symmetry_Int_Tables_number 1
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_occupancy
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+M1 Ge 0.3 0.5 0.5 0.5
+M1 Sb 0.7 0.5 0.5 0.5
+M2 '0.8Nb + 0.2Zr' 1 0.0 0.0 0.0
+"""
+        assert parse_cif(cif).z.tolist() == [51, 41]
+
+    def test_blocks_without_structure_are_left_out(self):
+        cif = (
+            "data_global\n_journal_year 2014\n\n"
+            + self.HEADER
+            + """_symmetry_Int_Tables_number 1
+loop_
+_atom_site_label
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+Na1 0.0 0.0 0.0
+"""
+        )
+        assert parse_cif(cif).num_atoms.tolist() == [1]
+        with pytest.raises(ValueError, match="No structure"):
+            parse_cif("data_global\n_journal_year 2014\n")
+
+
+# cell lengths and angles of each crystal system, for the check of every group
+CELLS = {
+    "triclinic": (7.0, 8.0, 9.0, 80.0, 85.0, 95.0),
+    "monoclinic": (7.0, 8.0, 9.0, 90.0, 100.0, 90.0),
+    "orthorhombic": (7.0, 8.0, 9.0, 90.0, 90.0, 90.0),
+    "tetragonal": (7.0, 7.0, 9.0, 90.0, 90.0, 90.0),
+    "trigonal": (7.0, 7.0, 9.0, 90.0, 90.0, 120.0),
+    "hexagonal": (7.0, 7.0, 9.0, 90.0, 90.0, 120.0),
+    "cubic": (7.0, 7.0, 7.0, 90.0, 90.0, 90.0),
+}
+
+
+def operation_string(operation: torch.Tensor) -> str:
+    """A symmetry operation of CIF from its affine matrix: "-x+y,-x,z+1/3"."""
+    rows = []
+    for rotation, translation in zip(operation[:3, :3].tolist(), operation[:3, 3]):
+        row = "".join(
+            f"{'+' if c > 0 else '-'}{axis}"
+            for c, axis in zip(rotation, "xyz")
+            if round(c) != 0
+        )
+        # translations of the space groups are multiples of 1/12
+        twelfths = round(float(translation) % 1.0 * 12) % 12
+        if twelfths:
+            row += f"+{twelfths}/12"
+        rows.append(row.lstrip("+"))
+
+    return ",".join(rows)
+
+
+@pytest.mark.parametrize("number", range(1, 231))
+def test_every_space_group(number):
+    """A general position has one image per operation, from the number or listed."""
+    group = get_spacegroup(number)
+    a, b, c, alpha, beta, gamma = CELLS[group.crystal_system]
+    header = f"""data_group
+_cell_length_a {a}
+_cell_length_b {b}
+_cell_length_c {c}
+_cell_angle_alpha {alpha}
+_cell_angle_beta {beta}
+_cell_angle_gamma {gamma}
+"""
+    # a general position: on no symmetry element of any group, no coordinate a
+    # multiple or a sum of another (y = 2x is on a mirror of hexagonal groups)
+    sites = """loop_
+_atom_site_label
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+Si1 0.1234 0.3571 0.4189
+"""
+    operations = get_symmetry_operations(number)
+    listed = "loop_\n_space_group_symop_operation_xyz\n" + "".join(
+        f"'{operation_string(op)}'\n" for op in operations
+    )
+
+    by_number = parse_cif(header + f"_space_group_IT_number {number}\n" + sites)
+    by_operations = parse_cif(header + listed + sites)
+
+    assert by_number.num_atoms.tolist() == [len(operations)]
+    assert by_operations.num_atoms.tolist() == [len(operations)]
+    errors = compare_structures(by_operations, by_number)
+    assert not errors, "\n".join(errors)

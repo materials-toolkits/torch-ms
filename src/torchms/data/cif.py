@@ -14,9 +14,171 @@ from torch.utils.data import Dataset
 
 from .batching import Structures
 from .constants import symbol_to_number
-from .symmetry import generate_symmetric_structure
+from .constants import get_symmetry_operations
+from .symmetry import MERGE_TOLERANCE, expand_symmetry
 
 logger = logging.getLogger(__name__)
+
+
+class NoStructure(ValueError):
+    """A data block which describes no structure: no atom site of known place."""
+
+
+# a token of CIF: a text field between lines starting with ";", a quoted value
+# (the quote ends before a blank), a comment, or a bare value
+_TOKEN = re.compile(
+    r"^;(?P<text>.*?)^;"
+    r"|'(?P<single>.*?)'(?=\s|$)"
+    r'|"(?P<double>.*?)"(?=\s|$)'
+    r"|(?P<comment>#[^\n]*)"
+    r"|(?P<bare>\S+)",
+    re.MULTILINE | re.DOTALL,
+)
+
+# columns of the symmetry operations, "-x+1/2, y, z", in CIF 2 then CIF 1
+_SYMMETRY_TAGS = ("_space_group_symop_operation_xyz", "_symmetry_equiv_pos_as_xyz")
+
+
+@dataclass(frozen=True)
+class CifBlock:
+    """Tags and loops of a CIF data block, tags in lower case.
+
+    Attributes:
+        items: Value of each tag outside of a loop.
+        loops: Columns of each loop, by tag.
+    """
+
+    items: dict[str, str]
+    loops: list[dict[str, list[str]]]
+
+    @classmethod
+    def read(cls, block_string: str) -> CifBlock:
+        r"""Read the tags and the loops of a data block.
+
+        A loop ends at the next loop_, tag or data block.
+
+        Examples:
+            >>> block = CifBlock.read(
+            ...     "data_x\n_cell_length_a 3.0\nloop_\n_a\n_B\n1 'p q'\n2 r\n"
+            ...     "loop_\n_c\n;\ntext\n;\n"
+            ... )
+            >>> block.items
+            {'_cell_length_a': '3.0'}
+            >>> block.loops
+            [{'_a': ['1', '2'], '_b': ['p q', 'r']}, {'_c': ['\ntext\n']}]
+        """
+        tokens = [
+            (match.lastgroup, match.group(match.lastgroup))
+            for match in _TOKEN.finditer(block_string)
+            if match.lastgroup is not None and match.lastgroup != "comment"
+        ]
+
+        items: dict[str, str] = {}
+        loops: list[dict[str, list[str]]] = []
+        i = 0
+        while i < len(tokens):
+            kind, value = tokens[i]
+            keyword = kind == "bare" and value.lower()
+            if keyword and keyword.startswith("loop_"):
+                headers = []
+                i += 1
+                while (
+                    i < len(tokens)
+                    and tokens[i][0] == "bare"
+                    and tokens[i][1][0] == "_"
+                ):
+                    headers.append(tokens[i][1].lower())
+                    i += 1
+                values = []
+                while i < len(tokens) and not _ends_loop(*tokens[i]):
+                    values.append(tokens[i][1])
+                    i += 1
+                rows = len(values) // max(len(headers), 1)
+                loops.append(
+                    {
+                        header: values[column : rows * len(headers) : len(headers)]
+                        for column, header in enumerate(headers)
+                    }
+                )
+            elif keyword and keyword.startswith("_") and i + 1 < len(tokens):
+                items[keyword] = tokens[i + 1][1]
+                i += 2
+            else:
+                i += 1
+
+        return cls(items, loops)
+
+    def column(self, tag: str) -> list[str] | None:
+        """Values of a tag: its column in a loop, or its single value."""
+        for loop in self.loops:
+            if tag in loop:
+                return loop[tag]
+        if tag in self.items:
+            return [self.items[tag]]
+
+        return None
+
+    def table(self, tag: str) -> dict[str, list[str]] | None:
+        """The loop which has a column of this tag."""
+        return next((loop for loop in self.loops if tag in loop), None)
+
+
+def _ends_loop(kind: str | None, value: str) -> bool:
+    """Whether a token ends the values of a loop: a tag or a keyword."""
+    if kind != "bare":
+        return False
+    lower = value.lower()
+
+    return lower.startswith(("_", "loop_", "data_", "global_", "save_", "stop_"))
+
+
+def parse_symmetry_operation(operation: str) -> torch.Tensor:
+    """Affine matrix of a symmetry operation of CIF on fractional coordinates.
+
+    Args:
+        operation: The images of x, y and z separated by commas, as in
+            _space_group_symop_operation_xyz: "-x+1/2, y, z-1/4", "x-y,x,z+1/2".
+
+    Returns:
+        Matrix [R|t; 0 0 0 1], shape (4, 4), float64.
+
+    Raises:
+        ValueError: If the operation is not three affine expressions.
+
+    Examples:
+        >>> parse_symmetry_operation("-x+1/2, x-y, 0.25+z")[:3].tolist()
+        [[-1.0, 0.0, 0.0, 0.5], [1.0, -1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.25]]
+    """
+    rows = operation.replace(" ", "").lower().split(",")
+    if len(rows) != 3:
+        raise ValueError(f"symmetry operation {operation!r} has not three coordinates")
+
+    matrix = torch.eye(4, dtype=torch.float64)
+    matrix[:3, :3] = 0.0
+    for row, expression in enumerate(rows):
+        terms = re.findall(r"([+-]?)([^+-]+)", expression)
+        if not terms or "".join(sign + term for sign, term in terms) != expression:
+            raise ValueError(f"cannot read symmetry operation {operation!r}")
+        for sign, term in terms:
+            factor = -1.0 if sign == "-" else 1.0
+            axis = term[-1]
+            if axis in "xyz":
+                coefficient = term[:-1].rstrip("*")
+                factor *= _fraction(coefficient) if coefficient else 1.0
+                matrix[row, "xyz".index(axis)] += factor
+            else:
+                matrix[row, 3] += factor * _fraction(term)
+
+    return matrix
+
+
+def _fraction(value: str) -> float:
+    """A number written as a fraction or a decimal: "1/2", "0.25"."""
+    if "/" in value:
+        numerator, denominator = value.split("/")
+        return float(numerator) / float(denominator)
+
+    return float(value)
 
 
 @dataclass
@@ -37,7 +199,13 @@ class ParseResult:
 class CifParser:
     """Parser for CIF crystallographic files.
 
-    Support only P1 spacegroup.
+    The atoms of a block are its atom sites and their images by the symmetry
+    operations it lists (_space_group_symop_operation_xyz or
+    _symmetry_equiv_pos_as_xyz), in its own setting. Without them, the
+    operations of the standard setting of its space-group number are applied.
+    Images closer than 1e-3 in fractional coordinates are one atom, as in ASE.
+    Sites of several elements at one place (partial occupancies) are one atom
+    of the most occupied element; occupancies are not kept otherwise.
 
     Args:
         regex_overrides: Optional dict mapping pattern names to custom regex strings.
@@ -99,14 +267,26 @@ class CifParser:
         Returns:
             Structures object containing all parsed structures batched together.
 
+        Blocks which describe no structure, without atom sites or with
+        unknown ones only, are left out.
+
         Raises:
-            ValueError: If space group is not 1 or required data is missing.
+            ValueError: If no block describes a structure, or required data is
+                missing.
         """
         blocks = self._find_data_blocks(cif_string)
         if not blocks:
             raise ValueError("No data blocks found in CIF")
 
-        structures = [self._parse_single_block(block) for block in blocks]
+        structures = []
+        for block in blocks:
+            try:
+                structures.append(self._parse_single_block(block))
+            except NoStructure:
+                continue
+        if not structures:
+            raise ValueError("No structure found in CIF")
+
         return Structures.collate(structures)
 
     def parse_with_errors(self, cif_string: str) -> list[ParseResult]:
@@ -176,10 +356,11 @@ class CifParser:
         Returns:
             Structures object with a single structure.
         """
-        spacegroup = self._validate_space_group(block_string)
+        block = CifBlock.read(block_string)
+        coords, atomic_numbers = self._parse_atoms(block)
+        operations = self._parse_symmetry_operations(block, block_string)
         cell_params = self._parse_cell_parameters(block_string)
         lattice = self._build_lattice_vectors(cell_params)
-        coords, atomic_numbers = self._parse_atoms(block_string)
         total_energy, energy_above_hull, band_gap, formation_energy_per_atom = (
             self._parse_properties(block_string)
         )
@@ -187,7 +368,7 @@ class CifParser:
         x = torch.tensor(coords, dtype=torch.float64)
         z = torch.tensor(atomic_numbers, dtype=torch.int64)
 
-        structures = generate_symmetric_structure(lattice, x, z, spacegroup)
+        structures = expand_symmetry(lattice, x, z, operations)
 
         n_atoms = structures.z.shape[0]
         return Structures(
@@ -206,18 +387,27 @@ class CifParser:
             _validate=True,
         )
 
-    def _validate_space_group(self, cif_string: str) -> int:
-        """Validate and return space group number."""
+    def _parse_symmetry_operations(
+        self, block: CifBlock, cif_string: str
+    ) -> torch.Tensor:
+        """Symmetry operations of a block, shape (n_ops, 4, 4), float64.
+
+        The ones it lists, else the ones of the standard setting of its
+        space-group number.
+
+        Raises:
+            ValueError: If the block has neither.
+        """
+        for tag in _SYMMETRY_TAGS:
+            listed = block.column(tag)
+            if listed and all(op not in ("?", ".") for op in listed):
+                return torch.stack([parse_symmetry_operation(op) for op in listed])
+
         space_group_match = self._space_group.search(cif_string)
         if space_group_match is None:
             raise ValueError("Space group number not found in CIF")
 
-        space_group = int(space_group_match.group(1))
-
-        if space_group != 1:
-            raise NotImplementedError("Spacegroups other that P1 are not supported")
-
-        return space_group
+        return get_symmetry_operations(int(space_group_match.group(1))).double()
 
     def _parse_properties(self, cif_string: str) -> tuple[float, float, float, float]:
         """Parse energy and band gap properties from CIF."""
@@ -276,11 +466,17 @@ class CifParser:
         return float(value)
 
     def _extract_element_symbol(self, symbol: str) -> str:
-        """Extract element symbol from symbol with optional oxidation state."""
-        match = re.match(r"^([A-Z][a-z]?)", symbol)
-        if match:
-            return match.group(1)
-        return symbol
+        """The first element symbol in a type symbol or a label, as ASE.
+
+        "Fe2+" and "Fe1" are Fe, a mixed site "0.8Nb + 0.2Zr" is Nb, deuterium
+        is hydrogen.
+        """
+        match = re.search(r"[A-Z][a-z]?", symbol)
+        if match is None:
+            return symbol
+        element = match.group(0)
+
+        return "H" if element == "D" else element
 
     def _build_lattice_vectors(self, cell: dict[str, float]) -> torch.Tensor:
         """Build lattice vectors from cell parameters (in degrees).
@@ -325,140 +521,77 @@ class CifParser:
 
         return lattice
 
-    def _find_atom_site_loop(self, cif_string: str) -> tuple[int, int, list[str]]:
-        """Find the atom site loop and return (start, end, headers).
+    def _parse_atoms(self, block: CifBlock) -> tuple[list[list[float]], list[int]]:
+        """Fractional coordinates and atomic numbers of the atom sites of a block.
 
-        Args:
-            cif_string: CIF file content.
+        The element is the one of _atom_site_type_symbol, else of the label.
+        Sites of unknown coordinates ("?" or ".") are left out.
 
-        Returns:
-            Tuple of (loop_start, loop_end, list of header column names).
+        Raises:
+            NoStructure: If the block has no atom site of known coordinates.
+            ValueError: If a site has no element.
         """
-        fract_x_match = re.search(r"_atom_site_fract_x", cif_string)
-        if fract_x_match is None:
-            raise ValueError("_atom_site_fract_x not found in CIF")
-
-        fract_x_pos = fract_x_match.start()
-
-        loop_positions = []
-        search_start = 0
-        while True:
-            pos = cif_string.find("loop_", search_start)
-            if pos == -1 or pos >= fract_x_pos:
-                break
-            loop_positions.append(pos)
-            search_start = pos + 1
-
-        if not loop_positions:
-            raise ValueError("loop_ not found before _atom_site_fract_x")
-
-        atom_loop_start = loop_positions[-1]
-
-        loop_start_line_end = cif_string.find("\n", atom_loop_start)
-        lines_after_loop = cif_string[loop_start_line_end + 1 :].split("\n")
-
-        headers = []
-        for line in lines_after_loop:
-            stripped = line.strip()
-            if not stripped:
-                continue
-            if stripped.startswith("_"):
-                headers.append(stripped)
-                continue
-            break
-
-        num_header_lines = len(headers)
-        loop_data_start = loop_start_line_end + 1
-        for _ in range(num_header_lines):
-            loop_data_start = cif_string.find("\n", loop_data_start) + 1
-
-        next_data = re.search(r"\ndata_", cif_string[loop_data_start:])
-        if next_data:
-            loop_end = loop_data_start + next_data.start()
-        else:
-            loop_end = len(cif_string)
-
-        return loop_data_start, loop_end, headers
-
-    def _parse_atom_header_indices(self, headers: list[str]) -> dict[str, int]:
-        """Get indices for required atom site headers."""
-        header_map: dict[str, int] = {}
-        for i, header in enumerate(headers):
-            if header == "_atom_site_label":
-                header_map["label"] = i
-            elif header == "_atom_site_type_symbol":
-                header_map["type_symbol"] = i
-            elif header == "_atom_site_fract_x":
-                header_map["fract_x"] = i
-            elif header == "_atom_site_fract_y":
-                header_map["fract_y"] = i
-            elif header == "_atom_site_fract_z":
-                header_map["fract_z"] = i
-        return header_map
-
-    def _parse_atoms(self, cif_string: str) -> tuple[list[list[float]], list[int]]:
-        """Parse atomic coordinates and atomic numbers from CIF."""
-        loop_start, loop_end, headers = self._find_atom_site_loop(cif_string)
-        indices = self._parse_atom_header_indices(headers)
-
-        required = ["fract_x", "fract_y", "fract_z"]
-        for key in required:
-            if key not in indices:
-                raise ValueError(f"Missing required atom site column: {key}")
-
-        loop_content = cif_string[loop_start:loop_end]
-        lines = loop_content.strip().split("\n")
+        sites = block.table("_atom_site_fract_x")
+        if sites is None:
+            raise NoStructure("_atom_site_fract_x not found in CIF")
+        for key in ("_atom_site_fract_y", "_atom_site_fract_z"):
+            if key not in sites:
+                raise ValueError(f"Missing required atom site column: {key[11:]}")
+        symbols = sites.get("_atom_site_type_symbol") or sites.get("_atom_site_label")
+        if symbols is None:
+            raise ValueError("Missing atom site column: type_symbol or label")
 
         coords = []
         atomic_numbers = []
-        fract_indices = (indices["fract_x"], indices["fract_y"], indices["fract_z"])
-        for line in lines:
-            atom_data = self._parse_atom_line(
-                line, fract_indices, indices.get("type_symbol"), indices.get("label")
+        columns = (
+            sites["_atom_site_fract_x"],
+            sites["_atom_site_fract_y"],
+            sites["_atom_site_fract_z"],
+        )
+        occupancy = sites.get("_atom_site_occupancy") or ["1"] * len(symbols)
+        occupancies = []
+        for symbol, occupied, *values in zip(symbols, occupancy, *columns):
+            if any(value in ("?", ".") for value in values):
+                continue
+            element = self._extract_element_symbol(symbol)
+            try:
+                number = symbol_to_number(element)
+            except KeyError as error:
+                raise ValueError(f"unknown element {symbol!r} in CIF") from error
+            coords.append([self._parse_fractional(value) % 1.0 for value in values])
+            atomic_numbers.append(number)
+            occupancies.append(
+                1.0 if occupied in ("?", ".") else self._parse_fractional(occupied)
             )
-            if atom_data is not None:
-                coords.append(atom_data[0])
-                atomic_numbers.append(atom_data[1])
 
         if not coords:
-            raise ValueError("No atoms found in CIF")
+            raise NoStructure("No atoms found in CIF")
 
-        return coords, atomic_numbers
+        return coords, self._dominant_elements(coords, atomic_numbers, occupancies)
 
-    def _parse_atom_line(
-        self,
-        line: str,
-        fract_indices: tuple[int, int, int],
-        type_symbol_idx: int | None,
-        label_idx: int | None,
-    ) -> tuple[list[float], int] | None:
-        """Parse a single atom line from CIF.
+    @staticmethod
+    def _dominant_elements(
+        coords: list[list[float]], atomic_numbers: list[int], occupancies: list[float]
+    ) -> list[int]:
+        """Element of each site, the most occupied one of the sites at its place.
 
-        Returns:
-            Tuple of (coords, atomic_number) or None if line should be skipped.
+        Sites closer than MERGE_TOLERANCE share a place, a mixed site: each
+        takes the element of largest occupancy among them, the last one on a
+        tie, as ase.spacegroup.crystal. The images of the sites are merged
+        after, keeping the first site.
         """
-        stripped = line.strip()
-        if not stripped or stripped.startswith(("_", "loop_", "#")):
-            return None
+        x = torch.tensor(coords, dtype=torch.float64)
+        difference = x.unsqueeze(1) - x.unsqueeze(0)
+        difference = difference - torch.round(difference)
+        same = torch.sum(difference**2, dim=-1) < MERGE_TOLERANCE**2
 
-        parts = stripped.split()
-        fract_x_idx, fract_y_idx, fract_z_idx = fract_indices
+        occupancy = torch.tensor(occupancies, dtype=torch.float64)
+        shared = torch.where(same, occupancy, -torch.inf)
+        largest = shared == shared.max(dim=1, keepdim=True).values
+        index = torch.arange(len(coords))
+        choice = torch.where(largest, index, -1).argmax(dim=1)
 
-        if len(parts) <= max(fract_x_idx, fract_y_idx, fract_z_idx):
-            return None
-
-        if type_symbol_idx is not None and len(parts) > type_symbol_idx:
-            element = self._extract_element_symbol(parts[type_symbol_idx])
-        elif label_idx is not None:
-            element = self._extract_element_symbol(parts[label_idx])
-        else:
-            return None
-
-        x = self._parse_fractional(parts[fract_x_idx]) % 1.0
-        y = self._parse_fractional(parts[fract_y_idx]) % 1.0
-        z = self._parse_fractional(parts[fract_z_idx]) % 1.0
-
-        return [x, y, z], symbol_to_number(element)
+        return [atomic_numbers[i] for i in choice.tolist()]
 
 
 _parser = CifParser()
@@ -476,7 +609,8 @@ def parse_cif(cif_string: str) -> Structures:
         Structures object containing all parsed structures batched together.
 
     Raises:
-        ValueError: If space group is not 1 or required data is missing.
+        ValueError: If no block describes a structure, or required data is
+            missing.
     """
     return _parser.parse(cif_string)
 
