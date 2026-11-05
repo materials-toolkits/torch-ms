@@ -16,3 +16,6 @@ typings
 
 /datasets/
 site/
+
+# experiment outputs and reports
+experiments/

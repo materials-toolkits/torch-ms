@@ -48,6 +48,30 @@
 
 ::: torchms.models.diffcsp.config
 
+### MatterGen
+
+::: torchms.models.mattergen.model
+
+::: torchms.models.mattergen.chemical_system
+
+::: torchms.models.mattergen.space_group
+
+::: torchms.models.mattergen.properties
+
+::: torchms.models.mattergen.band_gap
+
+::: torchms.models.mattergen.magnetic_density
+
+::: torchms.models.mattergen.chemical_system_energy_above_hull
+
+::: torchms.models.mattergen.bulk_modulus
+
+::: torchms.models.mattergen.magnetic_density_hhi_score
+
+::: torchms.models.mattergen.diffusion
+
+::: torchms.models.mattergen.config
+
 ## Layers
 
 ### Bases

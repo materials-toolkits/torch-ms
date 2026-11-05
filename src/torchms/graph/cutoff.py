@@ -8,7 +8,12 @@ from torchms.graph.graph import Graph
 from torchms.graph.sparse import count_by
 
 
-def cutoff(structures: Structures, radius: float, self_images: bool = False) -> Graph:
+def cutoff(
+    structures: Structures,
+    radius: float,
+    self_images: bool = False,
+    max_shift: int | None = None,
+) -> Graph:
     """Build a radius-cutoff graph for a batch of structures.
 
     A structure is connected to its periodic images only along the lattice
@@ -22,6 +27,10 @@ def cutoff(structures: Structures, radius: float, self_images: bool = False) -> 
         self_images: If True, an atom is connected to its own periodic images
             closer than the radius, which exist when the cell is smaller than
             the radius. If False, an atom is never connected to itself.
+        max_shift: If given, an atom is only connected to the images at most
+            this number of cells away along each lattice vector, counted from
+            the coordinates wrapped in the cell. The number of images of a
+            flat cell is bounded before they are listed.
 
     Returns:
         Graph with edge_index, edge_shift, and batch bookkeeping tensors.
@@ -68,7 +77,7 @@ def cutoff(structures: Structures, radius: float, self_images: bool = False) -> 
     wrapped = structures.x - cell
 
     source, target, shift, pair_batch = periodic_pairs(
-        wrapped, structures.lattice, structures.ptr, radius, structures.pbc
+        wrapped, structures.lattice, structures.ptr, radius, structures.pbc, max_shift
     )
 
     fractional = (wrapped[target] + shift.to(wrapped.dtype)) - wrapped[source]

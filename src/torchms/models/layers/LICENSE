@@ -3,6 +3,10 @@ Licenses of the files of this directory.
 dimenet.py and gemnet.py are derived from cdvae, under the MIT license below,
 with the notices of the projects cdvae adapted them from.
 
+gemnet.py is also derived from MatterGen, for the cosines of the edges with the
+lattice vectors and the read-out of the lattice (MIT license, see
+../mattergen/LICENSE).
+
 cspnet.py is derived from DiffCSP (MIT license, see ../diffcsp/LICENSE).
 
 basis.py is derived from orb-models (Apache License 2.0, see ../orb/LICENSE),

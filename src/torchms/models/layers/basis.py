@@ -365,6 +365,54 @@ def periodic_fourier(
     return torch.cat([angle.sin(), angle.cos()], dim=-1)
 
 
+def sinusoidal_frequencies(
+    dim: int,
+    max_period: float,
+    *,
+    endpoint: bool = True,
+    device: torch.device | str | None = None,
+) -> Float[torch.Tensor, "half"]:
+    """Frequencies of sinusoidal_embedding: dim / 2 from 1 down to 1 / max_period.
+
+    Args:
+        dim: Size of the embedding, an even number larger than 2.
+        max_period: Inverse of the lowest frequency.
+        endpoint: If False, the frequencies stop one step before
+            1 / max_period: the k-th one is max_period^(-2k / dim).
+        device: Device of the frequencies.
+
+    Examples:
+        >>> sinusoidal_frequencies(4, 100.0)
+        tensor([1.0000, 0.0100])
+        >>> sinusoidal_frequencies(4, 100.0, endpoint=False)
+        tensor([1.0000, 0.1000])
+    """
+    half = dim // 2
+    rate = math.log(max_period) / (half - 1 if endpoint else half)
+
+    return torch.exp(torch.arange(half, device=device) * -rate)
+
+
+def sinusoids(
+    angle: Float[torch.Tensor, "n half"], interleave: bool = False
+) -> Float[torch.Tensor, "n dim"]:
+    """Sines and cosines of angles, the features of sinusoidal_embedding.
+
+    Args:
+        angle: Angles, shape (n, half).
+        interleave: If True, the sine and the cosine of an angle follow each
+            other, as in MatterGen. Otherwise the sines come first.
+
+    Examples:
+        >>> sinusoids(torch.tensor([[0.0, 1.0]]), interleave=True)
+        tensor([[0.0000, 1.0000, 0.8415, 0.5403]])
+    """
+    if interleave:
+        return torch.stack([angle.sin(), angle.cos()], dim=-1).flatten(1)
+
+    return torch.cat([angle.sin(), angle.cos()], dim=-1)
+
+
 def sinusoidal_embedding(
     time: Int[torch.Tensor, "n"] | Float[torch.Tensor, "n"], dim: int, max_period: float
 ) -> Float[torch.Tensor, "n dim"]:
@@ -372,7 +420,7 @@ def sinusoidal_embedding(
 
     The positional encoding of "Attention is all you need", used for the time
     of a diffusion: sin(time f) and cos(time f) for dim / 2 frequencies f from
-    1 down to 1 / max_period.
+    1 down to 1 / max_period, see sinusoidal_frequencies.
 
     Args:
         time: Time of each element, shape (n,).
@@ -388,12 +436,9 @@ def sinusoidal_embedding(
         tensor([[0.0000e+00, 0.0000e+00, 1.0000e+00, 1.0000e+00],
                 [8.4147e-01, 1.0000e-04, 5.4030e-01, 1.0000e+00]])
     """
-    half = dim // 2
-    rate = math.log(max_period) / (half - 1)
-    frequencies = torch.exp(torch.arange(half, device=time.device) * -rate)
-    angle = time.unsqueeze(1) * frequencies
+    frequencies = sinusoidal_frequencies(dim, max_period, device=time.device)
 
-    return torch.cat([angle.sin(), angle.cos()], dim=-1)
+    return sinusoids(time.unsqueeze(1) * frequencies)
 
 
 def mlp(input_size: int, hidden_size: int, output_size: int) -> nn.Sequential:

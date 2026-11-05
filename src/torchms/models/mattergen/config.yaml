@@ -1,0 +1,504 @@
+# MatterGen: weights, graph and hyperparameters, read by model.py. The base
+# model, which generates crystals without condition (MatterGen), and the models
+# fine-tuned on properties: a chemical system (MatterGenChemicalSystem), a space
+# group (MatterGenSpaceGroup), a band gap (MatterGenBandGap), a magnetic density
+# (MatterGenMagneticDensity), a chemical system and the energy above the hull
+# (MatterGenChemicalSystemEnergyAboveHull), a bulk modulus
+# (MatterGenBulkModulus), a magnetic density and the HHI score
+# (MatterGenMagneticDensityHHIScore), whose own values are in the sections
+# named after their properties.
+
+default_weights: mattergen-base
+
+# The base model of MatterGen, trained on Alex-MP-20 by its authors and
+# published on Hugging Face ("mattergen_base" in their checkpoints): the
+# checkpoint of pytorch-lightning and the configuration of its training.
+# files of the pretrained weights, by name: where a file is downloaded, its
+# expected SHA-256 and its name in the cache, the last part of the URL by default
+checkpoints:
+  mattergen-base:
+    - url: https://huggingface.co/microsoft/mattergen/resolve/5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/mattergen_base/checkpoints/last.ckpt
+      sha256: 81668ee12afc1ee1b037f362420730de3460bfd2d36e547585fdcb911a3dfdef
+    - url: https://huggingface.co/microsoft/mattergen/resolve/5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/mattergen_base/config.yaml
+      sha256: 01648f40a8227b01b1dbc1090bf0f8229bb3241845ae9ac57af96b31e595bda7
+  # the same network trained on MP-20 alone, by the authors of MatterGen
+  # ("mp_20_base" in their checkpoints): loaded by MatterGen with this name
+  mattergen-mp-20-base:
+    - url: https://huggingface.co/microsoft/mattergen/resolve/5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/mp_20_base/checkpoints/last.ckpt
+      sha256: ffb80e4425a6f99f479a67b8cd111885d45117234e8947ff77eb3a55df420b9a
+    - url: https://huggingface.co/microsoft/mattergen/resolve/5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/mp_20_base/config.yaml
+      sha256: cf2798a87227fb332f5ff4cb7030149ea0099ffbd61bfe7b6da19a1290667d43
+  # the base model fine-tuned on Alex-MP-20 with its chemical systems, all its
+  # weights ("chemical_system" in their checkpoints)
+  mattergen-chemical-system:
+    - url: https://huggingface.co/microsoft/mattergen/resolve/5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/chemical_system/checkpoints/last.ckpt
+      sha256: 4ad21d977c2b776a31c92498c4d1c88d3e1e286deeb941e997af8e082310b80e
+    - url: https://huggingface.co/microsoft/mattergen/resolve/5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/chemical_system/config.yaml
+      sha256: 0640de891dc75e34c92c4da022344767918fe4a2300908b1013fe6161f3c2c81
+  # the same for the space groups ("space_group" in their checkpoints)
+  mattergen-space-group:
+    - url: https://huggingface.co/microsoft/mattergen/resolve/5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/space_group/checkpoints/last.ckpt
+      sha256: 1b6ab06739f4319d75f4a19960840ec3c8d3d32ee842c996876ef9d8b188e4bb
+    - url: https://huggingface.co/microsoft/mattergen/resolve/5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/space_group/config.yaml
+      sha256: 75ebcb5bcf3fc2f1c78aeb9a99c88bd99ebd61fcdaa5fe9463344a7c29df62ac
+  # the same for the band gaps from DFT ("dft_band_gap" in their checkpoints)
+  mattergen-dft-band-gap:
+    - url: https://huggingface.co/microsoft/mattergen/resolve/5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/dft_band_gap/checkpoints/last.ckpt
+      sha256: 864ebbfd360e0a8287287d290a552da6b6bd92d67418a6a40be419ed3acd5e7e
+    - url: https://huggingface.co/microsoft/mattergen/resolve/5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/dft_band_gap/config.yaml
+      sha256: 0e14dfe5ce3906fb5c6d80f9ef000278a9c679f639f7712e7690f7c4a9431e6e
+  # the same for the magnetic densities from DFT ("dft_mag_density" in their checkpoints)
+  mattergen-dft-mag-density:
+    - url: https://huggingface.co/microsoft/mattergen/resolve/5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/dft_mag_density/checkpoints/last.ckpt
+      sha256: 01dd3e86805165412e0810e2a77a4756f8e1020f3ff2707c74af0a3f88a1bb8e
+    - url: https://huggingface.co/microsoft/mattergen/resolve/5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/dft_mag_density/config.yaml
+      sha256: 6129b1a2329c8031ae162687ab02c3652faf8ef3e59ae9b74163b9f829233155
+  # the same for a chemical system and the energy above the hull together
+  # ("chemical_system_energy_above_hull" in their checkpoints)
+  mattergen-chemical-system-energy-above-hull:
+    - url: https://huggingface.co/microsoft/mattergen/resolve/5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/chemical_system_energy_above_hull/checkpoints/last.ckpt
+      sha256: 50d4a51b109b178db98de82849d0ad14397b663526b2387caee3a643f27e326a
+    - url: https://huggingface.co/microsoft/mattergen/resolve/5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/chemical_system_energy_above_hull/config.yaml
+      sha256: 41dd8cdbeed13c13b2dcfa9d6657b79be3bf9c738bad75c57a6b40f9c948e73d
+  # the same for the bulk modulus predicted by a machine-learned potential, in
+  # GPa ("ml_bulk_modulus" in their checkpoints)
+  mattergen-ml-bulk-modulus:
+    - url: https://huggingface.co/microsoft/mattergen/resolve/5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/ml_bulk_modulus/checkpoints/last.ckpt
+      sha256: 67f7f5e28695776ed285a293b30160f8b546063cbac4a763a36f6ca3f6242db6
+    - url: https://huggingface.co/microsoft/mattergen/resolve/5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/ml_bulk_modulus/config.yaml
+      sha256: 4313ef58d14b14941434a33e6003e77a3b168e53cececa268384555edeef8e2a
+  # the same for the magnetic density from DFT and the HHI score together
+  # ("dft_mag_density_hhi_score" in their checkpoints)
+  mattergen-dft-mag-density-hhi-score:
+    - url: https://huggingface.co/microsoft/mattergen/resolve/5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/dft_mag_density_hhi_score/checkpoints/last.ckpt
+      sha256: 98a4f2f9263b013d7d94a04c08e6928f90933d5f02c75f9b58c12609dddef016
+    - url: https://huggingface.co/microsoft/mattergen/resolve/5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/dft_mag_density_hhi_score/config.yaml
+      sha256: 2d0bf4632917d19449a170125e0fe2d8d00dc709137b63612d53e3aa7fa901f3
+
+unused_parameters: []
+
+graph:
+  # an atom is connected to its 50 nearest neighbours closer than the radius,
+  # its own images included, among the cells up to 5 cells away along each
+  # lattice vector; the graph is then made symmetric
+  radius: &radius 7.0                    # Å
+  max_neighbors: &max_neighbors 50
+  max_image_shift: &max_image_shift 5
+
+model:
+  hidden_dim: &hidden_dim 512            # embedding of the time, read by GemNet-T
+  time_max_period: 10000.0               # inverse of the lowest frequency of this embedding
+  num_elements: &num_elements 100        # elements, from hydrogen; one more class is the mask
+  # elements an atom can take when it is sampled, SELECTED_ATOMIC_NUMBERS of
+  # MatterGen: up to bismuth, without the noble gases, technetium and
+  # promethium. The scores of the other ones are lowered by masked_logit
+  allowed_elements: [
+    1, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 19, 20, 21, 22, 23, 24,
+    25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 37, 38, 39, 40, 41, 42, 44, 45,
+    46, 47, 48, 49, 50, 51, 52, 53, 55, 56, 57, 58, 59, 60, 62, 63, 64, 65, 66,
+    67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83,
+  ]
+  masked_logit: -1.0e+10                 # added to the score of an element not allowed
+
+# GemNet-T
+decoder:
+  num_blocks: &num_blocks 4
+  num_spherical: 7                       # degrees of the basis of the angles
+  num_radial: 128                        # gaussians of the lengths of the edges
+  triplet_dim: 64                        # features of the edges in a triplet
+  radial_dim: 16                         # projection of the radial basis
+  circular_dim: 16                       # projection of the basis of the angles
+  bilinear_dim: 64                       # features of the edges after the triplets
+  num_before_skip: 1
+  num_after_skip: 2
+  num_concat: 1
+  num_atom_layers: 3                     # residual layers of the updates of the atoms
+  envelope_exponent: 5
+  activation_scale: 0.6                  # the SiLU is divided by it
+  # an edge reads its cosines with the lattice vectors, and the network gives
+  # the score of the lattice
+  lattice_cosines: true
+  predict_lattice: true
+
+# noise of the lattice: a diffusion which preserves the variance, towards a
+# cubic cell of the mean density, its deviation growing with the number of atoms
+lattice:
+  beta_min: &beta_min 0.1
+  beta_max: &beta_max 20.0
+  limit_density: &limit_density 0.05771451654022283  # atoms per Å³
+  limit_var_scaling: &limit_var_scaling 0.25       # variance per element, times N^(2/3)
+
+# noise of the fractional coordinates: a level which grows geometrically,
+# divided by the cube root of the number of atoms, wrapped around the cell
+coordinates:
+  sigma_min: 0.01                        # default of MatterGen, not in its configuration
+  sigma_max: &sigma_max 5.0
+
+# elements: each atom is replaced by the mask with a probability which grows
+# linearly to 1 at the last step (the "standard" schedule of D3PM)
+elements:
+  num_steps: &num_steps 1000
+  log_epsilon: 1.0e-20                   # added to probabilities before their logarithm
+
+# predictor and corrector, as in sampling_conf/default.yaml of MatterGen
+sampling:
+  num_steps: *num_steps                  # from the time 1 to the time 1 / num_steps
+  snr_coordinates: 0.4                   # signal to noise ratio of the Langevin corrector
+  snr_lattice: 0.2
+  max_step_size: 1.0e+6                  # of the Langevin corrector
+  min_alpha_ratio: 0.001                 # lower bound of alpha_t / alpha_s of a step
+  # probability of each number of atoms, from 0: ALEX_MP_20 of MatterGen
+  num_atoms_distribution: [
+    0.0,
+    0.0002303828963737732,
+    0.002804088967292211,
+    0.019342289742695216,
+    0.1636343889258233,
+    0.04668051158167732,
+    0.07808005476530565,
+    0.027247714272549548,
+    0.1150400537121267,
+    0.048984340545415055,
+    0.12620539622566992,
+    0.03577352703049611,
+    0.14591300741832927,
+    0.0060031200426537475,
+    0.028628366058675234,
+    0.02022761830161729,
+    0.04473213051520198,
+    0.0013033089566287742,
+    0.038699389814443035,
+    0.0070135136024644384,
+    0.04345679662456145,
+  ]
+
+upstream:
+  # the denoiser in the checkpoint of the DiffusionLightningModule of MatterGen
+  prefix: diffusion_module.model.
+  # parameters of MatterGen which have another name here, by the end of their name
+  renamed_parameters:
+    noise_level_encoding.div_term: time_frequencies
+    rbf.offset: rbf.centers
+  # configuration of the training the rewrite is written for (config.yaml of
+  # the weights), by section
+  sections:
+    lightning_module.diffusion_module.model:
+      _target_: mattergen.denoiser.GemNetTDenoiser
+      atom_type_diffusion: mask
+      denoise_atom_types: true
+      hidden_dim: *hidden_dim
+      property_embeddings: {}
+      property_embeddings_adapt: {}
+    lightning_module.diffusion_module.model.gemnet:
+      _target_: mattergen.common.gemnet.gemnet.GemNetT
+      cutoff: *radius
+      emb_size_atom: *hidden_dim
+      emb_size_edge: *hidden_dim
+      latent_dim: *hidden_dim
+      max_cell_images_per_dim: *max_image_shift
+      max_neighbors: *max_neighbors
+      num_blocks: *num_blocks
+      num_targets: 1
+      otf_graph: true
+      regress_stress: true
+    lightning_module.diffusion_module.model.gemnet.atom_embedding:
+      _target_: mattergen.common.gemnet.layers.embedding_block.AtomEmbedding
+      emb_size: *hidden_dim
+      with_mask_type: true
+    lightning_module.diffusion_module.corruption.sdes.cell:
+      _target_: mattergen.common.diffusion.corruption.LatticeVPSDE.from_vpsde_config
+    lightning_module.diffusion_module.corruption.sdes.cell.vpsde_config:
+      beta_min: *beta_min
+      beta_max: *beta_max
+      limit_density: *limit_density
+      limit_var_scaling_constant: *limit_var_scaling
+    lightning_module.diffusion_module.corruption.sdes.pos:
+      _target_: mattergen.common.diffusion.corruption.NumAtomsVarianceAdjustedWrappedVESDE
+      limit_info_key: num_atoms
+      sigma_max: *sigma_max
+      wrapping_boundary: 1.0
+    lightning_module.diffusion_module.corruption.discrete_corruptions.atomic_numbers:
+      _target_: mattergen.diffusion.corruption.d3pm_corruption.D3PMCorruption
+      offset: 1
+    lightning_module.diffusion_module.corruption.discrete_corruptions.atomic_numbers.d3pm:
+      _target_: mattergen.diffusion.d3pm.d3pm.MaskDiffusion
+      dim: 101
+    lightning_module.diffusion_module.corruption.discrete_corruptions.atomic_numbers.d3pm.schedule:
+      _target_: mattergen.diffusion.d3pm.d3pm.create_discrete_diffusion_schedule
+      kind: standard
+      num_steps: *num_steps
+
+# the model fine-tuned on a chemical system: the same network with an adapter
+# before each block, and the guidance of its sampling
+chemical_system:
+  default_weights: mattergen-chemical-system
+  # factor of the guidance, as in the README of MatterGen: 0 is the model
+  # without condition, 1 with it, more follows the condition more
+  guidance_scale: 2.0
+  # sections of the configuration of the training which replace or complete
+  # the ones of the base model in upstream.sections
+  upstream_sections:
+    lightning_module.diffusion_module.model:
+      _target_: mattergen.adapter.GemNetTAdapter
+      atom_type_diffusion: mask
+      denoise_atom_types: true
+      hidden_dim: *hidden_dim
+      property_embeddings: {}
+    lightning_module.diffusion_module.model.gemnet:
+      _target_: mattergen.common.gemnet.gemnet_ctrl.GemNetTCtrl
+      condition_on_adapt: [chemical_system]
+      cutoff: *radius
+      emb_size_atom: *hidden_dim
+      emb_size_edge: *hidden_dim
+      latent_dim: *hidden_dim
+      max_cell_images_per_dim: *max_image_shift
+      max_neighbors: *max_neighbors
+      num_blocks: *num_blocks
+      num_targets: 1
+      otf_graph: true
+      regress_stress: true
+    lightning_module.diffusion_module.model.property_embeddings_adapt.chemical_system:
+      _target_: mattergen.property_embeddings.PropertyEmbedding
+      name: chemical_system
+    lightning_module.diffusion_module.model.property_embeddings_adapt.chemical_system.conditional_embedding_module:
+      _target_: mattergen.property_embeddings.ChemicalSystemMultiHotEmbedding
+      hidden_dim: *hidden_dim
+    lightning_module.diffusion_module.model.property_embeddings_adapt.chemical_system.scaler:
+      _target_: torch.nn.Identity
+
+# the model fine-tuned on a space group: the same network with an adapter
+# before each block, and the guidance of its sampling
+space_group:
+  default_weights: mattergen-space-group
+  # factor of the guidance, as for the chemical systems: the README of
+  # MatterGen gives no value for the space groups
+  guidance_scale: 2.0
+  upstream_sections:
+    lightning_module.diffusion_module.model:
+      _target_: mattergen.adapter.GemNetTAdapter
+      atom_type_diffusion: mask
+      denoise_atom_types: true
+      hidden_dim: *hidden_dim
+      property_embeddings: {}
+    lightning_module.diffusion_module.model.gemnet:
+      _target_: mattergen.common.gemnet.gemnet_ctrl.GemNetTCtrl
+      condition_on_adapt: [space_group]
+      cutoff: *radius
+      emb_size_atom: *hidden_dim
+      emb_size_edge: *hidden_dim
+      latent_dim: *hidden_dim
+      max_cell_images_per_dim: *max_image_shift
+      max_neighbors: *max_neighbors
+      num_blocks: *num_blocks
+      num_targets: 1
+      otf_graph: true
+      regress_stress: true
+    lightning_module.diffusion_module.model.property_embeddings_adapt.space_group:
+      _target_: mattergen.property_embeddings.PropertyEmbedding
+      name: space_group
+    lightning_module.diffusion_module.model.property_embeddings_adapt.space_group.conditional_embedding_module:
+      _target_: mattergen.property_embeddings.SpaceGroupEmbeddingVector
+      hidden_dim: *hidden_dim
+    lightning_module.diffusion_module.model.property_embeddings_adapt.space_group.scaler:
+      _target_: torch.nn.Identity
+
+# the model fine-tuned on the band gap from DFT, in eV: the same network with
+# an adapter before each block, and the guidance of its sampling
+dft_band_gap:
+  default_weights: mattergen-dft-band-gap
+  # factor of the guidance, as in the README of MatterGen for the magnetic
+  # density, another number
+  guidance_scale: 2.0
+  upstream_sections:
+    lightning_module.diffusion_module.model:
+      _target_: mattergen.adapter.GemNetTAdapter
+      atom_type_diffusion: mask
+      denoise_atom_types: true
+      hidden_dim: *hidden_dim
+      property_embeddings: {}
+    lightning_module.diffusion_module.model.gemnet:
+      _target_: mattergen.common.gemnet.gemnet_ctrl.GemNetTCtrl
+      condition_on_adapt: [dft_band_gap]
+      cutoff: *radius
+      emb_size_atom: *hidden_dim
+      emb_size_edge: *hidden_dim
+      latent_dim: *hidden_dim
+      max_cell_images_per_dim: *max_image_shift
+      max_neighbors: *max_neighbors
+      num_blocks: *num_blocks
+      num_targets: 1
+      otf_graph: true
+      regress_stress: true
+    lightning_module.diffusion_module.model.property_embeddings_adapt.dft_band_gap:
+      _target_: mattergen.property_embeddings.PropertyEmbedding
+      name: dft_band_gap
+    lightning_module.diffusion_module.model.property_embeddings_adapt.dft_band_gap.conditional_embedding_module:
+      _target_: mattergen.diffusion.model_utils.NoiseLevelEncoding
+      d_model: *hidden_dim
+    lightning_module.diffusion_module.model.property_embeddings_adapt.dft_band_gap.scaler:
+      _target_: mattergen.common.utils.data_utils.StandardScalerTorch
+
+# the model fine-tuned on the magnetic density from DFT: the same network with
+# an adapter before each block, and the guidance of its sampling
+dft_mag_density:
+  default_weights: mattergen-dft-mag-density
+  # factor of the guidance, as in the README of MatterGen for this model
+  guidance_scale: 2.0
+  upstream_sections:
+    lightning_module.diffusion_module.model:
+      _target_: mattergen.adapter.GemNetTAdapter
+      atom_type_diffusion: mask
+      denoise_atom_types: true
+      hidden_dim: *hidden_dim
+      property_embeddings: {}
+    lightning_module.diffusion_module.model.gemnet:
+      _target_: mattergen.common.gemnet.gemnet_ctrl.GemNetTCtrl
+      condition_on_adapt: [dft_mag_density]
+      cutoff: *radius
+      emb_size_atom: *hidden_dim
+      emb_size_edge: *hidden_dim
+      latent_dim: *hidden_dim
+      max_cell_images_per_dim: *max_image_shift
+      max_neighbors: *max_neighbors
+      num_blocks: *num_blocks
+      num_targets: 1
+      otf_graph: true
+      regress_stress: true
+    lightning_module.diffusion_module.model.property_embeddings_adapt.dft_mag_density:
+      _target_: mattergen.property_embeddings.PropertyEmbedding
+      name: dft_mag_density
+    lightning_module.diffusion_module.model.property_embeddings_adapt.dft_mag_density.conditional_embedding_module:
+      _target_: mattergen.diffusion.model_utils.NoiseLevelEncoding
+      d_model: *hidden_dim
+    lightning_module.diffusion_module.model.property_embeddings_adapt.dft_mag_density.scaler:
+      _target_: mattergen.common.utils.data_utils.StandardScalerTorch
+
+# the model fine-tuned on a chemical system and the energy above the hull, in
+# eV/atom, together: an adapter per property before each block
+chemical_system_energy_above_hull:
+  default_weights: mattergen-chemical-system-energy-above-hull
+  # factor of the guidance, as in the README of MatterGen for this model
+  guidance_scale: 2.0
+  # sections of the configuration of the training which replace or complete
+  # the ones of the base model in upstream.sections
+  upstream_sections:
+    lightning_module.diffusion_module.model:
+      _target_: mattergen.adapter.GemNetTAdapter
+      atom_type_diffusion: mask
+      denoise_atom_types: true
+      hidden_dim: *hidden_dim
+      property_embeddings: {}
+    lightning_module.diffusion_module.model.gemnet:
+      _target_: mattergen.common.gemnet.gemnet_ctrl.GemNetTCtrl
+      condition_on_adapt: [chemical_system, energy_above_hull]
+      cutoff: *radius
+      emb_size_atom: *hidden_dim
+      emb_size_edge: *hidden_dim
+      latent_dim: *hidden_dim
+      max_cell_images_per_dim: *max_image_shift
+      max_neighbors: *max_neighbors
+      num_blocks: *num_blocks
+      num_targets: 1
+      otf_graph: true
+      regress_stress: true
+    lightning_module.diffusion_module.model.property_embeddings_adapt.chemical_system:
+      _target_: mattergen.property_embeddings.PropertyEmbedding
+      name: chemical_system
+    lightning_module.diffusion_module.model.property_embeddings_adapt.chemical_system.conditional_embedding_module:
+      _target_: mattergen.property_embeddings.ChemicalSystemMultiHotEmbedding
+      hidden_dim: *hidden_dim
+    lightning_module.diffusion_module.model.property_embeddings_adapt.chemical_system.scaler:
+      _target_: torch.nn.Identity
+    lightning_module.diffusion_module.model.property_embeddings_adapt.energy_above_hull:
+      _target_: mattergen.property_embeddings.PropertyEmbedding
+      name: energy_above_hull
+    lightning_module.diffusion_module.model.property_embeddings_adapt.energy_above_hull.conditional_embedding_module:
+      _target_: mattergen.diffusion.model_utils.NoiseLevelEncoding
+      d_model: *hidden_dim
+    lightning_module.diffusion_module.model.property_embeddings_adapt.energy_above_hull.scaler:
+      _target_: mattergen.common.utils.data_utils.StandardScalerTorch
+
+# the model fine-tuned on the bulk modulus predicted by a machine-learned
+# potential, in GPa: the same network with an adapter before each block, and
+# the guidance of its sampling
+ml_bulk_modulus:
+  default_weights: mattergen-ml-bulk-modulus
+  # factor of the guidance, as in the README of MatterGen for the magnetic
+  # density: it gives none for the bulk modulus
+  guidance_scale: 2.0
+  upstream_sections:
+    lightning_module.diffusion_module.model:
+      _target_: mattergen.adapter.GemNetTAdapter
+      atom_type_diffusion: mask
+      denoise_atom_types: true
+      hidden_dim: *hidden_dim
+      property_embeddings: {}
+    lightning_module.diffusion_module.model.gemnet:
+      _target_: mattergen.common.gemnet.gemnet_ctrl.GemNetTCtrl
+      condition_on_adapt: [ml_bulk_modulus]
+      cutoff: *radius
+      emb_size_atom: *hidden_dim
+      emb_size_edge: *hidden_dim
+      latent_dim: *hidden_dim
+      max_cell_images_per_dim: *max_image_shift
+      max_neighbors: *max_neighbors
+      num_blocks: *num_blocks
+      num_targets: 1
+      otf_graph: true
+      regress_stress: true
+    lightning_module.diffusion_module.model.property_embeddings_adapt.ml_bulk_modulus:
+      _target_: mattergen.property_embeddings.PropertyEmbedding
+      name: ml_bulk_modulus
+    lightning_module.diffusion_module.model.property_embeddings_adapt.ml_bulk_modulus.conditional_embedding_module:
+      _target_: mattergen.diffusion.model_utils.NoiseLevelEncoding
+      d_model: *hidden_dim
+    lightning_module.diffusion_module.model.property_embeddings_adapt.ml_bulk_modulus.scaler:
+      _target_: mattergen.common.utils.data_utils.StandardScalerTorch
+      # standardized after its decimal logarithm, see Config.log10_scaled
+      log10_transform: true
+
+# the model fine-tuned on the magnetic density from DFT and the HHI score
+# together: an adapter per property before each block. The HHI score of a
+# crystal is the Herfindahl-Hirschman index of the production of its elements,
+# from 0 to 10000, low for elements produced in many countries
+dft_mag_density_hhi_score:
+  default_weights: mattergen-dft-mag-density-hhi-score
+  # factor of the guidance, as in the README of MatterGen for its models of
+  # one magnetic density and of two properties
+  guidance_scale: 2.0
+  upstream_sections:
+    lightning_module.diffusion_module.model:
+      _target_: mattergen.adapter.GemNetTAdapter
+      atom_type_diffusion: mask
+      denoise_atom_types: true
+      hidden_dim: *hidden_dim
+      property_embeddings: {}
+    lightning_module.diffusion_module.model.gemnet:
+      _target_: mattergen.common.gemnet.gemnet_ctrl.GemNetTCtrl
+      condition_on_adapt: [dft_mag_density, hhi_score]
+      cutoff: *radius
+      emb_size_atom: *hidden_dim
+      emb_size_edge: *hidden_dim
+      latent_dim: *hidden_dim
+      max_cell_images_per_dim: *max_image_shift
+      max_neighbors: *max_neighbors
+      num_blocks: *num_blocks
+      num_targets: 1
+      otf_graph: true
+      regress_stress: true
+    lightning_module.diffusion_module.model.property_embeddings_adapt.dft_mag_density:
+      _target_: mattergen.property_embeddings.PropertyEmbedding
+      name: dft_mag_density
+    lightning_module.diffusion_module.model.property_embeddings_adapt.dft_mag_density.conditional_embedding_module:
+      _target_: mattergen.diffusion.model_utils.NoiseLevelEncoding
+      d_model: *hidden_dim
+    lightning_module.diffusion_module.model.property_embeddings_adapt.dft_mag_density.scaler:
+      _target_: mattergen.common.utils.data_utils.StandardScalerTorch
+    lightning_module.diffusion_module.model.property_embeddings_adapt.hhi_score:
+      _target_: mattergen.property_embeddings.PropertyEmbedding
+      name: hhi_score
+    lightning_module.diffusion_module.model.property_embeddings_adapt.hhi_score.conditional_embedding_module:
+      _target_: mattergen.diffusion.model_utils.NoiseLevelEncoding
+      d_model: *hidden_dim
+    lightning_module.diffusion_module.model.property_embeddings_adapt.hhi_score.scaler:
+      _target_: mattergen.common.utils.data_utils.StandardScalerTorch

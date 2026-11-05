@@ -8,7 +8,7 @@ has a page for each one.
 |---|---|---|
 | Supervised | total energy, pretrained | [orb-v3](../models/orb.md), [MACE](../models/mace.md), [M3GNet](../models/m3gnet.md), [CHGNet](../models/chgnet.md) |
 | | formation energy, pretrained | [ALIGNN](../models/alignn.md) |
-| Generative | crystals, pretrained | [CDVAE](../models/cdvae.md), [DiffCSP](../models/diffcsp.md) |
+| Generative | crystals, pretrained | [CDVAE](../models/cdvae.md), [DiffCSP](../models/diffcsp.md), [MatterGen](../models/mattergen.md) |
 | Layers | bases and networks | [bases](../models/bases.md), [DimeNet++](../models/dimenet.md), [GemNet-T](../models/gemnet.md), [CSPNet](../models/cspnet.md) |
 | | networks of the energy, to train | [`LineGraphNetwork`](../models/line-graph-network.md), [`EquivariantNetwork`](../models/equivariant-network.md) |
 
@@ -125,6 +125,39 @@ structures = model.sample(z, num_atoms)     # 1000 steps of diffusion
 generation = DiffCSPGeneration.from_pretrained(device="cuda")
 structures = generation.sample(generation.sample_num_atoms(64))
 ```
+
+[MatterGen](../models/mattergen.md) generates crystals of given numbers of atoms with
+their elements, without condition. As DiffCSP, it builds the graph of its network at each
+step of the sampling.
+
+```{.python notest}
+from torchms.models import MatterGen
+
+model = MatterGen.from_pretrained(device="cuda")
+structures = model.sample(model.sample_num_atoms(64))   # 1000 steps, 2000 calls of the network
+```
+
+`MatterGen.from_pretrained("mattergen-mp-20-base")` loads the same network trained on MP-20
+alone.
+
+`MatterGenChemicalSystem` generates them with given elements, one chemical system per crystal:
+
+```{.python notest}
+from torchms.models import MatterGenChemicalSystem
+
+model = MatterGenChemicalSystem.from_pretrained(device="cuda")
+guidance = model.guidance(["Li-O"] * 64)
+structures = model.sample(model.sample_num_atoms(64), guidance=guidance)
+```
+
+`MatterGenSpaceGroup`, `MatterGenBandGap`, `MatterGenMagneticDensity` and
+`MatterGenBulkModulus` are used the same way, with a space group, a band gap in eV, a
+magnetic density or a bulk modulus in GPa per crystal: `model.guidance([225] * 64)`,
+`model.guidance([3.0] * 64)`, `model.guidance([0.15] * 64)`, `model.guidance([400.0] * 64)`.
+These are followed, not imposed. `MatterGenChemicalSystemEnergyAboveHull` takes both a
+chemical system and an energy above the hull per crystal, either one `None`:
+`model.guidance(["Li-O"] * 64, [0.0] * 64)`, and `MatterGenMagneticDensityHHIScore` a
+magnetic density and an HHI score: `model.guidance([0.15] * 64, [1000.0] * 64)`.
 
 ## Layers for your own model
 

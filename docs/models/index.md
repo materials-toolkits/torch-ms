@@ -35,17 +35,29 @@ Models which generate structures.
 | [CDVAE](cdvae.md) | `CDVAE` | crystals of at most 20 atoms, from a latent vector | cdvae `f857f59`, MIT | **third party** | 4.0e-5 on the latent mean |
 | [DiffCSP](diffcsp.md) | `DiffCSP` | the lattice and the coordinates of a crystal, from its composition | DiffCSP `7121d15`, MIT | official | 7.6e-6 on the noise of the lattice |
 | [DiffCSP](diffcsp.md) | `DiffCSPGeneration` | crystals of given numbers of atoms, with their elements | DiffCSP `7121d15`, MIT | official | 5.7e-6 on the noise of the lattice |
+| [MatterGen](mattergen.md) | `MatterGen` | crystals of given numbers of atoms, with their elements, without condition | MatterGen `9242366`, MIT | official, base model, on Alex-MP-20 or MP-20 | steps identical; the network as near to the original in double precision as the original (1.6e-2) |
+| [MatterGen](mattergen.md#conditioned-on-a-chemical-system) | `MatterGenChemicalSystem` | crystals of given numbers of atoms and given elements | MatterGen `9242366`, MIT | official, fine-tuned on a chemical system | guidance and steps identical; the network within its rounding |
+| [MatterGen](mattergen.md#conditioned-on-a-space-group) | `MatterGenSpaceGroup` | crystals of given numbers of atoms, towards a space group | MatterGen `9242366`, MIT | official, fine-tuned on a space group | guidance and steps identical; the network within its rounding |
+| [MatterGen](mattergen.md#conditioned-on-a-band-gap) | `MatterGenBandGap` | crystals of given numbers of atoms, towards a band gap | MatterGen `9242366`, MIT | official, fine-tuned on the band gap from DFT | guidance and steps identical; the network within its rounding |
+| [MatterGen](mattergen.md#conditioned-on-a-magnetic-density) | `MatterGenMagneticDensity` | crystals of given numbers of atoms, towards a magnetic density | MatterGen `9242366`, MIT | official, fine-tuned on the magnetic density from DFT | guidance and steps identical; the network within its rounding |
+| [MatterGen](mattergen.md#conditioned-on-a-chemical-system-and-the-energy-above-the-hull) | `MatterGenChemicalSystemEnergyAboveHull` | crystals of given numbers of atoms and elements, towards an energy above the hull | MatterGen `9242366`, MIT | official, fine-tuned on both | guidance and steps identical; the network within its rounding |
+| [MatterGen](mattergen.md#conditioned-on-a-bulk-modulus) | `MatterGenBulkModulus` | crystals of given numbers of atoms, towards a bulk modulus | MatterGen `9242366`, MIT | official, fine-tuned on the bulk modulus from a machine-learned potential | guidance and steps identical; the network within its rounding |
+| [MatterGen](mattergen.md#conditioned-on-a-magnetic-density-and-the-hhi-score) | `MatterGenMagneticDensityHHIScore` | crystals of given numbers of atoms, towards a magnetic density and an HHI score | MatterGen `9242366`, MIT | official, fine-tuned on both | guidance and steps identical; the network within its rounding |
 
-Both are rewrites too, compared with the original code as the supervised models. The
+These are rewrites too, compared with the original code as the supervised models. The
 weights of CDVAE were not trained by its authors, who publish none: see its page. DiffCSP
 has two models with their own weights, one which is given the elements and one which
-generates them. Their training is not included.
+generates them. Of MatterGen every published model is rewritten: the base model, trained on Alex-MP-20
+or on MP-20 alone, and the ones conditioned on a chemical system, a space group, the band
+gap, the magnetic density, a chemical system with the energy above the hull, the bulk
+modulus, and the magnetic density with the HHI score. Its network amplifies the rounding of single precision a
+thousand times, see its page. Their training is not included.
 
 ## Pretrained models
 
 What the pretrained models of both kinds have in common. None of the projects they come from
 is a dependency. The differences of the tables above are the ones of the page of each model,
-which says on which structures they hold: orb-v3, ALIGNN and CDVAE keep a fixed number of
+which says on which structures they hold: orb-v3, ALIGNN, CDVAE and MatterGen keep a fixed number of
 nearest neighbours, which is not defined when several neighbours are at the same distance.
 
 ### Graphs
@@ -60,6 +72,7 @@ nearest neighbours, which is not defined when several neighbours are at the same
 | CDVAE, encoder | a graph of bonds given with the structures, then `AddLineGraph(backtrack=True, same_atom=False)` |
 | CDVAE, decoder | `AddRadiusGraph(7.0)`, `KeepNearImages(1)`, `KeepNearestNeighbors(20)`, `MirrorEdges()`, `AddTriplets()`, `AddBonds()` |
 | DiffCSP | `AddCompleteGraph(self_loops=True)` |
+| MatterGen and its fine-tuned models | `AddRadiusGraph(7.0, max_image_shift=5)`, `KeepNearestNeighbors(50)`, `MirrorEdges()`, `AddTriplets()`, `AddBonds()` |
 
 Every radius graph has `self_images=True`. See [Graphs](../guide/graphs.md) for the
 transforms.
@@ -92,7 +105,7 @@ from.
 | [Bases](bases.md) | radial bases, bases of angles, of fractional coordinates and of a time, spherical harmonics, smooth cutoffs | every model |
 | [CSPNet](cspnet.md) ([arXiv:2309.04475](https://arxiv.org/abs/2309.04475)) | network on every pair of atoms of a structure and their fractional coordinates, one vector per atom and one matrix per structure | DiffCSP |
 | [DimeNet++](dimenet.md) ([arXiv:2011.14115](https://arxiv.org/abs/2011.14115)) | network on the bonds of a graph and their angles, one vector per structure | CDVAE (encoder) |
-| [GemNet-T](gemnet.md) ([arXiv:2106.08903](https://arxiv.org/abs/2106.08903)) | network on the edges of a symmetric graph and their triplets, one vector per atom | CDVAE (decoder) |
+| [GemNet-T](gemnet.md) ([arXiv:2106.08903](https://arxiv.org/abs/2106.08903)) | network on the edges of a symmetric graph and their triplets, one vector per atom and one matrix per structure | CDVAE (decoder), MatterGen |
 | [`LineGraphNetwork`](line-graph-network.md) | network of the energy on pairs, triplets and quadruplets, with their angles and dihedral angles | no model of the library |
 | [`EquivariantNetwork`](equivariant-network.md) | network of the energy on pairs only, with products of sums of spherical harmonics | no model of the library |
 

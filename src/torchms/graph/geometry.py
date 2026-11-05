@@ -156,6 +156,39 @@ def lattice_from_parameters(
     return torch.stack([vector_a.t(), vector_b.t(), vector_c.t()], dim=1)
 
 
+def symmetric_lattice(
+    lattice: Float[torch.Tensor, "n_struct 3 3"],
+) -> Float[torch.Tensor, "n_struct 3 3"]:
+    """Symmetric lattice of the same cell, rotated: its polar decomposition.
+
+    A matrix L is a rotation U times a symmetric matrix: the symmetric matrix
+    U P U^T, with P = (L^T L)^(1/2), has the lengths and the angles of L. It
+    is computed with a singular value decomposition, as in MatterGen, whose
+    diffusion keeps its lattices symmetric.
+
+    Args:
+        lattice: Lattice vectors as rows, shape (n_struct, 3, 3).
+
+    Returns:
+        Symmetric lattice vectors, shape (n_struct, 3, 3).
+
+    Examples:
+        >>> rows = [[0.0, 2.0, 0.0], [-3.0, 0.0, 0.0], [0.0, 0.0, 4.0]]
+        >>> lattice = torch.tensor([rows])
+        >>> symmetric = symmetric_lattice(lattice)
+        >>> torch.allclose(symmetric, symmetric.transpose(1, 2), atol=1e-6)
+        True
+        >>> symmetric.norm(dim=-1).round(decimals=4)
+        tensor([[2., 3., 4.]])
+    """
+    w, s, v_transposed = torch.linalg.svd(lattice)
+    v = v_transposed.transpose(1, 2)
+    rotation = w @ v_transposed
+    positive = v @ torch.diag_embed(s) @ v_transposed
+
+    return rotation @ positive @ rotation.transpose(1, 2)
+
+
 def cartesian(
     fractional: Float[torch.Tensor, "n 3"],
     lattice: Float[torch.Tensor, "n_struct 3 3"],
@@ -192,6 +225,7 @@ def periodic_pairs(
     ptr: Int[torch.Tensor, "n_struct+1"],
     radius: float | Float[torch.Tensor, "n_atoms"],
     pbc: Bool[torch.Tensor, "n_struct 3"] | None = None,
+    max_shift: int | None = None,
 ) -> tuple[
     Int[torch.Tensor, "n_pairs"],
     Int[torch.Tensor, "n_pairs"],
@@ -218,6 +252,10 @@ def periodic_pairs(
             the radius of a pair is then the sum of the ones of its two atoms.
         pbc: Whether each structure is periodic along each lattice vector,
             shape (n_struct, 3). Every structure is periodic by default.
+        max_shift: If given, only the images at most this number of cells
+            away along each lattice vector are listed. A flat cell has images
+            within the radius very far along the lattice vector of its small
+            height: their number is then bounded before they are listed.
 
     Returns:
         Index of the first atom, index of the second atom, image of the second
@@ -246,6 +284,16 @@ def periodic_pairs(
         ... )
         >>> shift.shape, shift[:, 2].abs().max().item()
         (torch.Size([9, 3]), 0)
+
+        A flat cell, 0.001 Å high: its images up to 2 cells away along the
+        third lattice vector, not the 3,500 within the radius.
+
+        >>> flat = torch.diag(torch.tensor([3.0, 3.0, 1e-3]))[None]
+        >>> source, target, shift, batch = periodic_pairs(
+        ...     torch.zeros(1, 3), flat, torch.tensor([0, 1]), 3.5, max_shift=2
+        ... )
+        >>> shift.shape, shift[:, 2].abs().max().item()
+        (torch.Size([45, 3]), 2)
     """
     device = x.device
 
@@ -284,7 +332,10 @@ def periodic_pairs(
     # images s of the target with |x[target] + s - x[source]| <= width
     delta = x[source] - x[target]
     low = torch.ceil(delta - width).long()
-    count = (torch.floor(delta + width).long() - low + 1).clamp(min=0)
+    high = torch.floor(delta + width).long()
+    if max_shift is not None:
+        low, high = low.clamp(min=-max_shift), high.clamp(max=max_shift)
+    count = (high - low + 1).clamp(min=0)
 
     if pbc is not None:
         # no image along a lattice vector which is not periodic

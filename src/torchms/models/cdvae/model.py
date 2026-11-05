@@ -102,9 +102,9 @@ class GemNetTDecoder(nn.Module):
         Float[torch.Tensor, "n_atoms 3"], Float[torch.Tensor, "n_atoms num_elements"]
     ]:
         """Vector in Å and scores of the elements of each atom, see GemNetT."""
-        h, move = self.gemnet(latent, element, graph, angles, bonds, vectors, cosine)
+        output = self.gemnet(latent, element, graph, angles, bonds, vectors, cosine)
 
-        return move, self.fc_atom(h)
+        return output.move, self.fc_atom(output.features)
 
 
 def sample_composition(

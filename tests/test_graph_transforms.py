@@ -871,6 +871,28 @@ def test_near_images_keeps_the_cells_around():
     assert near.triplets is None
 
 
+def test_radius_graph_bounds_the_images():
+    from torchms.graph.transforms import KeepNearImages
+
+    # in the cell, the same edges as KeepNearImages after the whole graph
+    structures = random_structure(torch.Generator().manual_seed(0), 3)
+    bounded = AddRadiusGraph(7.0, self_images=True, max_image_shift=1)(structures)
+    near = KeepNearImages(1)(AddRadiusGraph(7.0, self_images=True)(structures))
+    assert torch.equal(bounded.graph.edge_index, near.graph.edge_index)
+    assert torch.equal(bounded.graph.edge_shift, near.graph.edge_shift)
+
+    # a flat cell has its images up to the bound, not the thousands within the
+    # radius
+    flat = Structures(
+        lattice=torch.diag(torch.tensor([4.0, 4.0, 1e-3]))[None],
+        x=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+        z=[8, 26],
+    )
+    graph = AddRadiusGraph(7.0, self_images=True, max_image_shift=5)(flat).graph
+    assert graph.edge_shift[:, 2].abs().max() == 5
+    assert graph.num_edges.item() < 2000
+
+
 def test_mirror_edges_makes_a_graph_symmetric():
     from torchms.graph.line_graph import reverse_edges
     from torchms.graph.transforms import MirrorEdges

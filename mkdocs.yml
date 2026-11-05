@@ -98,6 +98,7 @@ nav:
       - Generative models:
           - CDVAE: models/cdvae.md
           - DiffCSP: models/diffcsp.md
+          - MatterGen: models/mattergen.md
       - Layers:
           - Bases: models/bases.md
           - CSPNet: models/cspnet.md
@@ -111,6 +112,7 @@ nav:
       - Periodicity: design/periodicity.md
       - Convex hull: design/hull.md
       - Energy estimator: design/estimator.md
+      - Classifier-free guidance: design/guidance.md
       - Loader and graph construction: design/loader.md
   - API reference:
       - torchms.data: reference/data.md
