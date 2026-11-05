@@ -3,8 +3,9 @@
 MatterGen is the diffusion model of crystals of Zeni, Pinsler, Zügner, Fowler, Horton, Fu
 et al. ([MatterGen](https://github.com/microsoft/mattergen), commit `9242366`, version
 1.0.3, MIT, [Nature 2025](https://doi.org/10.1038/s41586-025-08628-5)), in
-`torchms/models/mattergen/`. Eight of its nine published models are rewritten: the base model, which
-generates crystals of given numbers of atoms with their elements, without condition, and
+`torchms/models/mattergen/`. Its nine published models are rewritten: the base model, which
+generates crystals of given numbers of atoms with their elements, without condition, the
+same network trained on MP-20 alone (see [Trained on MP-20](#trained-on-mp-20)), and
 the models fine-tuned on a chemical system, a space group, the band gap, the magnetic
 density, a chemical system with the energy above the hull, the bulk modulus, and the
 magnetic density with the HHI score, which generate them with given elements or towards
@@ -24,7 +25,7 @@ these properties: see
 | Source | [MatterGen](https://github.com/microsoft/mattergen), commit `9242366` (1.0.3) |
 | License | MIT; its diffusion of the elements and its sampler are adapted from Google Research code under Apache-2.0 |
 | Paper | [A generative model for inorganic materials design](https://doi.org/10.1038/s41586-025-08628-5), Nature 639, 624 (2025), [arXiv:2312.03687](https://arxiv.org/abs/2312.03687) |
-| Weights | `mattergen-base`, of the authors (`mattergen_base` on [Hugging Face](https://huggingface.co/microsoft/mattergen)), trained on Alex-MP-20, 461 MB; `mattergen-chemical-system` (`chemical_system`), `mattergen-space-group` (`space_group`), `mattergen-dft-band-gap` (`dft_band_gap`), `mattergen-dft-mag-density` (`dft_mag_density`), `mattergen-chemical-system-energy-above-hull` (`chemical_system_energy_above_hull`) `mattergen-ml-bulk-modulus` (`ml_bulk_modulus`) and `mattergen-dft-mag-density-hhi-score` (`dft_mag_density_hhi_score`), fine-tuned from it, 512 MB each |
+| Weights | `mattergen-base`, of the authors (`mattergen_base` on [Hugging Face](https://huggingface.co/microsoft/mattergen)), trained on Alex-MP-20, 461 MB; `mattergen-mp-20-base` (`mp_20_base`), trained on MP-20, 461 MB; `mattergen-chemical-system` (`chemical_system`), `mattergen-space-group` (`space_group`), `mattergen-dft-band-gap` (`dft_band_gap`), `mattergen-dft-mag-density` (`dft_mag_density`), `mattergen-chemical-system-energy-above-hull` (`chemical_system_energy_above_hull`), `mattergen-ml-bulk-modulus` (`ml_bulk_modulus`) and `mattergen-dft-mag-density-hhi-score` (`dft_mag_density_hhi_score`), fine-tuned from the first one, 512 MB each |
 | Network | [GemNet-T](gemnet.md), 512 features, 4 blocks, 44.6 M parameters |
 | Transform | `AddRadiusGraph(7.0, max_image_shift=5)`, `KeepNearestNeighbors(50)`, `MirrorEdges()`, `AddTriplets()`, `AddBonds()` |
 | Difference with the original | a step of the sampling: identical, given the same scores and noise. The network: as near to MatterGen in double precision as MatterGen in single precision is, up to 1.6e-2 on the score of a lattice (values up to 5.6) |
@@ -90,10 +91,44 @@ categorical distribution of these logits. The noise of the last step is `element
 The number of atoms is not generated. MatterGen draws it from the numbers of atoms of its
 training set, a table of its code; `sample_num_atoms` draws from it: from 1 to 20 atoms.
 
-Not included: the base model trained on MP-20 alone, the prediction of a structure from
-its composition, the training, the fine-tuning, the datasets and the evaluation. The
-checkpoints hold only tensors and are read with `weights_only=True`. The configuration
-stored with them is checked: each model refuses the weights of every other one.
+Not included: the prediction of a structure from its composition, the training, the
+fine-tuning, the datasets and the evaluation. The checkpoints hold only tensors and are
+read with `weights_only=True`. The configuration stored with them is checked: each class
+refuses the weights of the other ones. `MatterGen` loads both base models, whose networks
+and configurations are the same.
+
+## Trained on MP-20
+
+The authors also publish the base model trained on MP-20 alone, the 45 thousand crystals
+of the Materials Project of at most 20 atoms, for its comparison with the other generative
+models of the paper. It is the same network with other weights:
+
+```{.python notest}
+model = MatterGen.from_pretrained("mattergen-mp-20-base", device="cuda")
+structures = model.sample(model.sample_num_atoms(64))
+```
+
+`sample_num_atoms` still draws as Alex-MP-20: MatterGen has no other table and samples
+this model with it too.
+
+With a generator of seed 0 on a GPU, the 8 crystals of the base model above take 171 s and
+have the compositions V3Se5, LiFe3F6, Nd2MgGa, Li2Mn4O5F7, Rb3Cu3H4O8, Cs2As (8 and 4
+atoms), Rh4V2Ga2 and RbCsTaCu5Se6, with 11 to 48 Å³ per atom.
+
+### Comparison with the original
+
+As for the base model, see [Comparison with the original](#comparison-with-the-original),
+on the 40 structures of the tests and a sampling of 4 crystals, where MatterGen generated
+LuNiCuSn, Ni3SnS4, Ce2 and Sn2P3As. These weights amplify the rounding less: the rewrite and
+MatterGen in single precision are 10 to 100 times nearer to MatterGen in double precision
+than with the weights of Alex-MP-20.
+
+| | |
+|---|---|
+| A step of the sampling, given its scores and its noise | identical |
+| Elements of the crystals MatterGen returns | identical |
+| Network, structures without noise (19, 82 atoms): coordinates, lattice, elements, largest / mean difference with MatterGen in double precision | 3.6e-5 / 2.0e-6, 1.4e-3 / 2.9e-5, 2.6e-3 / 9.2e-5; MatterGen in single precision 3.6e-5 / 2.2e-6, 1.4e-3 / 2.8e-5, 2.6e-3 / 1.0e-4 |
+| Network, structures with noise (31, 173 atoms): coordinates, lattice, elements, largest | 3.7e-4, 2.2e-4, 1.2e-3; MatterGen 3.2e-4, 1.4e-4, 2.1e-3 |
 
 ## Conditioned on a chemical system
 

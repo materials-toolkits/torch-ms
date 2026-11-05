@@ -137,6 +137,9 @@ model = MatterGen.from_pretrained(device="cuda")
 structures = model.sample(model.sample_num_atoms(64))   # 1000 steps, 2000 calls of the network
 ```
 
+`MatterGen.from_pretrained("mattergen-mp-20-base")` loads the same network trained on MP-20
+alone.
+
 `MatterGenChemicalSystem` generates them with given elements, one chemical system per crystal:
 
 ```{.python notest}

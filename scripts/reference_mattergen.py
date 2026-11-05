@@ -36,6 +36,8 @@ script is run once for each model, and finds which one it is given:
 
 * "~/.cache/torchms/mattergen/mattergen-base", the base model: the result is
   written to tests/data/mattergen_reference.npz;
+* "~/.cache/torchms/mattergen/mattergen-mp-20-base", the base model trained
+  on MP-20 alone: written to tests/data/mattergen_mp_20_base_reference.npz;
 * "~/.cache/torchms/mattergen/mattergen-chemical-system",
   "~/.cache/torchms/mattergen/mattergen-space-group",
   "~/.cache/torchms/mattergen/mattergen-dft-band-gap",
@@ -110,6 +112,12 @@ NUMBER_RANGES = {
 }
 GUIDANCE = 2.0
 
+# the output of each model without condition, by the directory of its weights
+BASE_OUTPUTS = {
+    "mattergen-base": "mattergen_reference.npz",
+    "mattergen-mp-20-base": "mattergen_mp_20_base_reference.npz",
+}
+
 
 def load_model(mattergen: Path, weights: Path):
     """DiffusionLightningModule of MatterGen, loaded from the directory of its weights."""
@@ -151,7 +159,8 @@ def chemgraphs(lattice, x, z, num_atoms):
 
 def conditions(model) -> list[str]:
     """Properties the model is conditioned on, in their order, none for the base model."""
-    return list(model.diffusion_module.model.property_embeddings_adapt)
+    # the denoiser of a base model has no adapters
+    return list(getattr(model.diffusion_module.model, "property_embeddings_adapt", {}))
 
 
 def batch_values(name: str, values: list):
@@ -547,6 +556,11 @@ def main():
 
     result = {}
     names = conditions(model)
+    output = (
+        f"mattergen_{'_'.join(names)}_reference.npz"
+        if names
+        else BASE_OUTPUTS[weights.resolve().name]
+    )
     if names:
         # every other structure with its own chemical system or space group,
         # or a number of a range, the other ones without condition
@@ -586,11 +600,6 @@ def main():
         result.update(sampling(model, mattergen))
         result.update(network_in_double(model, {"clean": batch, "noisy": noisy}, times))
 
-    output = (
-        f"mattergen_{'_'.join(names)}_reference.npz"
-        if names
-        else "mattergen_reference.npz"
-    )
     np.savez_compressed(DATA / output, **result)
     print("edges", result["graph_num_edges"].tolist())
     for name in ("clean_pred_x", "clean_pred_l", "noisy_pred_x", "noisy_pred_l"):

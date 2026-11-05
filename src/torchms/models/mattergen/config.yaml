@@ -21,6 +21,13 @@ checkpoints:
       sha256: 81668ee12afc1ee1b037f362420730de3460bfd2d36e547585fdcb911a3dfdef
     - url: https://huggingface.co/microsoft/mattergen/resolve/5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/mattergen_base/config.yaml
       sha256: 01648f40a8227b01b1dbc1090bf0f8229bb3241845ae9ac57af96b31e595bda7
+  # the same network trained on MP-20 alone, by the authors of MatterGen
+  # ("mp_20_base" in their checkpoints): loaded by MatterGen with this name
+  mattergen-mp-20-base:
+    - url: https://huggingface.co/microsoft/mattergen/resolve/5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/mp_20_base/checkpoints/last.ckpt
+      sha256: ffb80e4425a6f99f479a67b8cd111885d45117234e8947ff77eb3a55df420b9a
+    - url: https://huggingface.co/microsoft/mattergen/resolve/5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/mp_20_base/config.yaml
+      sha256: cf2798a87227fb332f5ff4cb7030149ea0099ffbd61bfe7b6da19a1290667d43
   # the base model fine-tuned on Alex-MP-20 with its chemical systems, all its
   # weights ("chemical_system" in their checkpoints)
   mattergen-chemical-system:

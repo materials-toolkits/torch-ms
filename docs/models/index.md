@@ -35,7 +35,7 @@ Models which generate structures.
 | [CDVAE](cdvae.md) | `CDVAE` | crystals of at most 20 atoms, from a latent vector | cdvae `f857f59`, MIT | **third party** | 4.0e-5 on the latent mean |
 | [DiffCSP](diffcsp.md) | `DiffCSP` | the lattice and the coordinates of a crystal, from its composition | DiffCSP `7121d15`, MIT | official | 7.6e-6 on the noise of the lattice |
 | [DiffCSP](diffcsp.md) | `DiffCSPGeneration` | crystals of given numbers of atoms, with their elements | DiffCSP `7121d15`, MIT | official | 5.7e-6 on the noise of the lattice |
-| [MatterGen](mattergen.md) | `MatterGen` | crystals of given numbers of atoms, with their elements, without condition | MatterGen `9242366`, MIT | official, base model | steps identical; the network as near to the original in double precision as the original (1.6e-2) |
+| [MatterGen](mattergen.md) | `MatterGen` | crystals of given numbers of atoms, with their elements, without condition | MatterGen `9242366`, MIT | official, base model, on Alex-MP-20 or MP-20 | steps identical; the network as near to the original in double precision as the original (1.6e-2) |
 | [MatterGen](mattergen.md#conditioned-on-a-chemical-system) | `MatterGenChemicalSystem` | crystals of given numbers of atoms and given elements | MatterGen `9242366`, MIT | official, fine-tuned on a chemical system | guidance and steps identical; the network within its rounding |
 | [MatterGen](mattergen.md#conditioned-on-a-space-group) | `MatterGenSpaceGroup` | crystals of given numbers of atoms, towards a space group | MatterGen `9242366`, MIT | official, fine-tuned on a space group | guidance and steps identical; the network within its rounding |
 | [MatterGen](mattergen.md#conditioned-on-a-band-gap) | `MatterGenBandGap` | crystals of given numbers of atoms, towards a band gap | MatterGen `9242366`, MIT | official, fine-tuned on the band gap from DFT | guidance and steps identical; the network within its rounding |
@@ -47,10 +47,10 @@ Models which generate structures.
 These are rewrites too, compared with the original code as the supervised models. The
 weights of CDVAE were not trained by its authors, who publish none: see its page. DiffCSP
 has two models with their own weights, one which is given the elements and one which
-generates them. Of MatterGen the base model and the ones conditioned on a chemical system, a
-space group, the band gap, the magnetic density, a chemical system with the energy
-above the hull, the bulk modulus, and the magnetic density with the HHI score are rewritten, not
-its base model trained on MP-20 alone. Its network amplifies the rounding of single precision a
+generates them. Of MatterGen every published model is rewritten: the base model, trained on Alex-MP-20
+or on MP-20 alone, and the ones conditioned on a chemical system, a space group, the band
+gap, the magnetic density, a chemical system with the energy above the hull, the bulk
+modulus, and the magnetic density with the HHI score. Its network amplifies the rounding of single precision a
 thousand times, see its page. Their training is not included.
 
 ## Pretrained models

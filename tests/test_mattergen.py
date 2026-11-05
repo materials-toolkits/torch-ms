@@ -45,6 +45,7 @@ from torchms.models.mattergen.properties import NoiseLevelEncoding, StandardScal
 
 DATA = Path(__file__).parent / "data"
 NAME = "mattergen-base"
+MP_20_NAME = "mattergen-mp-20-base"
 CHEMICAL_SYSTEM_NAME = "mattergen-chemical-system"
 SPACE_GROUP_NAME = "mattergen-space-group"
 BAND_GAP_NAME = "mattergen-dft-band-gap"
@@ -112,6 +113,7 @@ TIMES = torch.tensor([0.05, 0.7])
 def test_pinned_checkpoints(tmp_path):
     assert set(weights.CHECKPOINTS["mattergen"]) == {
         NAME,
+        MP_20_NAME,
         CHEMICAL_SYSTEM_NAME,
         SPACE_GROUP_NAME,
         BAND_GAP_NAME,
@@ -133,6 +135,7 @@ def test_pinned_checkpoints(tmp_path):
 
     for name, directory in (
         (NAME, "mattergen_base"),
+        (MP_20_NAME, "mp_20_base"),
         (CHEMICAL_SYSTEM_NAME, "chemical_system"),
         (SPACE_GROUP_NAME, "space_group"),
         (BAND_GAP_NAME, "dft_band_gap"),
@@ -1182,12 +1185,31 @@ def close_in_the_cell(found: torch.Tensor, expected: torch.Tensor) -> bool:
     return float(difference.abs().max()) < 1e-5
 
 
-@pytest.fixture(scope="module")
-def pretrained() -> MatterGen:
-    if not all(path.exists() for path in weights.checkpoint_paths("mattergen", NAME)):
-        pytest.skip(f"weights of {NAME} are not in the cache")
+# the weights of the models without condition, with what MatterGen computed
+BASE_REFERENCES = {
+    NAME: "mattergen_reference.npz",
+    MP_20_NAME: "mattergen_mp_20_base_reference.npz",
+}
 
-    return MatterGen.from_pretrained(NAME, device="cpu")
+
+@pytest.fixture(scope="module", params=sorted(BASE_REFERENCES))
+def base_weights(request) -> str:
+    return request.param
+
+
+@pytest.fixture(scope="module")
+def pretrained(base_weights) -> MatterGen:
+    if not all(
+        path.exists() for path in weights.checkpoint_paths("mattergen", base_weights)
+    ):
+        pytest.skip(f"weights of {base_weights} are not in the cache")
+
+    return MatterGen.from_pretrained(base_weights, device="cpu")
+
+
+@pytest.fixture(scope="module")
+def base_reference(base_weights) -> tuple[Structures, dict[str, torch.Tensor]]:
+    return reference(BASE_REFERENCES[base_weights])
 
 
 def test_pretrained_frequencies_are_the_ones_of_the_configuration(pretrained):
@@ -1199,9 +1221,9 @@ def test_pretrained_frequencies_are_the_ones_of_the_configuration(pretrained):
     assert not torch.equal(found, computed)
 
 
-def test_pretrained_graph_matches_mattergen(pretrained):
+def test_pretrained_graph_matches_mattergen(pretrained, base_reference):
     """The graph GemNet-T of MatterGen 9242366 builds, where its neighbours are defined."""
-    structures, expected = reference()
+    structures, expected = base_reference
     defined = ~neighbours_at_the_same_distance(structures)
     assert defined.sum() >= 15
 
@@ -1354,15 +1376,17 @@ def compare_network(
     assert (denoised.x - expected[f"{prefix}_pred_x"]).abs().mean() < 0.05
 
 
-def test_pretrained_network_matches_mattergen(pretrained):
+def test_pretrained_network_matches_mattergen(pretrained, base_reference):
     """The denoiser of MatterGen 9242366, on the structures at times from 0 to 1."""
-    structures, expected = reference()
+    structures, expected = base_reference
     compare_network(pretrained, structures, expected, "clean")
 
 
-def test_pretrained_network_matches_mattergen_on_noisy_structures(pretrained):
+def test_pretrained_network_matches_mattergen_on_noisy_structures(
+    pretrained, base_reference
+):
     """The same with the noise of the diffusion at the time of each structure."""
-    structures, expected = reference()
+    structures, expected = base_reference
     noisy_structures = Structures(
         lattice=expected["noisy_l"],
         x=expected["noisy_x"],
@@ -1412,9 +1436,9 @@ def recorded_noise(expected: dict[str, torch.Tensor], step: int) -> StepNoise:
     )
 
 
-def test_pretrained_steps_match_mattergen(pretrained):
+def test_pretrained_steps_match_mattergen(pretrained, base_reference):
     """Steps of the sampling of MatterGen, each from its crystals, its scores and its noise."""
-    _, expected = reference()
+    _, expected = base_reference
     check_steps(pretrained, expected)
 
 
@@ -1467,9 +1491,9 @@ def check_steps(pretrained: MatterGen, expected: dict[str, torch.Tensor]) -> Non
     assert close(final.lattice, expected["mean_l"])
 
 
-def test_pretrained_scores_of_the_sampling_match_mattergen(pretrained):
+def test_pretrained_scores_of_the_sampling_match_mattergen(pretrained, base_reference):
     """Scores of the crystals of the sampling of MatterGen, where their graphs are defined."""
-    _, expected = reference()
+    _, expected = base_reference
     assert compare_sampling_scores(pretrained, expected, "score") >= 2
 
 
