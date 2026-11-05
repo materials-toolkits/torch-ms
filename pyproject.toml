@@ -59,6 +59,8 @@ testpaths = [
     "src",
 ]
 addopts = "--doctest-modules --markdown-docs-syntax=superfences"
+# the shared helpers of the tests: from helpers.compare import assert_close
+pythonpath = ["tests"]
 timeout = 3
 
 [tool.pyright]

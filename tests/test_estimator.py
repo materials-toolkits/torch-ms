@@ -1,6 +1,5 @@
 """Tests for the estimation of the total energy with a pretrained model."""
 
-import math
 from pathlib import Path
 
 import h5py
@@ -17,11 +16,6 @@ from torchms.models.estimator.energy import atom_batches, to_device
 from torchms.models.orb import Config
 from torchms.models.orb.model import InvalidWeights, ZBLBasis, build_mlp
 from torchms.graph.graph import Graph
-from torchms.models.layers.basis import (
-    BesselBasis,
-    polynomial_cutoff,
-    spherical_harmonics,
-)
 
 
 def predict(model, structures: Structures) -> torch.Tensor:
@@ -84,80 +78,6 @@ def test_pinned_checkpoints():
 
 
 # building blocks of the network
-
-
-def test_polynomial_cutoff():
-    distance = torch.linspace(0.0, 8.0, 801, dtype=torch.float64)
-    envelope = polynomial_cutoff(distance, 6.0, p=4)
-
-    assert envelope[0] == 1.0
-    assert (envelope[distance >= 6.0] == 0.0).all()
-    assert ((envelope >= 0.0) & (envelope <= 1.0)).all()
-    assert (envelope[1:] <= envelope[:-1] + 1e-12).all()
-    # smooth at the radius: value and slope go to zero
-    assert envelope[599] < 1e-5
-
-    radius = torch.tensor([2.0, 4.0])
-    per_edge = polynomial_cutoff(torch.tensor([3.0, 3.0]), radius, p=6)
-    assert per_edge[0] == 0.0 and 0.0 < per_edge[1] < 1.0
-
-
-def test_spherical_harmonics_norms_and_parity():
-    generator = torch.Generator().manual_seed(0)
-    vectors = torch.randn(50, 3, generator=generator, dtype=torch.float64)
-    harmonics = spherical_harmonics(vectors)
-
-    assert harmonics.shape == (50, 16)
-    start = 0
-    for degree in range(4):
-        block = harmonics[:, start : start + 2 * degree + 1]
-        expected = torch.full((50,), 2.0 * degree + 1, dtype=torch.float64)
-        assert torch.allclose(block.square().sum(dim=1), expected)
-        # parity of the degree
-        opposite = spherical_harmonics(-vectors)[:, start : start + 2 * degree + 1]
-        assert torch.allclose(opposite, (-1) ** degree * block)
-        start += 2 * degree + 1
-
-    # only the direction matters
-    assert torch.allclose(spherical_harmonics(3.0 * vectors), harmonics)
-    # degree 1 is the direction, in the order x, y, z
-    unit = torch.nn.functional.normalize(vectors, dim=1)
-    assert torch.allclose(harmonics[:, 1:4], math.sqrt(3.0) * unit)
-
-
-def test_spherical_harmonics_rotation():
-    generator = torch.Generator().manual_seed(1)
-    vectors = torch.randn(20, 3, generator=generator, dtype=torch.float64)
-    rotation = torch.linalg.qr(
-        torch.randn(3, 3, generator=generator, dtype=torch.float64)
-    )[0]
-
-    harmonics = spherical_harmonics(vectors)
-    rotated = spherical_harmonics(vectors @ rotation)
-
-    # a rotation mixes the harmonics of a degree: scalar products are kept
-    start = 0
-    for degree in range(4):
-        block = slice(start, start + 2 * degree + 1)
-        assert torch.allclose(
-            harmonics[:, block] @ harmonics[:, block].T,
-            rotated[:, block] @ rotated[:, block].T,
-            atol=1e-10,
-        )
-        start += 2 * degree + 1
-
-
-def test_bessel_basis():
-    basis = BesselBasis(r_max=6.0, num_bases=8)
-    distance = torch.tensor([1.0, 3.0, 6.0])
-    values = basis(distance)
-
-    assert values.shape == (3, 8)
-    expected = math.sqrt(2.0 / 6.0) * math.sin(2 * math.pi * 3.0 / 6.0) / 3.0
-    assert torch.isclose(values[1, 1], torch.tensor(expected), atol=1e-6)
-    # every function is zero at the radius
-    assert values[2].abs().max() < 1e-6
-    assert set(basis.state_dict()) == {"bessel_weights", "r_max", "prefactor"}
 
 
 def test_build_mlp_names():

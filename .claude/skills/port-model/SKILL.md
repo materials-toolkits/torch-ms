@@ -10,9 +10,10 @@ which loads the official weights and gives the same numbers as the original code
 original package never becomes a dependency: it is run once, outside of the project, to
 produce reference values the tests compare against.
 
-Six ports exist already, each in `src/torchms/models/<name>/`: orb-v3, MACE, M3GNet, CHGNet
-and ALIGNN, which predict an energy, and CDVAE, a generative model with two networks and two
-graphs. They are the worked examples of everything below. A new port is a new directory
+Eight ports exist already, each in `src/torchms/models/<name>/`: orb-v3, MACE, M3GNet,
+CHGNet and ALIGNN, which predict an energy or a property, and CDVAE, DiffCSP and MatterGen,
+generative models (MatterGen with its fine-tuned models). They are the worked examples of
+everything below. A new port is a new directory
 there; what it shares with other models goes to `src/torchms/models/layers/`.
 
 Follow the steps in order. The first three are reading, not writing: most of the bad ports
@@ -385,6 +386,39 @@ The test finds these structures itself, from the graph of the port (the last nei
 kept and the first one left out at the same length, see
 `neighbours_at_the_same_distance` in `tests/test_cdvae.py`), asserts that enough
 structures remain, and still checks loosely the other ones.
+
+**Layer tests.** A layer of `src/torchms/models/layers/` gets its own tests in
+`tests/models/layers/test_<layer>.py`, against the original with real weights:
+`tests/references/reference_layers_<model>.py` records what each layer of the original received and
+returned, with `LayerRecorder` of `tests/references/_reference_layers.py` (the first call of each
+named submodule, a tensor given to several layers kept once), and writes
+`tests/data/layers/<model>_<layer>.npz`. Keep one instance of each layer class and two or
+three small structures: about 2 MB per file. Each test gives one torchms layer, loaded from
+the same checkpoint, the recorded inputs, and compares its outputs. Run the layers **on the
+graph of the original**, rebuilt from its recorded edges, vectors and lengths
+(`Graph.from_edges`; `tests/helpers/gemnet.py` for GemNet-T): per-edge features compare row
+by row, ties between neighbours cannot change the edges, and the geometry is the same to
+the bit, so each layer is held to 1e-5 of its largest value, with no rounding
+amplification. Rows the original orders otherwise (triplets) are matched by
+`helpers.matching.permutation`. Check that each test fails when a weight of its layer is
+changed by 1e-3. A sum whose terms cancel (the move of an atom over its edges) is held to
+the size of its terms, with `scale=` and the reason written next to it. A layer which adds
+a small update to a large input (the last layer of CSPNet: 350 on 50000) hides an error of
+the update: record its inner networks too, and compare what the layer gives them
+(`helpers.references.submodule_inputs`). A difference which is the rounding of float32 is
+proven against the layer in float64, and the test says it: the spherical Bessel functions
+of DimeNet++ on bonds under 2 Å are held to be as near to float64 as the original, the
+other ones to 1e-5.
+
+The layer tests are `tests/models/layers/test_<module>.py`, one per module of
+`models/layers`: `test_gemnet.py` (MatterGen and cdvae), `test_dimenet.py` (cdvae),
+`test_cspnet.py` (both models of DiffCSP), `test_basis.py`, and `test_networks.py` for
+the two networks to train, which have no original.
+
+The shared helpers are in `tests/helpers/` (`pythonpath = ["tests"]`): `references`
+(`load_reference`, `Reference.call(module)`, `reference_structures`), `weights`
+(`pretrained`, `cached_or_skip`), `compare` (`assert_close`), `matching`, `paths`. Use
+them in new tests rather than copying the helpers of an existing test file.
 
 Tests with random weights need inputs the network can read: random weights which decode a
 cell give a flat one. Set the buffers which scale an output to plausible values in the

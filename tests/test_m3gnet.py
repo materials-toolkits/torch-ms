@@ -1,12 +1,10 @@
 """Tests for the rewrite of the energy prediction of M3GNet."""
 
-import math
 from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
-from scipy.special import spherical_jn
 
 from torchms.data import Structures, parse_cif
 from torchms.data.augmentation import (
@@ -18,12 +16,6 @@ from torchms.data.augmentation import (
 )
 from torchms.models.estimator import weights
 from torchms.models.m3gnet import Config, InvalidWeights, M3GNet
-from torchms.models.layers.basis import (
-    SphericalBesselBasis,
-    legendre,
-    spherical_bessel,
-    spherical_bessel_roots,
-)
 
 
 def predict(model, structures: Structures) -> torch.Tensor:
@@ -75,64 +67,6 @@ def test_pinned_checkpoints(tmp_path):
 
 
 # bases
-
-
-def test_spherical_bessel_roots():
-    roots = spherical_bessel_roots(4, 5)
-
-    assert roots.shape == (4, 5)
-    for degree in range(4):
-        assert np.allclose(spherical_jn(degree, roots[degree]), 0.0, atol=1e-10)
-        assert (np.diff(roots[degree]) > 0).all()
-    # the first roots, not later ones
-    assert np.allclose(roots[:, 0], [math.pi, 4.493409, 5.763459, 6.987932], atol=1e-5)
-
-
-def test_spherical_bessel():
-    x = torch.linspace(0.3, 15.0, 50, dtype=torch.float64)
-    functions = spherical_bessel(4, x)
-
-    assert len(functions) == 5
-    for degree, values in enumerate(functions):
-        assert np.allclose(values.numpy(), spherical_jn(degree, x.numpy()), atol=1e-9)
-
-
-def test_legendre():
-    cosine = torch.linspace(-1.0, 1.0, 9, dtype=torch.float64)
-    harmonics = legendre(3, cosine)
-
-    assert harmonics.shape == (9, 3)
-    expected = torch.stack(
-        [
-            torch.full_like(cosine, math.sqrt(1 / (4 * math.pi))),
-            math.sqrt(3 / (4 * math.pi)) * cosine,
-            math.sqrt(5 / (16 * math.pi)) * (3 * cosine**2 - 1),
-        ],
-        dim=-1,
-    )
-    assert torch.allclose(harmonics, expected)
-
-
-def test_radial_basis_is_orthonormal():
-    config = Config.load()
-    basis = SphericalBesselBasis(
-        config.model.max_l, config.model.max_n, config.graph.radius
-    ).double()
-    distance = torch.linspace(1e-4, config.graph.radius, 20001, dtype=torch.float64)
-    values = basis(distance)
-
-    assert values.shape == (len(distance), config.model.max_l * config.model.max_n)
-
-    # functions of the same degree are orthonormal for the measure r^2 dr
-    weight = distance**2 * (distance[1] - distance[0])
-    for degree in range(config.model.max_l):
-        block = values[
-            :, degree * config.model.max_n : (degree + 1) * config.model.max_n
-        ]
-        gram = block.T @ (block * weight.unsqueeze(-1))
-        assert torch.allclose(
-            gram, torch.eye(config.model.max_n, dtype=torch.float64), atol=1e-3
-        )
 
 
 # the model with random weights
@@ -250,12 +184,6 @@ def reference_structures() -> tuple[Structures, dict[str, np.ndarray]]:
         num_atoms=torch.from_numpy(data["num_atoms"]),
     )
     return structures, dict(np.load(DATA / "m3gnet_reference.npz"))
-
-
-def test_bessel_roots_match_matgl():
-    _, data = reference_structures()
-
-    assert np.allclose(spherical_bessel_roots(4, 4), data["bessel_roots"], atol=1e-5)
 
 
 @pytest.fixture(scope="module")

@@ -23,7 +23,6 @@ from torchms.models.diffcsp import (
     InvalidWeights,
 )
 from torchms.models.estimator import weights
-from torchms.models.layers import periodic_fourier, sinusoidal_embedding
 
 DATA = Path(__file__).parent / "data"
 NAME = "diffcsp-mp20"
@@ -86,35 +85,6 @@ def test_pinned_checkpoints(tmp_path):
 
 
 # the bases
-
-
-def test_periodic_fourier():
-    x = torch.rand(7, 3, generator=generator())
-    basis = periodic_fourier(x, 5)
-
-    assert basis.shape == (7, 30)
-    # sines then cosines, by coordinate then by frequency
-    assert torch.allclose(basis[:, 15::5], torch.ones(7, 3))
-    assert torch.allclose(basis[:, 6], torch.sin(2 * torch.pi * x[:, 1]), atol=1e-6)
-    assert torch.allclose(basis[:, 27], torch.cos(4 * torch.pi * x[:, 2]), atol=1e-6)
-
-    # of period 1
-    shift = torch.tensor([[1.0, -2.0, 3.0]])
-    assert torch.allclose(periodic_fourier(x + shift, 5), basis, atol=1e-4)
-
-    assert periodic_fourier(x.double(), 5).dtype == torch.float64
-
-
-def test_sinusoidal_embedding():
-    time = torch.tensor([0, 1, 500])
-    embedding = sinusoidal_embedding(time, 16, 10000.0)
-
-    assert embedding.shape == (3, 16)
-    assert torch.equal(embedding[0], torch.tensor([0.0] * 8 + [1.0] * 8))
-    # frequencies from 1 to 1 / max_period
-    assert torch.allclose(embedding[1, [0, 7]], torch.tensor([1.0, 1e-4]).sin())
-    assert torch.allclose(embedding[:, :8] ** 2 + embedding[:, 8:] ** 2, torch.ones(8))
-    assert torch.equal(sinusoidal_embedding(time.float(), 16, 10000.0), embedding)
 
 
 # the schedules of the noise

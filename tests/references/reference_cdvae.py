@@ -116,8 +116,11 @@ def load_model(cdvae: Path, weights: Path):
     return model.eval()
 
 
-def load_batch(max_atoms: int):
-    """Structures of the tests as a batch of cdvae, with their CrystalNN graphs."""
+def load_batch(max_atoms: int, indices=None):
+    """Structures of the tests as a batch of cdvae, with their CrystalNN graphs.
+
+    The ones of at most max_atoms atoms, or the ones of indices, in this order.
+    """
     from cdvae.common.data_utils import build_crystal_graph
     from pymatgen.core import Lattice, Structure
     from torch_geometric.data import Batch, Data
@@ -126,7 +129,7 @@ def load_batch(max_atoms: int):
     ptr = np.concatenate([[0], np.cumsum(data["num_atoms"])])
 
     index, graphs = [], []
-    for i in range(len(data["num_atoms"])):
+    for i in range(len(data["num_atoms"])) if indices is None else indices:
         if data["num_atoms"][i] > max_atoms:
             continue
 
