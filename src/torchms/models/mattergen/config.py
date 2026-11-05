@@ -199,6 +199,8 @@ class Config(YamlConfig):  # pylint: disable=too-many-instance-attributes
             chemical system and the energy above the hull has of its own.
         ml_bulk_modulus: What the model conditioned on a bulk modulus has of
             its own.
+        dft_mag_density_hhi_score: What the model conditioned on a magnetic
+            density and the HHI score has of its own.
     """
 
     graph: GraphConfig
@@ -215,6 +217,7 @@ class Config(YamlConfig):  # pylint: disable=too-many-instance-attributes
     dft_mag_density: ConditionConfig
     chemical_system_energy_above_hull: ConditionConfig
     ml_bulk_modulus: ConditionConfig
+    dft_mag_density_hhi_score: ConditionConfig
 
     def condition(self, name: str) -> ConditionConfig:
         """What a fine-tuned model has of its own.

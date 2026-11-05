@@ -3,26 +3,28 @@
 MatterGen is the diffusion model of crystals of Zeni, Pinsler, Zügner, Fowler, Horton, Fu
 et al. ([MatterGen](https://github.com/microsoft/mattergen), commit `9242366`, version
 1.0.3, MIT, [Nature 2025](https://doi.org/10.1038/s41586-025-08628-5)), in
-`torchms/models/mattergen/`. Seven of its models are rewritten: the base model, which
+`torchms/models/mattergen/`. Eight of its nine published models are rewritten: the base model, which
 generates crystals of given numbers of atoms with their elements, without condition, and
 the models fine-tuned on a chemical system, a space group, the band gap, the magnetic
-density, a chemical system with the energy above the hull, and the bulk modulus, which
-generate them with given elements or towards these properties: see
+density, a chemical system with the energy above the hull, the bulk modulus, and the
+magnetic density with the HHI score, which generate them with given elements or towards
+these properties: see
 [Conditioned on a chemical system](#conditioned-on-a-chemical-system),
 [Conditioned on a space group](#conditioned-on-a-space-group),
 [Conditioned on a band gap](#conditioned-on-a-band-gap),
 [Conditioned on a magnetic density](#conditioned-on-a-magnetic-density),
-[Conditioned on a chemical system and the energy above the hull](#conditioned-on-a-chemical-system-and-the-energy-above-the-hull)
-and [Conditioned on a bulk modulus](#conditioned-on-a-bulk-modulus).
+[Conditioned on a chemical system and the energy above the hull](#conditioned-on-a-chemical-system-and-the-energy-above-the-hull),
+[Conditioned on a bulk modulus](#conditioned-on-a-bulk-modulus) and
+[Conditioned on a magnetic density and the HHI score](#conditioned-on-a-magnetic-density-and-the-hhi-score).
 
 | | |
 |---|---|
-| Class | `MatterGen`; `MatterGenChemicalSystem` for a chemical system, `MatterGenSpaceGroup` for a space group, `MatterGenBandGap` for a band gap, `MatterGenMagneticDensity` for a magnetic density, `MatterGenChemicalSystemEnergyAboveHull` for both, `MatterGenBulkModulus` for a bulk modulus |
+| Class | `MatterGen`; `MatterGenChemicalSystem` for a chemical system, `MatterGenSpaceGroup` for a space group, `MatterGenBandGap` for a band gap, `MatterGenMagneticDensity` for a magnetic density, `MatterGenChemicalSystemEnergyAboveHull` for both, `MatterGenBulkModulus` for a bulk modulus, `MatterGenMagneticDensityHHIScore` for a magnetic density and an HHI score |
 | Does | samples the elements, the lattice and the coordinates of crystals of given numbers of atoms |
 | Source | [MatterGen](https://github.com/microsoft/mattergen), commit `9242366` (1.0.3) |
 | License | MIT; its diffusion of the elements and its sampler are adapted from Google Research code under Apache-2.0 |
 | Paper | [A generative model for inorganic materials design](https://doi.org/10.1038/s41586-025-08628-5), Nature 639, 624 (2025), [arXiv:2312.03687](https://arxiv.org/abs/2312.03687) |
-| Weights | `mattergen-base`, of the authors (`mattergen_base` on [Hugging Face](https://huggingface.co/microsoft/mattergen)), trained on Alex-MP-20, 461 MB; `mattergen-chemical-system` (`chemical_system`), `mattergen-space-group` (`space_group`), `mattergen-dft-band-gap` (`dft_band_gap`), `mattergen-dft-mag-density` (`dft_mag_density`), `mattergen-chemical-system-energy-above-hull` (`chemical_system_energy_above_hull`) and `mattergen-ml-bulk-modulus` (`ml_bulk_modulus`), fine-tuned from it, 512 MB each |
+| Weights | `mattergen-base`, of the authors (`mattergen_base` on [Hugging Face](https://huggingface.co/microsoft/mattergen)), trained on Alex-MP-20, 461 MB; `mattergen-chemical-system` (`chemical_system`), `mattergen-space-group` (`space_group`), `mattergen-dft-band-gap` (`dft_band_gap`), `mattergen-dft-mag-density` (`dft_mag_density`), `mattergen-chemical-system-energy-above-hull` (`chemical_system_energy_above_hull`) `mattergen-ml-bulk-modulus` (`ml_bulk_modulus`) and `mattergen-dft-mag-density-hhi-score` (`dft_mag_density_hhi_score`), fine-tuned from it, 512 MB each |
 | Network | [GemNet-T](gemnet.md), 512 features, 4 blocks, 44.6 M parameters |
 | Transform | `AddRadiusGraph(7.0, max_image_shift=5)`, `KeepNearestNeighbors(50)`, `MirrorEdges()`, `AddTriplets()`, `AddBonds()` |
 | Difference with the original | a step of the sampling: identical, given the same scores and noise. The network: as near to MatterGen in double precision as MatterGen in single precision is, up to 1.6e-2 on the score of a lattice (values up to 5.6) |
@@ -88,12 +90,10 @@ categorical distribution of these logits. The noise of the last step is `element
 The number of atoms is not generated. MatterGen draws it from the numbers of atoms of its
 training set, a table of its code; `sample_num_atoms` draws from it: from 1 to 20 atoms.
 
-Not included: the models conditioned on the other properties (bulk modulus, and magnetic
-density with HHI score), the model of MP-20 and the
-prediction of a structure from its composition, the training, the fine-tuning, the datasets
-and the evaluation. The checkpoints hold only tensors and are read with
-`weights_only=True`. The configuration stored with them is checked: each model refuses the
-weights of the other one and of the models conditioned on other properties.
+Not included: the base model trained on MP-20 alone, the prediction of a structure from
+its composition, the training, the fine-tuning, the datasets and the evaluation. The
+checkpoints hold only tensors and are read with `weights_only=True`. The configuration
+stored with them is checked: each model refuses the weights of every other one.
 
 ## Conditioned on a chemical system
 
@@ -371,6 +371,54 @@ HgNb and Re2Os4.
 | Elements of the crystals MatterGen returns | identical |
 | Network, conditioned structures without noise (12, 56 atoms): coordinates, lattice, elements, largest / mean difference with MatterGen in double precision | 1.5e-3 / 9.6e-5, 1.2e-2 / 2.4e-4, 5.8e-2 / 3.3e-3; MatterGen in single precision 1.5e-3 / 9.9e-5, 1.2e-2 / 2.6e-4, 9.5e-2 / 3.4e-3 |
 | Network, conditioned structures with noise (14, 66 atoms): coordinates, lattice, elements, largest | 4.4e-4, 4.6e-4, 5.0e-3; MatterGen 6.6e-4, 4.6e-4, 8.7e-3 |
+
+## Conditioned on a magnetic density and the HHI score
+
+`MatterGenMagneticDensityHHIScore` is MatterGen fine-tuned on two numbers together: the
+magnetic density from DFT, as `MatterGenMagneticDensity`, and the HHI score, the
+Herfindahl–Hirschman index of the production of the elements of a crystal, from 0 to 10000:
+low when its elements are produced in many countries, high when a few countries produce
+them. The network has an adapter per property, as
+`MatterGenChemicalSystemEnergyAboveHull`; each number is standardized by the statistics of
+the training set in the weights (0.0042 and 0.0158 for the density, 3561 and 1548 for the HHI
+score) and embedded as the band gap. Both are followed, not imposed, and either can be left
+without condition with `None`.
+
+```{.python notest}
+from torchms.models import MatterGenMagneticDensityHHIScore
+
+model = MatterGenMagneticDensityHHIScore.from_pretrained(device="cuda")
+guidance = model.guidance([0.15] * 8, [1000.0] * 8)   # densities, HHI scores; factor 2
+structures = model.sample(model.sample_num_atoms(8), guidance=guidance)
+model.guidance([0.15] * 8, None)                       # the density alone
+```
+
+With a generator of seed 0, 16 crystals asked at a magnetic density of 0.15, 8 with an HHI
+score of 1000 and 8 with 5000, take 553 s on a GPU of 8 GB. All have a magnetic element. The
+ones asked at 1000 are all oxides and hydrides of iron (FeO, Fe3O2, MgFe6O7, Mg2Fe7O9, FeH,
+LiFe(OH)3…); the ones asked at 5000 are compounds of europium and gadolinium with platinum,
+rhodium and iridium (Gd3Pt, Eu3Ir, Gd8Rh9, Gd2PtRh…), and one Fe3Rh2. The HHI of the
+production of pymatgen 2024.6.10 has a median of 2097 for the first ones (4 of 8: it has no
+value for hydrogen) and of 7992 for the second ones. The table of MatterGen may not be the
+one of pymatgen, and the magnetic density was not computed: an indication, not a measure.
+
+### Comparison with the original
+
+As for the other fine-tuned models: every other structure of the tests conditioned on a
+magnetic density from 0 to 0.2 and an HHI score from 500 to 8000, and the guided sampling of
+4 crystals towards 0, 0.05, 0.15 and 0.3 with HHI scores of 1000, 1500, 3000 and 6000, where
+MatterGen generated LiAlAu2, Mn4Au4, GdEu and Fe5Ir.
+
+| | |
+|---|---|
+| Mixed scores of the guidance, and a step of the guided sampling given its scores and its noise | identical |
+| Elements of the crystals MatterGen returns | identical |
+| Network, conditioned structures without noise (12, 56 atoms): coordinates, lattice, elements, largest / mean difference with MatterGen in double precision | 1.0e-3 / 6.9e-5, 1.2e-2 / 3.0e-4, 8.3e-2 / 4.2e-3; MatterGen in single precision 7.8e-4 / 5.6e-5, 1.2e-2 / 2.2e-4, 7.5e-2 / 2.9e-3 |
+| Network, conditioned structures with noise (14, 74 atoms): coordinates, lattice, elements, largest / mean | 8.1e-4 / 7.5e-5, 3.5e-2 / 1.3e-3, 7.4e-1 / 3.7e-2; MatterGen 8.2e-4 / 7.1e-5, 3.5e-2 / 1.3e-3, 4.2e-1 / 2.8e-2 |
+
+As for the energy above the hull, the scores of the elements of the noisy structures are up
+to twice as far from MatterGen in double precision as MatterGen is; the tests accept them as
+within what a change of the last bits of the inputs does to the rewrite.
 
 ## Comparison with the original
 

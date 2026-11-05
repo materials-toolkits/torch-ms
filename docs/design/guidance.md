@@ -45,7 +45,7 @@ can only take the elements of the system.
 
 ## The range of a number
 
-A number (band gap, magnetic density, energy above the hull, bulk modulus) is standardized
+A number (band gap, magnetic density, energy above the hull, bulk modulus, HHI score) is standardized
 by the mean and the deviation of the training set, which are in the weights, then embedded
 by sines and cosines as the time. The bulk modulus is standardized after its decimal
 logarithm, as in MatterGen: its statistics are the ones of the logarithms, and it must be
@@ -58,6 +58,7 @@ saw, and the guidance stops meaning anything.
 | Magnetic density | 0.0042 | 0.0158 | none given by MatterGen |
 | Energy above the hull | 0.046 | 0.030 | eV/atom |
 | Bulk modulus, decimal logarithm | 1.708 (51 GPa) | 0.364 (a factor of 2.3) | GPa |
+| HHI score | 3561 | 1548 | from 0 to 10000 |
 
 For the energy above the hull, this was measured. `MatterGenChemicalSystemEnergyAboveHull`
 sampled 8 crystals of 8 chemical systems at 0, 0.2, 0.5 and 1 eV/atom, with a generator of
@@ -102,3 +103,6 @@ Eight crystals per value, single draws, unrelaxed energies: a direction, not a m
   no model of either. The bulk modulus is followed up to 400 GPa, 2.5 deviations of its
   logarithm from the mean: crystals asked at 400 GPa have a median of 347 GPa, estimated
   without relaxation (see [MatterGen](../models/mattergen.md#conditioned-on-a-bulk-modulus)).
+  The HHI score moves with its target: asked at 1000 and 5000, the medians of the HHI of
+  pymatgen are 2097 and 7992 (see
+  [MatterGen](../models/mattergen.md#conditioned-on-a-magnetic-density-and-the-hhi-score)).

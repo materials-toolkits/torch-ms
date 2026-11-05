@@ -36,6 +36,7 @@ from torchms.models.mattergen import (
     MatterGenChemicalSystem,
     MatterGenChemicalSystemEnergyAboveHull,
     MatterGenMagneticDensity,
+    MatterGenMagneticDensityHHIScore,
     MatterGenSpaceGroup,
     StepNoise,
 )
@@ -50,6 +51,7 @@ BAND_GAP_NAME = "mattergen-dft-band-gap"
 MAGNETIC_DENSITY_NAME = "mattergen-dft-mag-density"
 ENERGY_ABOVE_HULL_NAME = "mattergen-chemical-system-energy-above-hull"
 BULK_MODULUS_NAME = "mattergen-ml-bulk-modulus"
+HHI_SCORE_NAME = "mattergen-dft-mag-density-hhi-score"
 
 # a network of 512 features on 50 neighbours per atom and their triplets:
 # slower than the default timeout
@@ -116,6 +118,7 @@ def test_pinned_checkpoints(tmp_path):
         MAGNETIC_DENSITY_NAME,
         ENERGY_ABOVE_HULL_NAME,
         BULK_MODULUS_NAME,
+        HHI_SCORE_NAME,
     }
     assert Config.load().default_weights == NAME
     assert Config.load().chemical_system.default_weights == CHEMICAL_SYSTEM_NAME
@@ -126,6 +129,7 @@ def test_pinned_checkpoints(tmp_path):
     joint = MatterGenChemicalSystemEnergyAboveHull()
     assert joint.default_weights() == ENERGY_ABOVE_HULL_NAME
     assert MatterGenBulkModulus().default_weights() == BULK_MODULUS_NAME
+    assert MatterGenMagneticDensityHHIScore().default_weights() == HHI_SCORE_NAME
 
     for name, directory in (
         (NAME, "mattergen_base"),
@@ -135,6 +139,7 @@ def test_pinned_checkpoints(tmp_path):
         (MAGNETIC_DENSITY_NAME, "dft_mag_density"),
         (ENERGY_ABOVE_HULL_NAME, "chemical_system_energy_above_hull"),
         (BULK_MODULUS_NAME, "ml_bulk_modulus"),
+        (HHI_SCORE_NAME, "dft_mag_density_hhi_score"),
     ):
         for checkpoint in weights.CHECKPOINTS["mattergen"][name]:
             # a commit of the repository of the authors, not a branch
@@ -1076,6 +1081,42 @@ def test_joint_load_pretrained(joint_model, conditional):
         MatterGenChemicalSystem(conditional.config).load_pretrained(state)
 
 
+def test_two_numbers(band_gap_model):
+    # the magnetic density and the HHI score: two numbers, each its own adapter
+    model = MatterGenMagneticDensityHHIScore(narrow()).eval().requires_grad_(False)
+    assert model.CONDITIONS == ("dft_mag_density", "hhi_score")
+    assert model.gemnet.config.conditions == ("dft_mag_density", "hhi_score")
+
+    guidance = model.guidance([0.15, 0.0], [1000.0, 6000.0])
+    densities, scores = guidance.values
+    assert densities is not None and scores is not None
+    assert torch.equal(scores, torch.tensor([1000.0, 6000.0]))
+    assert guidance.scale == 2.0
+    with pytest.raises(ValueError, match="finite"):
+        model.guidance([0.15], [float("inf")])
+
+    structures = model.transform()(make_batch())
+    free = model(structures, TIMES)
+    both = model(structures, TIMES, guidance.values)
+    density_only = model(structures, TIMES, (densities, None))
+    score_only = model(structures, TIMES, (None, scores))
+    first = structures.batch == 0
+    assert not torch.allclose(both.x[first], density_only.x[first])
+    assert not torch.allclose(score_only.x[first], free.x[first])
+    assert torch.equal(both.logits > -1e9, free.logits > -1e9)
+
+    state = upstream_state(model)
+    prefix = "diffusion_module.model.property_embeddings_adapt."
+    assert prefix + "hhi_score.scaler.stds" in state
+    model.load_pretrained(
+        state, nested(Config.load().upstream_sections("dft_mag_density_hhi_score"))
+    )
+    with pytest.raises(InvalidWeights, match="Unexpected"):
+        MatterGenMagneticDensity(narrow()).load_pretrained(state)
+    with pytest.raises(InvalidWeights, match="Missing"):
+        model.load_pretrained(upstream_state(band_gap_model))
+
+
 # the pretrained model against the real MatterGen
 
 
@@ -1487,6 +1528,7 @@ FINE_TUNED = {
         ENERGY_ABOVE_HULL_NAME,
     ),
     "ml_bulk_modulus": (MatterGenBulkModulus, BULK_MODULUS_NAME),
+    "dft_mag_density_hhi_score": (MatterGenMagneticDensityHHIScore, HHI_SCORE_NAME),
 }
 
 

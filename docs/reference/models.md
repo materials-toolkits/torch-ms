@@ -66,6 +66,8 @@
 
 ::: torchms.models.mattergen.bulk_modulus
 
+::: torchms.models.mattergen.magnetic_density_hhi_score
+
 ::: torchms.models.mattergen.diffusion
 
 ::: torchms.models.mattergen.config

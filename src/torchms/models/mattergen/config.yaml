@@ -4,8 +4,9 @@
 # group (MatterGenSpaceGroup), a band gap (MatterGenBandGap), a magnetic density
 # (MatterGenMagneticDensity), a chemical system and the energy above the hull
 # (MatterGenChemicalSystemEnergyAboveHull), a bulk modulus
-# (MatterGenBulkModulus), whose own values are in the sections named after
-# their properties.
+# (MatterGenBulkModulus), a magnetic density and the HHI score
+# (MatterGenMagneticDensityHHIScore), whose own values are in the sections
+# named after their properties.
 
 default_weights: mattergen-base
 
@@ -59,6 +60,13 @@ checkpoints:
       sha256: 67f7f5e28695776ed285a293b30160f8b546063cbac4a763a36f6ca3f6242db6
     - url: https://huggingface.co/microsoft/mattergen/resolve/5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/ml_bulk_modulus/config.yaml
       sha256: 4313ef58d14b14941434a33e6003e77a3b168e53cececa268384555edeef8e2a
+  # the same for the magnetic density from DFT and the HHI score together
+  # ("dft_mag_density_hhi_score" in their checkpoints)
+  mattergen-dft-mag-density-hhi-score:
+    - url: https://huggingface.co/microsoft/mattergen/resolve/5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/dft_mag_density_hhi_score/checkpoints/last.ckpt
+      sha256: 98a4f2f9263b013d7d94a04c08e6928f90933d5f02c75f9b58c12609dddef016
+    - url: https://huggingface.co/microsoft/mattergen/resolve/5244495dd9a979ff71abc7548a0b14b9deb0069a/checkpoints/dft_mag_density_hhi_score/config.yaml
+      sha256: 2d0bf4632917d19449a170125e0fe2d8d00dc709137b63612d53e3aa7fa901f3
 
 unused_parameters: []
 
@@ -441,3 +449,49 @@ ml_bulk_modulus:
       _target_: mattergen.common.utils.data_utils.StandardScalerTorch
       # standardized after its decimal logarithm, see Config.log10_scaled
       log10_transform: true
+
+# the model fine-tuned on the magnetic density from DFT and the HHI score
+# together: an adapter per property before each block. The HHI score of a
+# crystal is the Herfindahl-Hirschman index of the production of its elements,
+# from 0 to 10000, low for elements produced in many countries
+dft_mag_density_hhi_score:
+  default_weights: mattergen-dft-mag-density-hhi-score
+  # factor of the guidance, as in the README of MatterGen for its models of
+  # one magnetic density and of two properties
+  guidance_scale: 2.0
+  upstream_sections:
+    lightning_module.diffusion_module.model:
+      _target_: mattergen.adapter.GemNetTAdapter
+      atom_type_diffusion: mask
+      denoise_atom_types: true
+      hidden_dim: *hidden_dim
+      property_embeddings: {}
+    lightning_module.diffusion_module.model.gemnet:
+      _target_: mattergen.common.gemnet.gemnet_ctrl.GemNetTCtrl
+      condition_on_adapt: [dft_mag_density, hhi_score]
+      cutoff: *radius
+      emb_size_atom: *hidden_dim
+      emb_size_edge: *hidden_dim
+      latent_dim: *hidden_dim
+      max_cell_images_per_dim: *max_image_shift
+      max_neighbors: *max_neighbors
+      num_blocks: *num_blocks
+      num_targets: 1
+      otf_graph: true
+      regress_stress: true
+    lightning_module.diffusion_module.model.property_embeddings_adapt.dft_mag_density:
+      _target_: mattergen.property_embeddings.PropertyEmbedding
+      name: dft_mag_density
+    lightning_module.diffusion_module.model.property_embeddings_adapt.dft_mag_density.conditional_embedding_module:
+      _target_: mattergen.diffusion.model_utils.NoiseLevelEncoding
+      d_model: *hidden_dim
+    lightning_module.diffusion_module.model.property_embeddings_adapt.dft_mag_density.scaler:
+      _target_: mattergen.common.utils.data_utils.StandardScalerTorch
+    lightning_module.diffusion_module.model.property_embeddings_adapt.hhi_score:
+      _target_: mattergen.property_embeddings.PropertyEmbedding
+      name: hhi_score
+    lightning_module.diffusion_module.model.property_embeddings_adapt.hhi_score.conditional_embedding_module:
+      _target_: mattergen.diffusion.model_utils.NoiseLevelEncoding
+      d_model: *hidden_dim
+    lightning_module.diffusion_module.model.property_embeddings_adapt.hhi_score.scaler:
+      _target_: mattergen.common.utils.data_utils.StandardScalerTorch

@@ -153,7 +153,8 @@ magnetic density or a bulk modulus in GPa per crystal: `model.guidance([225] * 6
 `model.guidance([3.0] * 64)`, `model.guidance([0.15] * 64)`, `model.guidance([400.0] * 64)`.
 These are followed, not imposed. `MatterGenChemicalSystemEnergyAboveHull` takes both a
 chemical system and an energy above the hull per crystal, either one `None`:
-`model.guidance(["Li-O"] * 64, [0.0] * 64)`.
+`model.guidance(["Li-O"] * 64, [0.0] * 64)`, and `MatterGenMagneticDensityHHIScore` a
+magnetic density and an HHI score: `model.guidance([0.15] * 64, [1000.0] * 64)`.
 
 ## Layers for your own model
 
