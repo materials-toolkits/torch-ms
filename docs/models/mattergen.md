@@ -491,7 +491,7 @@ graph is defined.
 | Scores of the elements (values up to 23) | 3.5e-1 / 4.8e-3 | 3.2e-1 / 4.9e-3 | 2.7e-1 / 3.6e-3 |
 
 MatterGen does not run in double precision as it is: two casts of its graph to single
-precision were changed for this run, see `scripts/reference_mattergen.py`.
+precision were changed for this run, see `tests/references/reference_mattergen.py`.
 
 The rewrite scales the lengths by the radius as MatterGen does, times its inverse. It
 divided by the radius before, which is one bit away: the score of a lattice then differed

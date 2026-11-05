@@ -78,6 +78,10 @@ PLACEHOLDER_HDF5 = (
 )
 PLACEHOLDER_CIF = ("file.cif", "structures.cif")
 
+# the scripts which run the original codes, in their own environments: they
+# import packages torchms does not depend on (alignn, matgl, mace...)
+collect_ignore = ["tests/references"]
+
 
 def pytest_markdown_docs_globals():
     """Names defined in every block of the documentation."""

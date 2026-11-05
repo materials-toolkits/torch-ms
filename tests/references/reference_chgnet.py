@@ -4,7 +4,7 @@ Run once, outside of the environment of the project, which does not depend on
 chgnet:
 
     uv run --isolated --no-project --with chgnet==0.4.2 \
-        python scripts/reference_chgnet.py
+        python tests/references/reference_chgnet.py
 
 The structures are the ones of tests/data/orb_reference.npz. The result is
 written to tests/data/chgnet_reference.npz and read by tests/test_chgnet.py.
@@ -17,7 +17,7 @@ import torch
 from chgnet.model import CHGNet
 from pymatgen.core import Lattice, Structure
 
-DATA = Path(__file__).parent.parent / "tests" / "data"
+DATA = Path(__file__).resolve().parent.parent / "data"
 
 
 def load_structures() -> list[Structure]:

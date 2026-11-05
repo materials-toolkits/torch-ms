@@ -18,7 +18,7 @@ written for.
         --with "numpy<1.24" --with scikit-learn --with pandas --with networkx \
         --with sympy --with "torchmetrics<0.8" --with "setuptools<60" \
         --with "ruamel.yaml<0.18" --with monty==2021.8.17 \
-        python scripts/reference_cdvae.py cdvae WEIGHTS
+        python tests/references/reference_cdvae.py cdvae WEIGHTS
 
 WEIGHTS is the directory of the three files of the weights listed in
 src/torchms/models/cdvae/config.yaml: the cache of torchms after a first
@@ -43,7 +43,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-DATA = Path(__file__).parent.parent / "tests" / "data"
+DATA = Path(__file__).resolve().parent.parent / "data"
 CHECKPOINT = "epoch=745-step=79076.ckpt"
 
 # Langevin dynamics checked step by step: structures, noise levels and steps

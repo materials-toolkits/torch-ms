@@ -87,7 +87,7 @@ Read these before designing anything; the conventions are in the code, not all i
 | `src/torchms/models/estimator/pretrained.py` | `PretrainedModel`: `CONFIG`, `config`, `transform(config)`, `GRAPH_FIELDS`, `check_graphs`, `from_pretrained`, `load_checkpoint`, `load_parameters`; `element_table`, `element_index`, `different_arguments`, `check_configuration` |
 | `src/torchms/models/estimator/config.py`, `weights.py` | `YamlConfig` (`load()`, `from_mapping`), `download(model, name, cache)`, the SHA-256 check, the cache |
 | the closest existing port: `model.py`, `config.py`, `config.yaml`, `__init__.py` | the shape of a port |
-| its `tests/test_<name>.py` and `scripts/reference_<name>.py` | the shape of its tests |
+| its `tests/test_<name>.py` and `tests/references/reference_<name>.py` | the shape of its tests |
 | its page `docs/models/<name>.md` | what is reported about a port |
 | `src/torchms/graph/transforms.py`, `graph.py` (docstrings) | what graphs and aggregations exist |
 | `src/torchms/models/layers/` (`basis.py`, `dimenet.py`, `gemnet.py`) | bases, cutoffs, harmonics and whole networks which exist |
@@ -117,7 +117,7 @@ src/torchms/models/<name>/
 ├── config.py       # Config: a frozen dataclass with the fields of config.yaml
 ├── config.yaml     # every value: weights, graph, hyperparameters, upstream arguments
 └── LICENSE         # license of the upstream project
-scripts/reference_<name>.py     # runs the original, once, outside of the project
+tests/references/reference_<name>.py     # runs the original, once, outside of the project
 tests/data/<name>_reference.npz # what it wrote
 tests/test_<name>.py
 ```
@@ -323,13 +323,13 @@ on every new tensor, no `.to(device)` on an input.
 The test of a port compares it with the original code. As the original is not installed,
 the comparison is in two parts.
 
-**`scripts/reference_<name>.py`** runs the original once, in an isolated environment, and
+**`tests/references/reference_<name>.py`** runs the original once, in an isolated environment, and
 writes `tests/data/<name>_reference.npz`. Its docstring gives the exact command, with
 pinned versions:
 
 ```bash
 uv run --isolated --no-project --python 3.12 --with <package>==<version> \
-    python scripts/reference_<name>.py
+    python tests/references/reference_<name>.py
 ```
 
 Build this environment early, before writing the port: it is the riskiest step for an old

@@ -4,7 +4,7 @@ Run once, outside of the environment of the project, which does not depend on
 mace:
 
     uv run --isolated --no-project --python 3.11 --with mace-torch==0.3.16 \
-        python scripts/reference_mace.py
+        python tests/references/reference_mace.py
 
 The structures are the ones of tests/data/orb_reference.npz. The result is
 written to tests/data/mace_reference.npz and read by tests/test_mace.py.
@@ -19,7 +19,7 @@ import numpy as np
 from ase import Atoms
 from mace.calculators import MACECalculator
 
-DATA = Path(__file__).parent.parent / "tests" / "data"
+DATA = Path(__file__).resolve().parent.parent / "data"
 URL = (
     "https://github.com/ACEsuit/mace-mp/releases/download/mace_mp_0/"
     "2023-12-10-mace-128-L0_energy_epoch-249.model"

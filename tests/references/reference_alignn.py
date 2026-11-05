@@ -4,7 +4,7 @@ Run once, outside of the environment of the project, which does not depend on
 alignn:
 
     uv run --isolated --no-project --with alignn==2026.8.11 \
-        python scripts/reference_alignn.py
+        python tests/references/reference_alignn.py
 
 The structures are the ones of tests/data/orb_reference.npz. The graphs and the
 predictions are written to tests/data/alignn_reference.npz, read by
@@ -29,7 +29,7 @@ from ase.data import chemical_symbols
 from jarvis.core.atoms import Atoms
 from jarvis.core.specie import get_node_attributes
 
-ROOT = Path(__file__).parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 DATA = ROOT / "tests" / "data"
 MODEL = "formation_energy_peratom_radius"
 

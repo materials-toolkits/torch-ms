@@ -18,7 +18,7 @@ written for.
         --with p-tqdm==1.3.3 --with python-dotenv --with "numpy<1.24" \
         --with scikit-learn --with pandas --with networkx --with sympy \
         --with "torchmetrics<0.8" --with setuptools==59.5.0 --with einops \
-        python scripts/reference_diffcsp.py DiffCSP WEIGHTS
+        python tests/references/reference_diffcsp.py DiffCSP WEIGHTS
 
 torch, torch-geometric, pytorch-lightning and pymatgen are the versions of the
 README of DiffCSP. The other ones are what its modules import, at versions
@@ -51,7 +51,7 @@ import numpy as np
 import torch
 
 # resolved now: importing diffcsp changes the working directory
-DATA = Path(__file__).resolve().parent.parent / "tests" / "data"
+DATA = Path(__file__).resolve().parent.parent / "data"
 CHECKPOINT = "last.ckpt"
 
 # structures of the sampling, which is run whole, and its step at the lowest noise
