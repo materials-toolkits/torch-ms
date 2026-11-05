@@ -153,3 +153,19 @@ standard setting of its space-group number. Images closer than 1e-3 in fractiona
 coordinates are one atom, and sites of several elements at one place are one atom of the
 most occupied element, as ASE reads them. Blocks without atoms are left out. The lattice is rebuilt from the cell lengths and angles, in the standard orientation (first
 vector along x).
+
+## Reading VASP
+
+```{.python notest}
+from torchms.data import VaspDataset, parse_poscar
+
+structures = parse_poscar(open("CONTCAR").read())   # one crystal
+dataset = VaspDataset("calculations/")               # POSCAR*, CONTCAR*, *.vasp, recursively
+```
+
+`parse_poscar` reads the POSCAR and CONTCAR files of VASP 5 and 6: direct or Cartesian
+positions, selective dynamics, a negative scaling factor (the volume of the cell) or three of
+them. What follows the positions (velocities) is not read. A file of VASP 4 has no line of
+elements: give them as `species=["Na", "Cl"]`, unless its comment lists them. The lattice is
+the one of the file, not reoriented. Energies are not read: they are in the OUTCAR, not in
+these files.
