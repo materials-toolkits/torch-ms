@@ -88,7 +88,7 @@ Read these before designing anything; the conventions are in the code, not all i
 | `src/torchms/models/estimator/pretrained.py` | `PretrainedModel`: `CONFIG`, `config`, `transform(config)`, `GRAPH_FIELDS`, `check_graphs`, `from_pretrained`, `load_checkpoint`, `load_parameters`; `element_table`, `element_index`, `different_arguments`, `check_configuration` |
 | `src/torchms/models/estimator/config.py`, `weights.py` | `YamlConfig` (`load()`, `from_mapping`), `download(model, name, cache)`, the SHA-256 check, the cache |
 | the closest existing port: `model.py`, `config.py`, `config.yaml`, `__init__.py` | the shape of a port |
-| its `tests/test_<name>.py` and `tests/references/reference_<name>.py` | the shape of its tests |
+| its `tests/models/test_<name>.py` and `tests/references/reference_<name>.py` | the shape of its tests |
 | its page `docs/models/<name>.md` | what is reported about a port |
 | `src/torchms/graph/transforms.py`, `graph.py` (docstrings) | what graphs and aggregations exist |
 | `src/torchms/models/layers/` (`basis.py`, `dimenet.py`, `gemnet.py`) | bases, cutoffs, harmonics and whole networks which exist |
@@ -118,9 +118,9 @@ src/torchms/models/<name>/
 ├── config.py       # Config: a frozen dataclass with the fields of config.yaml
 ├── config.yaml     # every value: weights, graph, hyperparameters, upstream arguments
 └── LICENSE         # license of the upstream project
-tests/references/reference_<name>.py     # runs the original, once, outside of the project
-tests/data/<name>_reference.npz # what it wrote
-tests/test_<name>.py
+tests/references/reference_<name>.py  # runs the original, once, outside of the project
+tests/data/<name>_reference.npz       # what it wrote
+tests/models/test_<name>.py           # the tests of the model, on tests/helpers
 ```
 
 Export the model class from `src/torchms/models/__init__.py`.
@@ -131,7 +131,7 @@ What loads weights is shared, in `torchms.models.estimator`: `pretrained.py`
 - `config_files()` in `models/estimator/config.py` finds the configuration of every
   directory of `torchms.models`, and from them `weights.CHECKPOINTS`. Two places list the
   models by name and fail when one is added: its doctest, and
-  `test_checkpoints_are_read_from_the_configurations` in `tests/test_pretrained.py`.
+  `test_checkpoints_are_read_from_the_configurations` in `tests/models/test_pretrained.py`.
 - `torchms.models.estimator` also holds `EnergyEstimator`, which uses orb-v3. Its module
   imports the model inside the function which needs it; keep it so, or importing a model
   becomes a circular import.
@@ -347,7 +347,7 @@ Save the prediction in float64 and also what locates a difference: number of edg
 structure, number of angles or pairs, a sum of cosines, constants computed by the original
 (roots, tables). Keep the file small, it is committed.
 
-**`tests/test_<name>.py`**, after an existing one:
+**`tests/models/test_<name>.py`**, after an existing one, on the helpers of `tests/helpers/`:
 
 - with random weights (always run): shape and dtype of the output, a batch equals its
   structures alone, the invariances the model has (`AtomPermutation`, `LatticeRotation`,
@@ -384,7 +384,7 @@ a limit of neighbours with neighbours at the same distance: in a crystal several
 neighbours are, and an atom is always as far from its image at +v as from the one at -v.
 The test finds these structures itself, from the graph of the port (the last neighbour
 kept and the first one left out at the same length, see
-`neighbours_at_the_same_distance` in `tests/test_cdvae.py`), asserts that enough
+`helpers.graphs.neighbours_at_the_same_distance`), asserts that enough
 structures remain, and still checks loosely the other ones.
 
 **Layer tests.** A layer of `src/torchms/models/layers/` gets its own tests in
@@ -423,6 +423,13 @@ them in new tests rather than copying the helpers of an existing test file.
 Tests with random weights need inputs the network can read: random weights which decode a
 cell give a flat one. Set the buffers which scale an output to plausible values in the
 fixture.
+
+**A generative model** compares by default **one step** of its sampling per set of
+weights, end to end: the network on a state the original reached, then the step with the
+original's noise (DiffCSP at the time 500, MatterGen at its first recorded step with a
+defined graph, the first step of the Langevin dynamics of CDVAE). Every recorded step,
+chained steps and the scores along the sampling are marked `@pytest.mark.full`: they run
+with `uv run pytest --full` (`uv run poe test-full`), and are skipped otherwise.
 
 Tests have a timeout of 3 s by default: mark the slow ones
 (`pytestmark = pytest.mark.timeout(30)`) rather than shrinking what they check.

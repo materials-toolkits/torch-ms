@@ -1,14 +1,25 @@
 """Tests for the rewrite of the base model of MatterGen."""
 
 from dataclasses import replace
-from pathlib import Path
 
-import numpy as np
 import pytest
 import torch
 import torch.nn.functional as F
 
-from torchms.data import Structures, parse_cif
+from helpers.compare import (
+    as_near_as_original,
+    assert_close,
+    assert_close_in_the_cell,
+    rounding_spread,
+    within_rounding,
+)
+from helpers.graphs import neighbours_at_the_same_distance as ties
+from helpers.references import load_reference, reference_structures
+from helpers.structures import generator, noisy
+from helpers.structures import make_batch as make_batch_of
+from helpers.structures import make_structures as make_structures_of
+from helpers.weights import pretrained as load_pretrained
+from torchms.data import Structures
 from torchms.data.augmentation import (
     AtomTranslation,
     LatticeRotation,
@@ -20,7 +31,6 @@ from torchms.graph.line_graph import reverse_edges
 from torchms.graph.sparse import count_by
 from torchms.graph.transforms import (
     AddRadiusGraph,
-    KeepNearestNeighbors,
 )
 from torchms.models.estimator import weights
 from torchms.models.layers import sinusoidal_frequencies
@@ -43,7 +53,6 @@ from torchms.models.mattergen import (
 from torchms.models.mattergen.diffusion import guided_scores, symmetric_noise
 from torchms.models.mattergen.properties import NoiseLevelEncoding, StandardScaler
 
-DATA = Path(__file__).parent / "data"
 NAME = "mattergen-base"
 MP_20_NAME = "mattergen-mp-20-base"
 CHEMICAL_SYSTEM_NAME = "mattergen-chemical-system"
@@ -59,26 +68,12 @@ HHI_SCORE_NAME = "mattergen-dft-mag-density-hhi-score"
 pytestmark = pytest.mark.timeout(120)
 
 
-def generator(seed: int = 0) -> torch.Generator:
-    return torch.Generator().manual_seed(seed)
-
-
 def make_structures() -> list[Structures]:
-    with open("tests/cif/triclinic2.cif", "r", encoding="utf-8") as fp:
-        triclinic = parse_cif(fp.read())
-
-    return [Structures.zincblende(), triclinic]
+    return make_structures_of(cif="triclinic2.cif")
 
 
 def make_batch() -> Structures:
-    return Structures.collate(make_structures())
-
-
-def noisy(structures: Structures, seed: int = 0) -> Structures:
-    """Structures with their atoms moved at random, in the cell."""
-    noise = 0.05 * torch.randn(structures.x.shape, generator=generator(seed))
-
-    return replace(structures.without_graphs(), x=(structures.x + noise) % 1.0)
+    return make_batch_of(cif="triclinic2.cif")
 
 
 def narrow(config: Config | None = None) -> Config:
@@ -1127,62 +1122,22 @@ def reference(
     name: str = "mattergen_reference.npz",
 ) -> tuple[Structures, dict[str, torch.Tensor]]:
     """Structures of the tests and what MatterGen computed for them."""
-    data = dict(np.load(DATA / "orb_reference.npz"))
-    expected = {
-        key: torch.from_numpy(values) for key, values in np.load(DATA / name).items()
-    }
-    structures = Structures(
-        lattice=torch.from_numpy(data["lattice"]),
-        x=torch.from_numpy(data["x"]),
-        z=torch.from_numpy(data["z"]),
-        num_atoms=torch.from_numpy(data["num_atoms"]),
-    )
-
-    return structures, expected
+    return reference_structures(), dict(load_reference(name).arrays)
 
 
 def neighbours_at_the_same_distance(structures: Structures) -> torch.Tensor:
-    """Structures where the choice of the nearest neighbours of an atom is not defined.
+    """Structures where the 50 nearest neighbours of GemNet-T are not defined.
 
-    The last neighbour kept and the first one left out are at the same
-    distance: in a crystal, or for the two images of an atom on each side of
-    it. MatterGen then keeps one or the other from the rounding of their
-    distances and the order of its sort.
-
-    Returns:
-        Mask of these structures, shape (n_struct,).
+    In a crystal several neighbours are at the same distance, and the two
+    images of an atom on each side of it always are: MatterGen keeps one or the
+    other from the rounding of their distances and the order of its sort.
     """
     config = Config.load().graph
     near = AddRadiusGraph(
         config.radius, self_images=True, max_image_shift=config.max_image_shift
-    )(structures.without_graphs())
-    graph = KeepNearestNeighbors(config.max_neighbors + 1)(near).graph
+    )
 
-    # edges are sorted by atom then by length: the last two of each atom
-    degree = count_by(graph.senders, len(structures.z))
-    last = F.pad(torch.cumsum(degree, dim=0), (1, 0), value=0)[1:] - 1
-    full = degree == config.max_neighbors + 1
-    distance = graph.edges_distances()
-    tie = (distance[last[full]] - distance[last[full] - 1]).abs() < 1e-4
-
-    return count_by(structures.batch[full][tie], len(structures.num_atoms)) > 0
-
-
-def close(found: torch.Tensor, expected: torch.Tensor) -> bool:
-    """Whether values are the expected ones up to the rounding of float32.
-
-    The difference is under 1e-5 of the largest expected value, or 1e-5.
-    """
-    scale = max(1.0, float(expected.abs().max()))
-
-    return float((found - expected).abs().max()) < 1e-5 * scale
-
-
-def close_in_the_cell(found: torch.Tensor, expected: torch.Tensor) -> bool:
-    """Whether fractional coordinates are the expected ones, modulo the cell."""
-    difference = (found - expected + 0.5) % 1.0 - 0.5
-
-    return float(difference.abs().max()) < 1e-5
+    return ties(structures, near, config.max_neighbors)
 
 
 # the weights of the models without condition, with what MatterGen computed
@@ -1199,12 +1154,7 @@ def base_weights(request) -> str:
 
 @pytest.fixture(scope="module")
 def pretrained(base_weights) -> MatterGen:
-    if not all(
-        path.exists() for path in weights.checkpoint_paths("mattergen", base_weights)
-    ):
-        pytest.skip(f"weights of {base_weights} are not in the cache")
-
-    return MatterGen.from_pretrained(base_weights, device="cpu")
+    return load_pretrained(MatterGen, "mattergen", base_weights)
 
 
 @pytest.fixture(scope="module")
@@ -1237,71 +1187,6 @@ def test_pretrained_graph_matches_mattergen(pretrained, base_reference):
     distance_sum = graph.aggregate_edges_to_structures(graph.edges_distances().double())
     assert torch.allclose(
         distance_sum[defined], expected["graph_sum_distances"][defined], rtol=1e-6
-    )
-
-
-def as_near_as_mattergen(
-    found: torch.Tensor, single: torch.Tensor, double: torch.Tensor
-) -> bool:
-    """Whether values are as near to MatterGen in double precision as MatterGen is.
-
-    The network is very sensitive to the rounding of its inputs: MatterGen in
-    single precision is up to 1e-2 from MatterGen in double precision, and so
-    is the rewrite, which rounds differently.
-    """
-    ours, theirs = (found.double() - double).abs(), (single.double() - double).abs()
-
-    return bool(ours.mean() < 1.5 * theirs.mean() and ours.max() < 3 * theirs.max())
-
-
-def rounding_spread(
-    evaluate, structures: Structures, count: int = 6
-) -> list[torch.Tensor]:
-    """How much the outputs of the network move when its inputs move by their last bits.
-
-    The lattice and the coordinates are multiplied by 1 + k 2^-23, k drawn in
-    -2 to 2 for each value, count times.
-
-    Args:
-        evaluate: Outputs of the network for structures without graph, a tuple
-            of tensors.
-        structures: Structures without graph.
-
-    Returns:
-        For each output, the largest move of each value over the draws.
-    """
-    random = generator(1)
-    found = evaluate(structures)
-    spread = [torch.zeros_like(values) for values in found]
-    for _ in range(count):
-        lattice = structures.lattice * (
-            1
-            + torch.randint(-2, 3, structures.lattice.shape, generator=random) * 2**-23
-        )
-        x = structures.x * (
-            1 + torch.randint(-2, 3, structures.x.shape, generator=random) * 2**-23
-        )
-        moved = evaluate(replace(structures, lattice=lattice, x=x))
-        spread = [
-            torch.maximum(old, (new - values).abs())
-            for old, new, values in zip(spread, moved, found)
-        ]
-
-    return spread
-
-
-def within_rounding(
-    found: torch.Tensor, expected: torch.Tensor, spread: torch.Tensor
-) -> bool:
-    """Whether values differ from the expected ones as little as rounding moves them.
-
-    The largest and the mean difference are at most 3 times the largest and
-    the mean move of rounding_spread.
-    """
-    difference = (found - expected).abs()
-
-    return bool(
-        difference.max() <= 3 * spread.max() and difference.mean() <= 3 * spread.mean()
     )
 
 
@@ -1368,7 +1253,7 @@ def compare_network(
 
         # as near as MatterGen to MatterGen in double precision, or as near to
         # MatterGen as a change of the last bits of the inputs moves the rewrite
-        assert as_near_as_mattergen(found, single, double) or within_rounding(
+        assert as_near_as_original(found, single, double) or within_rounding(
             found, single, moved
         ), name
 
@@ -1436,10 +1321,58 @@ def recorded_noise(expected: dict[str, torch.Tensor], step: int) -> StepNoise:
     )
 
 
+def test_pretrained_step_matches_mattergen(pretrained, base_reference):
+    """A step of the sampling of MatterGen: the network, the corrector and the predictor."""
+    _, expected = base_reference
+    check_one_step(pretrained, expected, ("score",))
+
+
+@pytest.mark.full
 def test_pretrained_steps_match_mattergen(pretrained, base_reference):
     """Steps of the sampling of MatterGen, each from its crystals, its scores and its noise."""
     _, expected = base_reference
     check_steps(pretrained, expected)
+
+
+def check_step(
+    pretrained: MatterGen, expected: dict[str, torch.Tensor], i: int
+) -> None:
+    """A recorded step of the sampling of MatterGen, given its scores and its noise."""
+    step = int(expected["sampling_steps"][i])
+    noise = recorded_noise(expected, i)
+
+    # the corrector moves the coordinates and the lattice: the step of each
+    # crystal depends on the other ones
+    corrected = pretrained.correct_given_scores(
+        state(expected, "before", i),
+        step,
+        recorded_scores(expected, "corrector", i),
+        noise,
+    )
+    assert_close_in_the_cell(
+        corrected.x, expected["corrected_x"][i], name=f"corrected x at {step}"
+    )
+    assert_close(
+        corrected.lattice, expected["corrected_l"][i], name=f"corrected L at {step}"
+    )
+    assert torch.equal(corrected.z, expected["corrected_z"][i])
+
+    # the predictor, from the crystals MatterGen corrected
+    given = state(expected, "corrected", i)
+    assert given.graph is not None
+    times, _ = pretrained.step_times(given, step)
+    element_steps = given.graph.unpool_structures(pretrained.element_steps(times))
+    posterior = pretrained.element_posterior(
+        given.z, expected["predictor_score_logits"][i], element_steps
+    )
+    assert_close(
+        posterior, expected["posterior_logits"][i], name=f"posterior at {step}"
+    )
+
+    scores = recorded_scores(expected, "predictor", i)
+    predicted = pretrained.predict_given_scores(given, step, scores, noise)
+    assert_close_in_the_cell(predicted.x, expected["after_x"][i], name=f"x at {step}")
+    assert_close(predicted.lattice, expected["after_l"][i], name=f"L at {step}")
 
 
 def check_steps(pretrained: MatterGen, expected: dict[str, torch.Tensor]) -> None:
@@ -1447,34 +1380,8 @@ def check_steps(pretrained: MatterGen, expected: dict[str, torch.Tensor]) -> Non
     steps = expected["sampling_steps"].tolist()
     assert torch.allclose(pretrained.times()[steps], expected["sampling_times"])
 
-    for i, step in enumerate(steps):
-        noise = recorded_noise(expected, i)
-
-        # the corrector moves the coordinates and the lattice: the step of each
-        # crystal depends on the other ones
-        corrected = pretrained.correct_given_scores(
-            state(expected, "before", i),
-            step,
-            recorded_scores(expected, "corrector", i),
-            noise,
-        )
-        assert close_in_the_cell(corrected.x, expected["corrected_x"][i]), step
-        assert close(corrected.lattice, expected["corrected_l"][i]), step
-        assert torch.equal(corrected.z, expected["corrected_z"][i])
-
-        # the predictor, from the crystals MatterGen corrected
-        given = state(expected, "corrected", i)
-        times, _ = pretrained.step_times(given, step)
-        element_steps = given.graph.unpool_structures(pretrained.element_steps(times))
-        posterior = pretrained.element_posterior(
-            given.z, expected["predictor_score_logits"][i], element_steps
-        )
-        assert close(posterior, expected["posterior_logits"][i]), step
-
-        scores = recorded_scores(expected, "predictor", i)
-        predicted = pretrained.predict_given_scores(given, step, scores, noise)
-        assert close_in_the_cell(predicted.x, expected["after_x"][i]), step
-        assert close(predicted.lattice, expected["after_l"][i]), step
+    for i in range(len(steps)):
+        check_step(pretrained, expected, i)
 
     # the last step gives the crystals MatterGen returns: without noise, and
     # each atom with its most probable element
@@ -1487,57 +1394,105 @@ def check_steps(pretrained: MatterGen, expected: dict[str, torch.Tensor]) -> Non
     assert torch.equal(expected["after_x"][-1], expected["mean_x"])
     assert torch.equal(expected["after_l"][-1], expected["mean_l"])
     assert torch.equal(final.z, expected["mean_z"])
-    assert close_in_the_cell(final.x, expected["mean_x"])
-    assert close(final.lattice, expected["mean_l"])
+    assert_close_in_the_cell(final.x, expected["mean_x"], name="final x")
+    assert_close(final.lattice, expected["mean_l"], name="final L")
 
 
+def step_with_a_defined_state(expected: dict[str, torch.Tensor]) -> int:
+    """The first recorded step with a state whose 50 neighbours are defined.
+
+    Before the corrector or before the predictor: there, the network can be
+    compared with the scores MatterGen computed. No step of the reference of
+    the base model has both states defined.
+    """
+    for i in range(len(expected["sampling_steps"])):
+        if not all(
+            neighbours_at_the_same_distance(state(expected, name, i)).any()
+            for name in ("before", "corrected")
+        ):
+            return i
+    raise AssertionError("no recorded step without ties of the neighbours")
+
+
+def check_one_step(
+    pretrained: MatterGen, expected: dict[str, torch.Tensor], kinds: tuple[str, ...]
+) -> None:
+    """A step of the sampling of MatterGen, end to end.
+
+    The network on the states MatterGen reached where their graphs are
+    defined, within its rounding, then the corrector and the predictor from
+    MatterGen's scores and noise.
+    """
+    i = step_with_a_defined_state(expected)
+    for kind in kinds:
+        assert compare_scores_at(pretrained, expected, kind, i) >= 1
+    check_step(pretrained, expected, i)
+
+
+@pytest.mark.full
 def test_pretrained_scores_of_the_sampling_match_mattergen(pretrained, base_reference):
     """Scores of the crystals of the sampling of MatterGen, where their graphs are defined."""
     _, expected = base_reference
     assert compare_sampling_scores(pretrained, expected, "score") >= 2
 
 
-def compare_sampling_scores(
-    pretrained: MatterGen, expected: dict[str, torch.Tensor], kind: str
+def compare_scores_at(
+    pretrained: MatterGen, expected: dict[str, torch.Tensor], kind: str, i: int
 ) -> int:
-    """Compare the scores of the network on the crystals of the sampling.
+    """Compare the scores of the network on the crystals of a recorded step.
 
     Args:
         kind: "score" for the scores of the steps, "unconditional" or
             "conditional" for the ones the guidance mixes.
+        i: Index of the recorded step.
 
     Returns:
-        Number of calls of the network compared: the ones whose crystals have
-        no tie of their neighbours.
+        Number of calls of the network compared, of 2: the ones whose crystals
+        have no tie of their neighbours.
     """
-    steps = expected["sampling_steps"].tolist()
+    step = int(expected["sampling_steps"][i])
     values = None
     if kind == "conditional":
         values = condition_values(pretrained, expected, "sampling_")
 
     compared = 0
-    for i, step in enumerate(steps):
-        for name, call in (("before", "corrector"), ("corrected", "predictor")):
-            crystals = state(expected, name, i)
-            if neighbours_at_the_same_distance(crystals).any():
-                continue
+    for name, call in (("before", "corrector"), ("corrected", "predictor")):
+        crystals = state(expected, name, i)
+        if neighbours_at_the_same_distance(crystals).any():
+            continue
 
-            times, _ = pretrained.step_times(crystals, step)
+        times, _ = pretrained.step_times(crystals, step)
 
-            def evaluate(given: Structures) -> tuple[torch.Tensor, ...]:
-                scores = pretrained.unguided_scores(
-                    pretrained.transform()(given), times, values
-                )
-                return scores.x, scores.lattice
+        def evaluate(given: Structures) -> tuple[torch.Tensor, ...]:
+            scores = pretrained.unguided_scores(
+                pretrained.transform()(given),
+                times,
+                values,  # pylint: disable=cell-var-from-loop
+            )
+            return scores.x, scores.lattice
 
-            found = evaluate(crystals.without_graphs())
-            spread = rounding_spread(evaluate, crystals.without_graphs())
-            for scores, moved, field in zip(found, spread, ("x", "l")):
-                wanted = expected[f"{call}_{kind}_{field}"][i]
-                assert within_rounding(scores, wanted, moved), (step, name, field)
-            compared += 1
+        found = evaluate(crystals.without_graphs())
+        spread = rounding_spread(evaluate, crystals.without_graphs())
+        for scores, moved, field in zip(found, spread, ("x", "l")):
+            wanted = expected[f"{call}_{kind}_{field}"][i]
+            assert within_rounding(scores, wanted, moved), (step, name, field)
+        compared += 1
 
     return compared
+
+
+def compare_sampling_scores(
+    pretrained: MatterGen, expected: dict[str, torch.Tensor], kind: str
+) -> int:
+    """Compare the scores of the network on the crystals of every recorded step.
+
+    Returns:
+        Number of calls of the network compared.
+    """
+    return sum(
+        compare_scores_at(pretrained, expected, kind, i)
+        for i in range(len(expected["sampling_steps"]))
+    )
 
 
 # the models fine-tuned on a property against the real MatterGen
@@ -1559,10 +1514,8 @@ FINE_TUNED = {
 @pytest.fixture(scope="module", params=sorted(FINE_TUNED))
 def fine_tuned(request) -> MatterGen:
     model, name = FINE_TUNED[request.param]
-    if not all(path.exists() for path in weights.checkpoint_paths("mattergen", name)):
-        pytest.skip(f"weights of {name} are not in the cache")
 
-    return model.from_pretrained(name, device="cpu")
+    return load_pretrained(model, "mattergen", name)
 
 
 def fine_tuned_reference(
@@ -1622,6 +1575,13 @@ def test_pretrained_guidance_matches_mattergen(fine_tuned):
                 assert torch.equal(guided.logits, expected["predictor_score_logits"][i])
 
 
+def test_pretrained_guided_step_matches_mattergen(fine_tuned):
+    """A step of the guided sampling: both scores of the network, then the step."""
+    _, expected = fine_tuned_reference(fine_tuned)
+    check_one_step(fine_tuned, expected, ("unconditional", "conditional"))
+
+
+@pytest.mark.full
 def test_pretrained_guided_steps_match_mattergen(fine_tuned):
     """Steps of the guided sampling of MatterGen, given its scores and its noise."""
     _, expected = fine_tuned_reference(fine_tuned)
@@ -1634,6 +1594,7 @@ def test_pretrained_guided_steps_match_mattergen(fine_tuned):
         assert systems[batch, expected["mean_z"]].all()
 
 
+@pytest.mark.full
 def test_pretrained_fine_tuned_scores_of_the_sampling_match_mattergen(fine_tuned):
     """Both scores the guidance mixes, where the graphs of the crystals are defined."""
     _, expected = fine_tuned_reference(fine_tuned)

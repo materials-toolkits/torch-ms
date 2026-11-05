@@ -8,7 +8,7 @@ alignn:
 
 The structures are the ones of tests/data/orb_reference.npz. The graphs and the
 predictions are written to tests/data/alignn_reference.npz, read by
-tests/test_alignn.py. The features of the elements, which are not stored with
+tests/models/test_alignn.py. The features of the elements, which are not stored with
 the weights of the model, are written to
 src/torchms/models/alignn/cgcnn_features.npz.
 """

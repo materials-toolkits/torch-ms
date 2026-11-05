@@ -37,7 +37,7 @@ it is given:
   result is written to tests/data/diffcsp_generation_reference.npz.
 
 The structures are the ones of tests/data/orb_reference.npz. The results are
-read by tests/test_diffcsp.py.
+read by tests/models/test_diffcsp.py.
 
 The checkpoints only hold tensors in an OrderedDict: they are read by
 torch.load as they are.

@@ -54,7 +54,7 @@ script is run once for each model, and finds which one it is given:
   other ones without condition, and the sampling with the guidance of the README of MatterGen,
   recording the scores with and without condition of each step.
 
-Both are read by tests/test_mattergen.py.
+Both are read by tests/models/test_mattergen.py.
 
 The structures are the ones of tests/data/orb_reference.npz.
 

@@ -7,7 +7,7 @@ mace:
         python tests/references/reference_mace.py
 
 The structures are the ones of tests/data/orb_reference.npz. The result is
-written to tests/data/mace_reference.npz and read by tests/test_mace.py.
+written to tests/data/mace_reference.npz and read by tests/models/test_mace.py.
 """
 
 import hashlib

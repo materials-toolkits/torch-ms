@@ -3,13 +3,19 @@
 import io
 import json
 import zipfile
-from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
 
-from torchms.data import Structures, parse_cif
+from helpers.models import predict
+from helpers.references import load_reference
+from helpers.references import reference_structures as orb_structures
+from helpers.structures import generator
+from helpers.structures import make_batch as make_batch_of
+from helpers.structures import make_structures as make_structures_of
+from helpers.weights import pretrained as load_pretrained
+from torchms.data import Structures
 from torchms.data.augmentation import (
     AtomPermutation,
     AtomTranslation,
@@ -26,13 +32,6 @@ from torchms.graph.graph import Graph
 from torchms.graph.line_graph import reverse_edges
 from torchms.graph.transforms import AddLineGraph, attach_graph
 
-
-def predict(model, structures: Structures) -> torch.Tensor:
-    """Prediction of a model for structures without graph."""
-    return model(model.transform()(structures))
-
-
-DATA = Path(__file__).parent / "data"
 NAME = "alignn-formation-energy-radius"
 
 # layers of 512 features: slower than the default timeout
@@ -49,14 +48,11 @@ def copper() -> Structures:
 
 
 def make_structures() -> list[Structures]:
-    with open("tests/cif/triclinic1.cif", "r", encoding="utf-8") as fp:
-        triclinic = parse_cif(fp.read())
-
-    return [copper(), triclinic]
+    return make_structures_of(copper)
 
 
 def make_batch() -> Structures:
-    return Structures.collate(make_structures())
+    return make_batch_of(copper)
 
 
 def with_graph(structures: Structures, graph: Graph) -> Structures:
@@ -64,10 +60,6 @@ def with_graph(structures: Structures, graph: Graph) -> Structures:
     config = Config.load()
     line_graph = AddLineGraph(radius=config.graph.three_body_radius, backtrack=True)
     return line_graph(attach_graph(structures, graph, False))
-
-
-def generator(seed: int = 0) -> torch.Generator:
-    return torch.Generator().manual_seed(seed)
 
 
 @pytest.fixture(scope="module")
@@ -256,14 +248,9 @@ def test_from_pretrained_reads_the_archive(model, tmp_path, monkeypatch):
 
 
 def reference_structures() -> tuple[Structures, dict[str, np.ndarray], Graph]:
-    data = dict(np.load(DATA / "orb_reference.npz"))
-    structures = Structures(
-        lattice=torch.from_numpy(data["lattice"]),
-        x=torch.from_numpy(data["x"]),
-        z=torch.from_numpy(data["z"]),
-        num_atoms=torch.from_numpy(data["num_atoms"]),
-    )
-    reference = dict(np.load(DATA / "alignn_reference.npz"))
+    """The structures, what alignn computed for them, and the graph it built."""
+    structures = orb_structures()
+    reference = load_reference("alignn_reference.npz").numpy()
 
     # graph of the atoms built by alignn
     num_edges = torch.from_numpy(reference["num_edges"])
@@ -294,10 +281,7 @@ def edges_of(graph: Graph) -> list[set[tuple[int, ...]]]:
 
 @pytest.fixture(scope="module")
 def pretrained() -> ALIGNN:
-    if not weights.checkpoint_paths("alignn", NAME)[0].exists():
-        pytest.skip(f"weights of {NAME} are not in the cache")
-
-    return ALIGNN.from_pretrained(NAME, device="cpu")
+    return load_pretrained(ALIGNN, "alignn", NAME)
 
 
 @pytest.mark.timeout(120)

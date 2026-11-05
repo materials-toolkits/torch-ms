@@ -90,6 +90,17 @@ class Reference:
     def __getitem__(self, key: str) -> torch.Tensor:
         return self.arrays[key]
 
+    def __contains__(self, key: str) -> bool:
+        return key in self.arrays
+
+    def get(self, key: str) -> torch.Tensor | None:
+        """An array, None if it was not recorded."""
+        return self.arrays.get(key)
+
+    def numpy(self) -> dict[str, np.ndarray]:
+        """The arrays as numpy arrays, for the tests which compare with numpy."""
+        return {key: value.numpy() for key, value in self.arrays.items()}
+
     def call(self, module: str) -> RecordedCall:
         """What a module received and returned, by its name in the original.
 

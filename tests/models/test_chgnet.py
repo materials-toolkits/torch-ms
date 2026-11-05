@@ -1,12 +1,15 @@
 """Tests for the rewrite of the energy prediction of CHGNet."""
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 import torch
 
-from torchms.data import Structures, parse_cif
+from helpers.models import predict
+from helpers.references import load_reference
+from helpers.references import reference_structures as orb_structures
+from helpers.structures import generator, make_batch, make_structures
+from helpers.weights import pretrained as load_pretrained
+from torchms.data import Structures
 from torchms.data.augmentation import (
     AtomPermutation,
     AtomTranslation,
@@ -18,32 +21,10 @@ from torchms.models.estimator import weights
 from torchms.models.chgnet import CHGNet, Config, InvalidWeights
 from torchms.graph.line_graph import reverse_edges
 
-
-def predict(model, structures: Structures) -> torch.Tensor:
-    """Prediction of a model for structures without graph."""
-    return model(model.transform()(structures))
-
-
-DATA = Path(__file__).parent / "data"
 NAME = "chgnet-0.3.0"
 
 # thousands of angles per structure: slower than the default timeout
 pytestmark = pytest.mark.timeout(30)
-
-
-def make_structures() -> list[Structures]:
-    with open("tests/cif/triclinic1.cif", "r", encoding="utf-8") as fp:
-        triclinic = parse_cif(fp.read())
-
-    return [Structures.zincblende(), triclinic]
-
-
-def make_batch() -> Structures:
-    return Structures.collate(make_structures())
-
-
-def generator(seed: int = 0) -> torch.Generator:
-    return torch.Generator().manual_seed(seed)
 
 
 @pytest.fixture(scope="module")
@@ -51,10 +32,6 @@ def model() -> CHGNet:
     """Model with random weights."""
     torch.manual_seed(0)
     return CHGNet().eval().requires_grad_(False)
-
-
-def per_atom(model: CHGNet, structures: Structures) -> torch.Tensor:
-    return predict(model, structures) / structures.num_atoms
 
 
 def test_pinned_checkpoints(tmp_path):
@@ -174,22 +151,13 @@ def test_load_pretrained_checks_the_parameters(model):
 
 
 def reference_structures() -> tuple[Structures, dict[str, np.ndarray]]:
-    data = dict(np.load(DATA / "orb_reference.npz"))
-    structures = Structures(
-        lattice=torch.from_numpy(data["lattice"]),
-        x=torch.from_numpy(data["x"]),
-        z=torch.from_numpy(data["z"]),
-        num_atoms=torch.from_numpy(data["num_atoms"]),
-    )
-    return structures, dict(np.load(DATA / "chgnet_reference.npz"))
+    """The structures of the references and what chgnet 0.4.2 computed for them."""
+    return orb_structures(), load_reference("chgnet_reference.npz").numpy()
 
 
 @pytest.fixture(scope="module")
 def pretrained() -> CHGNet:
-    if not weights.checkpoint_paths("chgnet", NAME)[0].exists():
-        pytest.skip(f"weights of {NAME} are not in the cache")
-
-    return CHGNet.from_pretrained(NAME, device="cpu")
+    return load_pretrained(CHGNet, "chgnet", NAME)
 
 
 @pytest.mark.timeout(120)

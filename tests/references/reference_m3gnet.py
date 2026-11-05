@@ -7,7 +7,7 @@ matgl:
         python tests/references/reference_m3gnet.py
 
 The structures are the ones of tests/data/orb_reference.npz. The result is
-written to tests/data/m3gnet_reference.npz and read by tests/test_m3gnet.py.
+written to tests/data/m3gnet_reference.npz and read by tests/models/test_m3gnet.py.
 """
 
 from pathlib import Path

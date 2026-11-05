@@ -7,7 +7,7 @@ chgnet:
         python tests/references/reference_chgnet.py
 
 The structures are the ones of tests/data/orb_reference.npz. The result is
-written to tests/data/chgnet_reference.npz and read by tests/test_chgnet.py.
+written to tests/data/chgnet_reference.npz and read by tests/models/test_chgnet.py.
 """
 
 from pathlib import Path

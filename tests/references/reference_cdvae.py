@@ -26,7 +26,7 @@ CDVAE.from_pretrained(), "~/.cache/torchms/cdvae/cdvae-mp20-cowboys".
 
 The structures are the ones of tests/data/orb_reference.npz, with at most 20
 atoms. The result is written to tests/data/cdvae_reference.npz and read by
-tests/test_cdvae.py.
+tests/models/test_cdvae.py.
 
 The checkpoint and the scaler are pickles of objects of pytorch-lightning,
 omegaconf and cdvae: they are read with an unpickler which only builds tensors
@@ -263,7 +263,8 @@ def main():
                 n_step_each=NUM_STEPS,
                 step_lr=1e-4,
                 min_sigma=0,
-                save_traj=False,
+                # the state after each step, for the test of a single one
+                save_traj=True,
                 disable_bar=True,
             ),
             num_atoms[:NUM_DYNAMICS],
@@ -275,6 +276,7 @@ def main():
             dynamics_start=drawn[0].numpy(),
             dynamics_noise=torch.stack(drawn[1:]).numpy(),
             dynamics_end=samples["frac_coords"].numpy(),
+            dynamics_states=samples["all_frac_coords"].numpy(),
         )
 
     np.savez_compressed(DATA / "cdvae_reference.npz", **result)
