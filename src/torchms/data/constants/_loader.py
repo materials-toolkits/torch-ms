@@ -122,10 +122,11 @@ class SpaceGroupData:
     """Immutable data class for space group properties.
 
     Attributes:
-        number: Space group number (1-230).
-        hall_number: Hall number for the space group.
-        hall_symbol: Hall symbol.
-        symbol: Full Hermann-Mauguin symbol.
+        number: International number of the space group (1-230).
+        hall_number: Number of its Hall setting in spglib (1-530), the one of
+            its symmetry operations.
+        hall_symbol: Hall symbol of this setting.
+        symbol: Short Hermann-Mauguin symbol ("Fm-3m", "P2_1/c").
         crystal_system: Crystal system name (triclinic, monoclinic, etc.).
     """
 
