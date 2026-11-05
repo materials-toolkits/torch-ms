@@ -13,8 +13,8 @@ source  →  one CIF file with all the structures  →  HDF5
 uv run preprocessing structures.cif structures.hdf5
 ```
 
-The CIF file holds one data block per structure, in P1 (all atoms listed, no symmetry
-operation). Labels are read from these tags when present:
+The CIF file holds one data block per structure, of any space group, read as `parse_cif`
+reads it (see [Structures](structures.md#reading-cif)). Labels are read from these tags when present:
 
 | Tag | Field | Unit |
 |---|---|---|

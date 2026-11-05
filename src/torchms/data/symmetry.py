@@ -7,91 +7,114 @@ import torch
 from torchms.data.batching import Structures
 from torchms.data.constants import get_symmetry_operations
 
+# atoms closer than this in fractional coordinates are one, as in
+# ase.spacegroup.crystal (symprec)
+MERGE_TOLERANCE = 1e-3
+
 
 def generate_symmetric_structure(
     lattice: torch.Tensor,
     positions: torch.Tensor,
     atomic_numbers: torch.Tensor,
     spacegroup: int | str,
-    tol: float = 1e-5,
+    tol: float = MERGE_TOLERANCE,
 ) -> Structures:
     """Generate full symmetric crystal by applying spacegroup operations.
+
+    The operations are the ones of the standard setting of the group, see
+    torchms.data.constants.get_symmetry_operations.
 
     Args:
         lattice: Lattice vectors with shape (3, 3) in Angstroms.
         positions: Atomic positions in fractional coordinates [0, 1) with shape (N, 3).
         atomic_numbers: Atomic numbers with shape (N,).
         spacegroup: Space group number (int) or symbol (str).
-        wrap_tolerance: Tolerance for wrapping fractional coordinates.
+        tol: Atoms closer than this, in fractional coordinates and across the
+            faces of the cell, are merged.
 
     Returns:
         Structures object with all symmetry-equivalent atoms.
     """
-    ops = get_symmetry_operations(spacegroup)
+    operations = get_symmetry_operations(spacegroup).to(positions.dtype)
 
-    num_atoms = positions.shape[0]
-    num_ops = ops.shape[0]
+    return expand_symmetry(lattice, positions, atomic_numbers, operations, tol)
 
-    rot = ops[:, :3, :3]
-    trans = ops[:, :3, 3]
 
-    new_positions = torch.einsum("gmn,xn->gxm", rot, positions) + trans[:, None]
-    new_positions = new_positions.reshape(-1, 3)
+def expand_symmetry(
+    lattice: torch.Tensor,
+    positions: torch.Tensor,
+    atomic_numbers: torch.Tensor,
+    operations: torch.Tensor,
+    tol: float = MERGE_TOLERANCE,
+) -> Structures:
+    """Apply symmetry operations to the atoms of an asymmetric unit.
 
-    new_positions = torch.remainder(new_positions, 1.0)
+    Args:
+        lattice: Lattice vectors with shape (3, 3) in Angstroms.
+        positions: Fractional coordinates of the atoms, shape (N, 3).
+        atomic_numbers: Atomic numbers, shape (N,).
+        operations: Affine operations on fractional coordinates, shape
+            (n_ops, 4, 4): [R|t; 0 0 0 1].
+        tol: Images closer than this, in fractional coordinates and across the
+            faces of the cell, are one atom: the image of the first atom of
+            the asymmetric unit, whatever the elements, as in
+            ase.spacegroup.crystal.
 
-    new_atomic_numbers = atomic_numbers.repeat(num_ops)
+    Returns:
+        Structures with one atom per distinct image, in the order of the atoms
+        then of the operations.
 
-    all_positions = new_positions.view(-1, 3)
-    all_atomic_numbers = new_atomic_numbers.view(-1)
+    Examples:
+        >>> identity = torch.eye(4)
+        >>> inversion = torch.diag(torch.tensor([-1.0, -1.0, -1.0, 1.0]))
+        >>> x = torch.tensor([[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]])
+        >>> crystal = expand_symmetry(
+        ...     torch.eye(3), x, torch.tensor([11, 17]),
+        ...     torch.stack([identity, inversion]),
+        ... )
+        >>> crystal.x.tolist()
+        [[0.0, 0.0, 0.0], [0.25, 0.25, 0.25], [0.75, 0.75, 0.75]]
+        >>> crystal.z.tolist()
+        [11, 17, 17]
+    """
+    rot = operations[:, :3, :3].to(positions.dtype)
+    trans = operations[:, :3, 3].to(positions.dtype)
 
-    unique_mask = _find_unique_atoms(all_positions, all_atomic_numbers, tol)
-    final_positions = all_positions[unique_mask]
-    final_atomic_numbers = all_atomic_numbers[unique_mask]
+    # images of each atom in turn
+    new_positions = torch.einsum("gmn,xn->xgm", rot, positions) + trans
+    all_positions = torch.remainder(new_positions.reshape(-1, 3), 1.0)
+    all_atomic_numbers = atomic_numbers.repeat_interleave(operations.shape[0])
+
+    unique_mask = _find_unique_atoms(all_positions, tol)
 
     return Structures(
         lattice=lattice.unsqueeze(0),
-        x=final_positions,
-        z=final_atomic_numbers,
+        x=all_positions[unique_mask],
+        z=all_atomic_numbers[unique_mask],
         _validate=True,
     )
 
 
 def _find_unique_atoms(
-    positions: torch.Tensor, atomic_numbers: torch.Tensor, tol: float = 1e-5
+    positions: torch.Tensor, tol: float = MERGE_TOLERANCE
 ) -> torch.Tensor:
-    """Find indices of unique atoms, considering both position and atomic number.
+    """Mask of the first atom of each group of atoms at the same place.
 
-    Uses sorting for O(n log n) complexity instead of O(n²) loop.
+    Two atoms are at the same place when their fractional coordinates differ
+    by less than tol, modulo 1: 0.0 and 0.9999 are the same coordinate.
 
     Args:
         positions: Fractional positions with shape (N, 3).
-        atomic_numbers: Atomic numbers with shape (N,).
-        tol: Tolerance for position comparison.
+        tol: Tolerance on the distance in fractional coordinates.
 
     Returns:
-        Boolean mask of unique atoms.
+        Boolean mask of the atoms kept, shape (N,).
     """
-    n = positions.shape[0]
-    if n <= 1:
-        return torch.ones(n, dtype=torch.bool, device=positions.device)
+    difference = positions.unsqueeze(1) - positions.unsqueeze(0)
+    difference = difference - torch.round(difference)
+    same_place = torch.sum(difference**2, dim=-1) < tol * tol
 
-    sorted_idx = torch.argsort(atomic_numbers)
-    sorted_z = atomic_numbers[sorted_idx]
-    sorted_pos = positions[sorted_idx]
+    # an atom is dropped when an atom before it is at the same place
+    duplicate = torch.tril(same_place, diagonal=-1).any(dim=1)
 
-    pos_diff = sorted_pos.unsqueeze(1) - sorted_pos.unsqueeze(0)
-    dist_sq = torch.sum(pos_diff**2, dim=-1)
-
-    z_diff = sorted_z.unsqueeze(1) - sorted_z.unsqueeze(0)
-    same_z = z_diff == 0
-
-    same_pos = dist_sq < tol * tol
-    duplicate = same_pos & same_z
-
-    mask = torch.ones(n, dtype=torch.bool, device=positions.device)
-    for i in range(n):
-        if duplicate[i, :i].any():
-            mask[sorted_idx[i]] = False
-
-    return mask
+    return ~duplicate

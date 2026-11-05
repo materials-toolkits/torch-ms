@@ -146,6 +146,10 @@ from torchms.data import parse_cif
 structures = parse_cif(open("file.cif").read())   # one structure per data block
 ```
 
-Only P1 CIF files are supported: atoms must be listed explicitly, without symmetry operations.
-The lattice is rebuilt from the cell lengths and angles, in the standard orientation (first
+Any space group is read. The atoms are the atom sites and their images by the symmetry
+operations the block lists (`_space_group_symop_operation_xyz` or
+`_symmetry_equiv_pos_as_xyz`), in its own setting; without them, by the operations of the
+standard setting of its space-group number. Images closer than 1e-3 in fractional
+coordinates are one atom, and sites of several elements at one place are one atom of the
+most occupied element, as ASE reads them. Blocks without atoms are left out. The lattice is rebuilt from the cell lengths and angles, in the standard orientation (first
 vector along x).
