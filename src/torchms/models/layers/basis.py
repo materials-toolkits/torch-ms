@@ -394,21 +394,30 @@ def sinusoidal_frequencies(
 
 
 def sinusoids(
-    angle: Float[torch.Tensor, "n half"], interleave: bool = False
-) -> Float[torch.Tensor, "n dim"]:
+    angle: Float[torch.Tensor, "... half"],
+    interleave: bool = False,
+    *,
+    cosine_first: bool = False,
+) -> Float[torch.Tensor, "... dim"]:
     """Sines and cosines of angles, the features of sinusoidal_embedding.
 
     Args:
-        angle: Angles, shape (n, half).
+        angle: Angles, shape (..., half).
         interleave: If True, the sine and the cosine of an angle follow each
             other, as in MatterGen. Otherwise the sines come first.
+        cosine_first: If True, and not interleave, the cosines come first, as
+            in the embedding of the time of DiT.
 
     Examples:
         >>> sinusoids(torch.tensor([[0.0, 1.0]]), interleave=True)
         tensor([[0.0000, 1.0000, 0.8415, 0.5403]])
+        >>> sinusoids(torch.tensor([[0.0, 1.0]]), cosine_first=True)
+        tensor([[1.0000, 0.5403, 0.0000, 0.8415]])
     """
     if interleave:
-        return torch.stack([angle.sin(), angle.cos()], dim=-1).flatten(1)
+        return torch.stack([angle.sin(), angle.cos()], dim=-1).flatten(-2)
+    if cosine_first:
+        return torch.cat([angle.cos(), angle.sin()], dim=-1)
 
     return torch.cat([angle.sin(), angle.cos()], dim=-1)
 

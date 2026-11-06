@@ -32,6 +32,7 @@ Models which generate structures.
 
 | Model | Class | Generates | Source | Weights | Largest difference with the original |
 |---|---|---|---|---|---|
+| [ADiT](adit.md) | `ADiT` | crystals of at most 20 atoms and molecules of at most 29, of given numbers of atoms, with their elements | ADiT `b9ce505`, **CC BY-NC 4.0** | of the first author, on QM9 and MP-20 | 9.5e-6 on the scores of the elements |
 | [CDVAE](cdvae.md) | `CDVAE` | crystals of at most 20 atoms, from a latent vector | cdvae `f857f59`, MIT | **third party** | 4.0e-5 on the latent mean |
 | [DiffCSP](diffcsp.md) | `DiffCSP` | the lattice and the coordinates of a crystal, from its composition | DiffCSP `7121d15`, MIT | official | 7.6e-6 on the noise of the lattice |
 | [DiffCSP](diffcsp.md) | `DiffCSPGeneration` | crystals of given numbers of atoms, with their elements | DiffCSP `7121d15`, MIT | official | 5.7e-6 on the noise of the lattice |
@@ -44,7 +45,9 @@ Models which generate structures.
 | [MatterGen](mattergen.md#conditioned-on-a-bulk-modulus) | `MatterGenBulkModulus` | crystals of given numbers of atoms, towards a bulk modulus | MatterGen `9242366`, MIT | official, fine-tuned on the bulk modulus from a machine-learned potential | guidance and steps identical; the network within its rounding |
 | [MatterGen](mattergen.md#conditioned-on-a-magnetic-density-and-the-hhi-score) | `MatterGenMagneticDensityHHIScore` | crystals of given numbers of atoms, towards a magnetic density and an HHI score | MatterGen `9242366`, MIT | official, fine-tuned on both | guidance and steps identical; the network within its rounding |
 
-These are rewrites too, compared with the original code as the supervised models. The
+These are rewrites too, compared with the original code as the supervised models. ADiT
+generates crystals and molecules with one model, reads no graph, and its code is under a
+license which forbids commercial use. The
 weights of CDVAE were not trained by its authors, who publish none: see its page. DiffCSP
 has two models with their own weights, one which is given the elements and one which
 generates them. Of MatterGen every published model is rewritten: the base model, trained on Alex-MP-20
@@ -69,6 +72,7 @@ nearest neighbours, which is not defined when several neighbours are at the same
 | M3GNet | `AddRadiusGraph(5.0)`, `AddTriplets(radius=4.0)` |
 | CHGNet | `AddRadiusGraph(6.0)`, `AddTriplets(radius=3.0, strict=True)`, `AddBonds()` |
 | ALIGNN | `AddRadiusGraph(5.0)`, `KeepNearestNeighbors(12)`, `AddLineGraph(radius=3.5, backtrack=True)` |
+| ADiT | none: its transformers read every atom of a structure |
 | CDVAE, encoder | a graph of bonds given with the structures, then `AddLineGraph(backtrack=True, same_atom=False)` |
 | CDVAE, decoder | `AddRadiusGraph(7.0)`, `KeepNearImages(1)`, `KeepNearestNeighbors(20)`, `MirrorEdges()`, `AddTriplets()`, `AddBonds()` |
 | DiffCSP | `AddCompleteGraph(self_loops=True)` |

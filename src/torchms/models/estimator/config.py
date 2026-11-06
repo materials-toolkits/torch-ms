@@ -77,8 +77,9 @@ def config_files() -> dict[str, Path]:
     The models are the directories of torchms.models with a configuration.
 
     Examples:
-        >>> sorted(config_files())
-        ['alignn', 'cdvae', 'chgnet', 'diffcsp', 'm3gnet', 'mace', 'mattergen', 'orb']
+        >>> sorted(config_files())  # doctest: +NORMALIZE_WHITESPACE
+        ['adit', 'alignn', 'cdvae', 'chgnet', 'diffcsp', 'm3gnet', 'mace',
+         'mattergen', 'orb']
     """
     directory = Path(__file__).parent.parent
 

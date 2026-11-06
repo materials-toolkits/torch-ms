@@ -36,6 +36,14 @@
 
 ## Generative models
 
+### ADiT
+
+::: torchms.models.adit.model
+
+::: torchms.models.adit.dit
+
+::: torchms.models.adit.config
+
 ### CDVAE
 
 ::: torchms.models.cdvae.model

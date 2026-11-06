@@ -169,6 +169,7 @@ def test_model_does_not_build_graphs(cls):
 
 def test_checkpoints_are_read_from_the_configurations(tmp_path):
     assert set(weights.CHECKPOINTS) == {
+        "adit",
         "orb",
         "chgnet",
         "m3gnet",
