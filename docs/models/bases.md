@@ -22,6 +22,7 @@ polynomial_cutoff(distance, 6.0, p=5)       # 1 at 0, 0 at the radius and after
 | `sine_bessel` | the same with given frequencies and prefactor | orb-models | MACE |
 | `SphericalBesselBasis` | `j_l(z_ln r / r_max)`, with `z_ln` the roots of `j_l`, normalized | matgl | M3GNet, DimeNet++ |
 | `SmoothBesselBasis` | orthogonal combinations of `sin(x) / x` at `(n + 1) pi r / r_max` and `(n + 2) pi r / r_max`, zero with two derivatives at `r_max` (arXiv:1907.02374) | MatterSim | MatterSim |
+| `reciprocal_fourier` | `cos(G r)` and `sin(G r)` of the reciprocal vectors of Miller indices (`miller_indices`), at fractional coordinates | CrystalFlow | CrystalFlow |
 | `GaussianBasis` | gaussians centered on a regular grid | — | ALIGNN, GemNet-T |
 | `polynomial_cutoff` | envelope from 1 at a distance of 0 to 0 at the radius, with two derivatives zero there | orb-models | every model |
 

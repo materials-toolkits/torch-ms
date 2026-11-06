@@ -35,6 +35,8 @@ Models which generate structures.
 |---|---|---|---|---|---|
 | [ADiT](adit.md) | `ADiT` | crystals of at most 20 atoms and molecules of at most 29, of given numbers of atoms, with their elements | ADiT `b9ce505`, **CC BY-NC 4.0** | of the first author, on QM9 and MP-20 | 9.5e-6 on the scores of the elements |
 | [CDVAE](cdvae.md) | `CDVAE` | crystals of at most 20 atoms, from a latent vector | cdvae `f857f59`, MIT | **third party** | 4.0e-5 on the latent mean |
+| [CrystalFlow](crystalflow.md) | `CrystalFlow` | the lattice and the coordinates of a crystal, from its composition; under a pressure | CrystalFlow `v1.0.0-alpha.1`, MIT | official, on MP-20, MPTS-52 and MP-CALYPSO-60 | 1.6e-6 on the network |
+| [CrystalFlow](crystalflow.md) | `CrystalFlowGeneration` | crystals of given numbers of atoms, with their elements; towards a formation energy | CrystalFlow `v1.0.0-alpha.1`, MIT | official, on MP-20 | 1.4e-5, 2.5e-4 at the time 1 within its rounding |
 | [DiffCSP](diffcsp.md) | `DiffCSP` | the lattice and the coordinates of a crystal, from its composition | DiffCSP `7121d15`, MIT | official | 7.6e-6 on the noise of the lattice |
 | [DiffCSP](diffcsp.md) | `DiffCSPGeneration` | crystals of given numbers of atoms, with their elements | DiffCSP `7121d15`, MIT | official | 5.7e-6 on the noise of the lattice |
 | [FlowMM](flowmm.md) | `FlowMM` | crystals of given numbers of atoms, with their elements | FlowMM `6a96aec`, **CC BY-NC 4.0** | **third party**, on MP-20 | 2.9e-6 on the velocity of the bits; near the time 1, as near to the original in double precision as the original |
@@ -79,6 +81,7 @@ nearest neighbours, which is not defined when several neighbours are at the same
 | ADiT | none: its transformers read every atom of a structure |
 | CDVAE, encoder | a graph of bonds given with the structures, then `AddLineGraph(backtrack=True, same_atom=False)` |
 | CDVAE, decoder | `AddRadiusGraph(7.0)`, `KeepNearImages(1)`, `KeepNearestNeighbors(20)`, `MirrorEdges()`, `AddTriplets()`, `AddBonds()` |
+| CrystalFlow | `AddCompleteGraph(self_loops=True)` |
 | DiffCSP | `AddCompleteGraph(self_loops=True)` |
 | FlowMM | `AddCompleteGraph(self_loops=False)` |
 | MatterGen and its fine-tuned models | `AddRadiusGraph(7.0, max_image_shift=5)`, `KeepNearestNeighbors(50)`, `MirrorEdges()`, `AddTriplets()`, `AddBonds()` |
@@ -112,7 +115,7 @@ from.
 | Layer | Content | Used by |
 |---|---|---|
 | [Bases](bases.md) | radial bases, bases of angles, of fractional coordinates and of a time, spherical harmonics, smooth cutoffs | every model |
-| [CSPNet](cspnet.md) ([arXiv:2309.04475](https://arxiv.org/abs/2309.04475)) | network on every pair of atoms of a structure and their fractional coordinates, one vector per atom and one matrix per structure | DiffCSP, FlowMM (its layer) |
+| [CSPNet](cspnet.md) ([arXiv:2309.04475](https://arxiv.org/abs/2309.04475)) | network on every pair of atoms of a structure and their fractional coordinates, one vector per atom and one matrix per structure | DiffCSP, CrystalFlow and FlowMM (their layers) |
 | [DimeNet++](dimenet.md) ([arXiv:2011.14115](https://arxiv.org/abs/2011.14115)) | network on the bonds of a graph and their angles, one vector per structure | CDVAE (encoder) |
 | [GemNet-T](gemnet.md) ([arXiv:2106.08903](https://arxiv.org/abs/2106.08903)) | network on the edges of a symmetric graph and their triplets, one vector per atom and one matrix per structure | CDVAE (decoder), MatterGen |
 | [`LineGraphNetwork`](line-graph-network.md) | network of the energy on pairs, triplets and quadruplets, with their angles and dihedral angles | no model of the library |

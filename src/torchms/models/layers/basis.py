@@ -12,6 +12,10 @@
 # models/m3gnet/model.py. The roots are found here by bisection, where matgl
 # stores a table of them.
 #
+# reciprocal_fourier is derived from CrystalFlow
+# (https://github.com/ixsluo/CrystalFlow), Copyright (c) 2024 Xiaoshan Luo, MIT
+# license (see models/crystalflow/LICENSE).
+#
 # SmoothBesselBasis is derived from MatterSim
 # (https://github.com/microsoft/mattersim), Copyright (c) Microsoft Corporation,
 # MIT license (see models/mattersim/LICENSE).
@@ -446,6 +450,64 @@ def periodic_fourier(
     )
 
     return torch.cat([angle.sin(), angle.cos()], dim=-1)
+
+
+def miller_indices(num_millers: int) -> Float[torch.Tensor, "num_millers**3 3"]:
+    """Every (h, k, l) with each index from 0 to num_millers - 1, l fastest.
+
+    Examples:
+        >>> miller_indices(2)
+        tensor([[0., 0., 0.],
+                [0., 0., 1.],
+                [0., 1., 0.],
+                [0., 1., 1.],
+                [1., 0., 0.],
+                [1., 0., 1.],
+                [1., 1., 0.],
+                [1., 1., 1.]])
+    """
+    index = torch.arange(num_millers)
+
+    return torch.cartesian_prod(index, index, index).float()
+
+
+def reciprocal_fourier(
+    x: Float[torch.Tensor, "n 3"],
+    lattice: Float[torch.Tensor, "n 3 3"],
+    millers: Float[torch.Tensor, "m 3"],
+) -> Float[torch.Tensor, "n 2*m"]:
+    """Plane waves of reciprocal vectors at fractional coordinates, as in CrystalFlow.
+
+    cos(G r) then sin(G r), for the reciprocal vectors G = h b_0 + k b_1 +
+    l b_2 of the Miller indices (h, k, l) and the position r = x L. The
+    reciprocal vectors are 2 pi times the cross products of the lattice
+    vectors over the volume, plus 1e-9. As G r = 2 pi (h, k, l) . x, the
+    values only depend on the lattice through the rounding: they are computed
+    through it, as CrystalFlow does.
+
+    Args:
+        x: Fractional coordinates of each item, a difference of two atoms.
+        lattice: Lattice vectors of each item, as rows.
+        millers: Miller indices, see miller_indices.
+
+    Examples:
+        >>> x = torch.tensor([[0.25, 0.0, 0.0]])
+        >>> lattice = 3.0 * torch.eye(3).unsqueeze(0)
+        >>> values = reciprocal_fourier(x, lattice, torch.tensor([[1.0, 0.0, 0.0]]))
+        >>> values.round(decimals=4) + 0.0
+        tensor([[0., 1.]])
+    """
+    cartesian = torch.einsum("ei,eij->ej", x, lattice)
+    volume = torch.det(lattice)[:, None] + 1e-9
+    vectors = [
+        2 * math.pi * torch.cross(lattice[:, i], lattice[:, j], dim=1) / volume
+        for i, j in ((1, 2), (2, 0), (0, 1))
+    ]
+    reciprocal = torch.stack(vectors, dim=1)
+    waves = torch.einsum("mi,eij->emj", millers, reciprocal)
+    phase = torch.einsum("emj,ej->em", waves, cartesian)
+
+    return torch.cat([phase.cos(), phase.sin()], dim=-1)
 
 
 def sinusoidal_frequencies(

@@ -9,7 +9,8 @@ given elements, MatterGenSpaceGroup, MatterGenBandGap, MatterGenMagneticDensity
 and MatterGenBulkModulus towards a space group, a band gap, a magnetic density
 or a bulk modulus, MatterGenChemicalSystemEnergyAboveHull for given elements
 near the hull, MatterGenMagneticDensityHHIScore towards a magnetic density with
-elements of diverse supply, and DiffCSP for a given composition.
+elements of diverse supply, and DiffCSP and CrystalFlow for a given
+composition.
 
 All of them are pretrained models of other projects, rewritten with the graphs
 of torchms. Each one has a directory with its network (model.py), its
@@ -27,6 +28,7 @@ from torchms.models.adit import ADiT
 from torchms.models.alignn import ALIGNN
 from torchms.models.cdvae import CDVAE
 from torchms.models.chgnet import CHGNet
+from torchms.models.crystalflow import CrystalFlow, CrystalFlowGeneration
 from torchms.models.diffcsp import DiffCSP, DiffCSPGeneration
 from torchms.models.flowmm import FlowMM
 from torchms.models.m3gnet import M3GNet
@@ -49,6 +51,8 @@ __all__ = [
     "ALIGNN",
     "CDVAE",
     "CHGNet",
+    "CrystalFlow",
+    "CrystalFlowGeneration",
     "DiffCSP",
     "DiffCSPGeneration",
     "FlowMM",

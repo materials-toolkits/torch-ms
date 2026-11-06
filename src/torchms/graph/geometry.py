@@ -187,6 +187,79 @@ def lattice_parameters(
     return lengths, angles
 
 
+def polar_lattice_parameters(
+    lattice: Float[torch.Tensor, "n_struct 3 3"],
+) -> Float[torch.Tensor, "n_struct 6"]:
+    """Six numbers of a cell which do not change with its rotation, as in CrystalFlow.
+
+    The symmetric part of the polar decomposition of the lattice,
+    P = (L L^T)^(1/2), is exp(S) for a symmetric matrix S: k holds S_01, S_02,
+    S_12, (S_00 - S_11) / 2, (S_00 + S_11 - 2 S_22) / 6 and the mean of its
+    diagonal, the logarithm of the cubic root of the volume. See
+    lattice_from_polar_parameters for the inverse.
+
+    Args:
+        lattice: Lattice vectors as rows, shape (n_struct, 3, 3).
+
+    Returns:
+        k, shape (n_struct, 6).
+
+    Examples:
+        >>> k = polar_lattice_parameters(2.0 * torch.eye(3).unsqueeze(0))
+        >>> k.round(decimals=4) + 0.0
+        tensor([[0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.6931]])
+    """
+    gram = lattice @ lattice.transpose(-1, -2)
+    # pylint: disable-next=not-callable
+    eigenvalues, eigenvectors = torch.linalg.eigh(gram)
+    log = torch.diag_embed(eigenvalues.log()) / 2
+    s = eigenvectors @ log @ eigenvectors.transpose(-1, -2)
+
+    return torch.stack(
+        [
+            s[:, 0, 1],
+            s[:, 0, 2],
+            s[:, 1, 2],
+            (s[:, 0, 0] - s[:, 1, 1]) / 2,
+            (s[:, 0, 0] + s[:, 1, 1] - 2 * s[:, 2, 2]) / 6,
+            (s[:, 0, 0] + s[:, 1, 1] + s[:, 2, 2]) / 3,
+        ],
+        dim=1,
+    )
+
+
+def lattice_from_polar_parameters(
+    k: Float[torch.Tensor, "n_struct 6"],
+) -> Float[torch.Tensor, "n_struct 3 3"]:
+    """The symmetric lattice exp(S) of six numbers k, see polar_lattice_parameters.
+
+    The lattice has the lengths and the angles of the cell k was computed
+    from, in another orientation: a symmetric matrix.
+
+    Examples:
+        >>> vectors = [[3.0, 0.0, 0.0], [1.0, 4.0, 0.0], [0.5, 0.2, 5.0]]
+        >>> lattice = torch.tensor([vectors])
+        >>> rebuilt = lattice_from_polar_parameters(polar_lattice_parameters(lattice))
+        >>> torch.allclose(rebuilt @ rebuilt.mT, lattice @ lattice.mT, atol=1e-4)
+        True
+        >>> torch.allclose(rebuilt, rebuilt.mT)
+        True
+    """
+    diagonal_0 = k[:, 3] + k[:, 4] + k[:, 5]
+    diagonal_1 = -k[:, 3] + k[:, 4] + k[:, 5]
+    diagonal_2 = -2 * k[:, 4] + k[:, 5]
+    s = torch.stack(
+        [
+            torch.stack([diagonal_0, k[:, 0], k[:, 1]], dim=1),
+            torch.stack([k[:, 0], diagonal_1, k[:, 2]], dim=1),
+            torch.stack([k[:, 1], k[:, 2], diagonal_2], dim=1),
+        ],
+        dim=1,
+    )
+
+    return torch.matrix_exp(s)
+
+
 def symmetric_lattice(
     lattice: Float[torch.Tensor, "n_struct 3 3"],
 ) -> Float[torch.Tensor, "n_struct 3 3"]:

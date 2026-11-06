@@ -18,7 +18,7 @@ import importlib
 import os
 import pickle
 import types
-from typing import Any
+from typing import IO, Any
 
 import numpy as np
 import torch
@@ -106,14 +106,14 @@ def _load(file: Any, **kwargs: Any) -> Any:
 _PICKLE = types.SimpleNamespace(__name__="pickle", Unpickler=Unpickler, load=_load)
 
 
-def read_pickle(file_name: str | os.PathLike) -> Any:
+def read_pickle(file_name: str | os.PathLike | IO[bytes]) -> Any:
     """Read a file written by torch.save without importing any class.
 
     For the files which torch.load refuses with weights_only=True: checkpoints
     with objects of other libraries next to their tensors.
 
     Args:
-        file_name: File written by torch.save.
+        file_name: File written by torch.save, or an open file of its bytes.
 
     Returns:
         What the file holds, with tensors and containers as they are and a

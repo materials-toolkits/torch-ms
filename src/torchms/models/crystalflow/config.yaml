@@ -1,0 +1,217 @@
+# CrystalFlow: weights, graph and hyperparameters, read by model.py. Flow
+# matching of the structure of crystals: the lattice as the six numbers of its
+# polar decomposition, the fractional coordinates on the torus, and for the
+# generation the elements, all moved by a CSPNet from noise at the time 0 to a
+# crystal at the time 1. Two models: CrystalFlow, which predicts the structure
+# of a composition (CSP), and CrystalFlowGeneration, which also generates the
+# elements (DNG); what is only for the second one is in the section
+# "generation". The weights of other networks than the default one are in
+# "variants".
+
+default_weights: crystalflow-csp-mp20
+
+# The checkpoints of the authors, published in the release v1.0.0-alpha.1 of
+# their repository: four in one archive, CSP-mpts-52 in an archive of its own
+# (uploaded in May 2026). An archive is downloaded once; upstream.members says
+# which of its files are the checkpoint and the configuration of each model.
+#
+# * crystalflow-csp-mp20: prediction of the structure of a composition,
+#   trained on MP-20 without condition;
+# * crystalflow-csp-mpts52: the same, trained on MPTS-52 (up to 52 atoms);
+# * crystalflow-csp-calypso60-pressure: the same, trained on MP-CALYPSO-60
+#   (up to 60 atoms) and conditioned on the pressure;
+# * crystalflow-dng-mp20: generation of crystals with their elements, MP-20;
+# * crystalflow-dng-mp20-formation-energy: the same, conditioned on the
+#   formation energy per atom.
+checkpoints:
+  crystalflow-csp-mp20: &main_archive
+    - url: https://github.com/ixsluo/CrystalFlow/releases/download/v1.0.0-alpha.1/ckpt-v1.0.0.zip
+      sha256: e0fa32e383d46f8d051859d90e3a11313970cabca2b0688ac9d4ed6e0156d728
+  crystalflow-csp-mpts52:
+    - url: https://github.com/ixsluo/CrystalFlow/releases/download/v1.0.0-alpha.1/CSP-mpts-52.zip
+      sha256: 8558cc6756734f3aa16420b505c7101d0648baa74e17ff07a1ee1b3939a28e03
+  crystalflow-csp-calypso60-pressure: *main_archive
+  crystalflow-dng-mp20: *main_archive
+  crystalflow-dng-mp20-formation-energy: *main_archive
+
+# what the checkpoints have and the network does not use: the condition of the
+# guided models, the noise schedules of DiffCSP and a projection on space groups
+unused_parameters:
+  - decoder.cemb_
+  - beta_scheduler.
+  - sigma_scheduler.
+  - latticedecompnn.
+
+# every pair of atoms of a structure, and each atom with itself
+graph:
+  self_loops: true
+
+# CSPNet of CrystalFlow
+model:
+  num_elements: &num_elements 100        # rows of the embedding, from hydrogen
+  hidden_dim: &hidden_dim 512            # features of the atoms and of the messages
+  num_layers: &num_layers 6
+  num_freqs: &num_freqs 256              # frequencies of the Fourier basis of the coordinates
+  num_millers: &num_millers 8            # Miller indices per direction of the plane waves
+  lattice_dim: &lattice_dim 6            # numbers of the polar decomposition of a cell
+  time_dim: &time_dim 256                # embedding of the time
+  time_max_period: 10000.0               # inverse of its lowest frequency
+  # the element of an atom is a vector of type_dim values read by a linear
+  # layer, and the network gives its velocity: the generation
+  soft_elements: false
+  predict_elements: false
+  type_dim: 28                           # rows then columns of the table of the generation
+  # properties the network is conditioned on, each one expanded in gaussians
+  conditions: []
+  condition_basis: 50                    # gaussians of a property, after its standardization
+  condition_start: -2.0                  # their first and last centers
+  condition_stop: 2.0
+
+flow:
+  # the lattice starts from k with normal noise of this deviation, and 1 added
+  # to its last number, the logarithm of the cubic root of the volume
+  lattice_polar_sigma: &lattice_polar_sigma 0.1
+
+# Euler steps from the time 0 to 1, as the README of CrystalFlow samples a
+# composition (scripts/evaluate.py --ode-int-steps 100 --anneal_coords
+# --anneal_slope 5)
+sampling:
+  num_steps: 100
+  # the velocity of the coordinates is multiplied by 1 + slope * max(t - offset, 0)
+  anneal_slope: 5.0
+  anneal_offset: 0.0
+  # a model with conditions mixes guide_factor times its velocity with the
+  # condition and 1 - guide_factor times the one without; 1 is the first alone
+  guide_factor: 1.0
+
+# what the model of the generation has of its own
+generation:
+  default_weights: crystalflow-dng-mp20
+  # an element is two one-hot vectors, of its row and of its column in this
+  # table, by atomic number from hydrogen to oganesson (type_module.py)
+  num_rows: 13
+  num_columns: 15
+  table: [[0, 0], [0, 7], [1, 0], [1, 1], [1, 2], [1, 3], [1, 4], [1, 5], [1, 6],
+    [1, 7], [2, 0], [2, 1], [2, 2], [2, 3], [2, 4], [2, 5], [2, 6], [2, 7], [3, 0],
+    [3, 1], [7, 0], [7, 1], [7, 2], [7, 3], [7, 4], [7, 5], [7, 6], [7, 7], [7, 8],
+    [7, 9], [3, 2], [3, 3], [3, 4], [3, 5], [3, 6], [3, 7], [4, 0], [4, 1], [8, 0],
+    [8, 1], [8, 2], [8, 3], [8, 4], [8, 5], [8, 6], [8, 7], [8, 8], [8, 9], [4, 2],
+    [4, 3], [4, 4], [4, 5], [4, 6], [4, 7], [5, 0], [5, 1], [11, 0], [11, 1],
+    [11, 2], [11, 3], [11, 4], [11, 5], [11, 6], [11, 7], [11, 8], [11, 9],
+    [11, 10], [11, 11], [11, 12], [11, 13], [11, 14], [9, 1], [9, 2], [9, 3],
+    [9, 4], [9, 5], [9, 6], [9, 7], [9, 8], [9, 9], [5, 2], [5, 3], [5, 4], [5, 5],
+    [5, 6], [5, 7], [6, 0], [6, 1], [12, 0], [12, 1], [12, 2], [12, 3], [12, 4],
+    [12, 5], [12, 6], [12, 7], [12, 8], [12, 9], [12, 10], [12, 11], [12, 12],
+    [12, 13], [12, 14], [10, 1], [10, 2], [10, 3], [10, 4], [10, 5], [10, 6],
+    [10, 7], [10, 8], [10, 9], [6, 2], [6, 3], [6, 4], [6, 5], [6, 6], [6, 7]]
+  # probability of each number of atoms, from 0: the one of the training set
+  # of MP-20 (train_dist of scripts/generation.py)
+  num_atoms_distribution: [0.0, 0.0021742334905660377, 0.021079009433962265,
+    0.019826061320754717, 0.15271226415094338, 0.047132959905660375,
+    0.08464770047169812, 0.021079009433962265, 0.07808814858490566,
+    0.03434551886792453, 0.0972877358490566, 0.013303360849056603,
+    0.09669811320754718, 0.02155807783018868, 0.06522700471698113,
+    0.014372051886792452, 0.06703272405660378, 0.00972877358490566,
+    0.053176591981132074, 0.010576356132075472, 0.08995430424528301]
+
+# what the network and the sampling of other weights change, by name of the
+# weights: values of the sections model and sampling, unused_parameters, and
+# the arguments checked in their configuration, by section
+variants:
+  crystalflow-csp-mpts52: {}
+  crystalflow-csp-calypso60-pressure:
+    model:
+      conditions: [pressure]
+    unused_parameters: [beta_scheduler., sigma_scheduler., latticedecompnn.]
+    sections:
+      model:
+        guide_threshold: -1
+      data:
+        conditions: [pressure]
+  crystalflow-dng-mp20:
+    model:
+      soft_elements: true
+      predict_elements: true
+    # scripts/generation.py does not anneal
+    sampling:
+      anneal_slope: 0.0
+    sections:
+      model:
+        type_encoding: table
+      model.decoder:
+        pred_type: true
+  crystalflow-dng-mp20-formation-energy:
+    model:
+      soft_elements: true
+      predict_elements: true
+      conditions: [formation_energy_per_atom]
+    sampling:
+      anneal_slope: 0.0
+    unused_parameters: [beta_scheduler., sigma_scheduler., latticedecompnn.]
+    sections:
+      model:
+        type_encoding: table
+        guide_threshold: -1
+      model.decoder:
+        pred_type: true
+      data:
+        conditions: [formation_energy_per_atom]
+
+upstream:
+  # files of each model in its archive, with their SHA-256; a model with
+  # conditions also has the standardization of its properties
+  members:
+    crystalflow-csp-mp20:
+      checkpoint: ckpt-v1.0.0/CSP-mp-20/epoch=2462-step=261078.ckpt
+      checkpoint_sha256: b08366eb04d47698da7ea09dbccb1c4a1304a4c3f506fdc1d8c294910ade6dc2
+      hparams: ckpt-v1.0.0/CSP-mp-20/hparams.yaml
+      hparams_sha256: 1be9aa0c4d1bde9caf5ed8d76f4ff3760c667ba2bfa29d6c5d6bba01c3bc0a1b
+    crystalflow-csp-mpts52:
+      checkpoint: CSP-mpts-52/epoch=1296-step=277558.ckpt
+      checkpoint_sha256: b5c6c674af98c29d0da618a7bef1a76bd66504a683fe984366df8d24520ff4a3
+      hparams: CSP-mpts-52/hparams.yaml
+      hparams_sha256: 259984f037185b59bf62a888a095cb77bc990ce4c91dd395fa31b69c838cba6e
+    crystalflow-csp-calypso60-pressure:
+      checkpoint: ckpt-v1.0.0/CSP-mp-calypso-60/epoch=1714-step=3524325.ckpt
+      checkpoint_sha256: 6371dd8a0e9dbd5d668635a37af26f0660b2375f58b309ee536e8a188776d54b
+      hparams: ckpt-v1.0.0/CSP-mp-calypso-60/hparams.yaml
+      hparams_sha256: cbba1e023de2d642620357cc14696e7dcab7893f5e3b7ae63b4ed5e9cbcaf553
+      scalers: ckpt-v1.0.0/CSP-mp-calypso-60/prop_scalers.pt
+      scalers_sha256: 2e96f5e1a2fe83b706a98e731bac9532e23a02513af8e89ec3365dabf491e600
+    crystalflow-dng-mp20:
+      checkpoint: ckpt-v1.0.0/DNG-mp-20/epoch=2694-step=72765.ckpt
+      checkpoint_sha256: abd359240252e6b2fe1740f006b6d80ee6df2f4b11a60f7030f4c9a75f617780
+      hparams: ckpt-v1.0.0/DNG-mp-20/hparams.yaml
+      hparams_sha256: a289445d6848f51d28dd394cbcc05f100c37327b67ffdeb5060931a7bccd9135
+    crystalflow-dng-mp20-formation-energy:
+      checkpoint: ckpt-v1.0.0/DNG-mp-20-Ef/epoch=2219-step=59940.ckpt
+      checkpoint_sha256: d43fa17b43adeb42a81719b2d3c7463a59f0107044269a5fbfad5c2be7d881a4
+      hparams: ckpt-v1.0.0/DNG-mp-20-Ef/hparams.yaml
+      hparams_sha256: c3ec1eb9bf863b4806a6dd74c4962794ca4d44dc06a50c4eeae94c434beaaebd
+      scalers: ckpt-v1.0.0/DNG-mp-20-Ef/prop_scalers.pt
+      scalers_sha256: da30db08407fd5fc68858c2bf5100bafeb96500d24bbf23d42fd26097dba596e
+  # configuration of the training the rewrite is written for (hparams.yaml),
+  # completed by the variants
+  sections:
+    model:
+      _target_: diffcsp.pl_modules.flow.CSPFlow
+      time_dim: *time_dim
+      latent_dim: 0
+      lattice_polar: true
+      lattice_polar_sigma: *lattice_polar_sigma
+    model.decoder:
+      _target_: diffcsp.pl_modules.cspnet.CSPNet
+      hidden_dim: *hidden_dim
+      latent_dim: 0
+      lattice_dim: *lattice_dim
+      max_atoms: *num_elements
+      num_layers: *num_layers
+      act_fn: silu
+      dis_emb: sin
+      num_freqs: *num_freqs
+      rec_emb: sin
+      num_millers: *num_millers
+      edge_style: fc
+      ln: true
+      ip: false
+      na_emb: 0
