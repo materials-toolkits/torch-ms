@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from torchms.models.estimator.config import YamlConfig
-from torchms.models.layers import cspnet
+from torchms.models.layers import cspnet, schedules
 
 
 @dataclass(frozen=True)
@@ -21,30 +21,18 @@ class GraphConfig:
 
 
 @dataclass(frozen=True)
-class NetworkConfig:  # pylint: disable=too-many-instance-attributes
+class NetworkConfig:
     """Hyperparameters of the diffusion.
 
     Args:
-        timesteps: Steps of the diffusion.
         time_dim: Size of the embedding of the time.
         time_max_period: Inverse of the lowest frequency of this embedding.
-        beta_offset: Offset s of the cosine schedule of the noise of the
-            lattice.
-        beta_min: The betas of this schedule are not smaller.
-        beta_max: The betas of this schedule are not larger.
-        sigma_begin: Noise of the fractional coordinates at the first time,
-            in cells.
-        sigma_end: Noise of the fractional coordinates at the last time.
+        schedules: Steps of the diffusion and schedules of its noise.
     """
 
-    timesteps: int
     time_dim: int
     time_max_period: float
-    beta_offset: float
-    beta_min: float
-    beta_max: float
-    sigma_begin: float
-    sigma_end: float
+    schedules: schedules.Config
 
 
 @dataclass(frozen=True)

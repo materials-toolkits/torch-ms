@@ -187,6 +187,33 @@ def lattice_parameters(
     return lengths, angles
 
 
+def polar_logarithm(
+    lattice: Float[torch.Tensor, "n_struct 3 3"],
+) -> Float[torch.Tensor, "n_struct 3 3"]:
+    """Logarithm S of the symmetric part of the polar decomposition of cells.
+
+    The symmetric part P = (L L^T)^(1/2) of a lattice L is exp(S): S is
+    symmetric, and does not change with a rotation of the cell.
+
+    Args:
+        lattice: Lattice vectors as rows, shape (n_struct, 3, 3).
+
+    Returns:
+        S, shape (n_struct, 3, 3).
+
+    Examples:
+        >>> cell = torch.diag(torch.tensor([1.0, 2.0, 4.0]))
+        >>> torch.allclose(torch.matrix_exp(polar_logarithm(cell[None])), cell)
+        True
+    """
+    gram = lattice @ lattice.transpose(-1, -2)
+    # pylint: disable-next=not-callable
+    eigenvalues, eigenvectors = torch.linalg.eigh(gram)
+    log = torch.diag_embed(eigenvalues.log()) / 2
+
+    return eigenvectors @ log @ eigenvectors.transpose(-1, -2)
+
+
 def polar_lattice_parameters(
     lattice: Float[torch.Tensor, "n_struct 3 3"],
 ) -> Float[torch.Tensor, "n_struct 6"]:
@@ -209,11 +236,7 @@ def polar_lattice_parameters(
         >>> k.round(decimals=4) + 0.0
         tensor([[0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.6931]])
     """
-    gram = lattice @ lattice.transpose(-1, -2)
-    # pylint: disable-next=not-callable
-    eigenvalues, eigenvectors = torch.linalg.eigh(gram)
-    log = torch.diag_embed(eigenvalues.log()) / 2
-    s = eigenvectors @ log @ eigenvectors.transpose(-1, -2)
+    s = polar_logarithm(lattice)
 
     return torch.stack(
         [

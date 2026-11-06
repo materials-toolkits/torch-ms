@@ -12,7 +12,7 @@ of weights and gives such a vector for each atom.
 | Reads | a complete graph with self loops, fractional coordinates, lattices, and a vector of each structure |
 | Paper | [Crystal Structure Prediction by Joint Equivariant Diffusion](https://arxiv.org/abs/2309.04475), Jiao, Huang, Lin, Han, Chen, Lu and Liu (arXiv:2309.04475) |
 | Rewritten from | [DiffCSP](https://github.com/jiaor17/DiffCSP) `7121d15`, the code of the authors, MIT |
-| Pretrained weights | the ones of the two models of [DiffCSP](diffcsp.md), as their network |
+| Pretrained weights | the ones of the two models of [DiffCSP](diffcsp.md) and the six of [DiffCSP++](diffcsp_pp.md), as their network |
 
 Features live on the atoms. A layer builds a message for each pair of atoms from their
 features, from the 9 inner products of the lattice vectors, and from sines and cosines of
@@ -27,7 +27,7 @@ from torchms.models.layers import CSPNet, cspnet
 
 config = cspnet.Config(
     latent_dim=256, num_elements=100, hidden_dim=512, num_layers=6, num_freqs=128,
-    soft_elements=False, predict_elements=False,
+    soft_elements=False, predict_elements=False, lattice_dim=None,
 )
 model = CSPNet(config)
 
@@ -64,6 +64,7 @@ Every field of `cspnet.Config` is required: a model gives the values of its `con
 | `num_freqs` | frequencies of the basis of the differences of the coordinates | 128 |
 | `soft_elements` | the element of an atom is a vector of weights, not an index | false from a composition, true in the generation |
 | `predict_elements` | the network also gives a vector of each atom, one value per element | false from a composition, true in the generation |
+| `lattice_dim` | `None` for a lattice given as a 3 x 3 matrix, read through the inner products of its vectors, for which the network gives a matrix times the lattice; otherwise the size of a vector of parameters of the lattice, read and given as it is | `None`; 6 in [DiffCSP++](diffcsp_pp.md) |
 
 ## What is kept from DiffCSP
 

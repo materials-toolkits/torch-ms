@@ -8,7 +8,7 @@ has a page for each one.
 |---|---|---|
 | Supervised | total energy, pretrained | [orb-v3](../models/orb.md), [MACE](../models/mace.md), [M3GNet](../models/m3gnet.md), [MatterSim](../models/mattersim.md), [CHGNet](../models/chgnet.md) |
 | | formation energy, pretrained | [ALIGNN](../models/alignn.md) |
-| Generative | crystals, pretrained | [CDVAE](../models/cdvae.md), [CrystalFlow](../models/crystalflow.md), [DiffCSP](../models/diffcsp.md), [FlowMM](../models/flowmm.md), [MatterGen](../models/mattergen.md) |
+| Generative | crystals, pretrained | [CDVAE](../models/cdvae.md), [CrystalFlow](../models/crystalflow.md), [DiffCSP](../models/diffcsp.md), [DiffCSP++](../models/diffcsp_pp.md), [FlowMM](../models/flowmm.md), [MatterGen](../models/mattergen.md) |
 | | crystals and molecules, pretrained | [ADiT](../models/adit.md) |
 | Layers | bases and networks | [bases](../models/bases.md), [DimeNet++](../models/dimenet.md), [GemNet-T](../models/gemnet.md), [CSPNet](../models/cspnet.md) |
 | | networks of the energy, to train | [`LineGraphNetwork`](../models/line-graph-network.md), [`EquivariantNetwork`](../models/equivariant-network.md) |
@@ -127,6 +127,26 @@ structures = model.sample(z, num_atoms)     # 1000 steps of diffusion
 
 generation = DiffCSPGeneration.from_pretrained(device="cuda")
 structures = generation.sample(generation.sample_num_atoms(64))
+```
+
+[DiffCSP++](../models/diffcsp_pp.md) has the two models of DiffCSP constrained by a space
+group: the atoms are given as sites on Wyckoff positions, with their elements
+(`DiffCSPPlusPlus`) or without (`DiffCSPPlusPlusGeneration`), and the crystals sampled have
+the symmetry of the group.
+
+```{.python notest}
+from torchms.data.symmetry import WyckoffSites
+from torchms.models import DiffCSPPlusPlus, DiffCSPPlusPlusGeneration
+
+# NaCl in Fm-3m (4a, 4b) and SrTiO3 in Pm-3m (1a, 1b, 3c)
+sites = WyckoffSites.from_letters([225, 221], ["ab", "abc"], device="cuda")
+z = torch.tensor([11, 17, 38, 22, 8], device="cuda")      # one per site
+
+model = DiffCSPPlusPlus.from_pretrained(device="cuda")
+structures = model.sample(sites, z)        # 999 steps
+
+generation = DiffCSPPlusPlusGeneration.from_pretrained(device="cuda")
+structures = generation.sample(sites)      # with the element of each site
 ```
 
 [CrystalFlow](../models/crystalflow.md) has the two models of DiffCSP, by flow matching:

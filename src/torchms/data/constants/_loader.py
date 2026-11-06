@@ -244,3 +244,93 @@ def get_symmetry_operations(identifier: int | str) -> torch.Tensor:
     """
     sg = get_spacegroup(identifier)
     return torch.from_numpy(_get_symmetry_ops_cached()[sg.number].copy())
+
+
+@dataclass(frozen=True)
+class WyckoffPosition:
+    """A Wyckoff position of a space group: the sites of one orbit.
+
+    Attributes:
+        spacegroup: Number of the space group, from 1 to 230.
+        letter: Letter of the position, "a" for the most special one.
+        multiplicity: Number of atoms of an orbit.
+        operations: Affine map of each atom of an orbit, from the fractional
+            coordinates of a free point, shape (multiplicity, 4, 4):
+            [R|t; 0 0 0 1]. R is singular for a special position: (x, 0, 0)
+            has R = diag(1, 0, 0).
+    """
+
+    spacegroup: int
+    letter: str
+    multiplicity: int
+    operations: torch.Tensor
+
+
+_WYCKOFF: dict[int, tuple[WyckoffPosition, ...]] | None = None
+
+
+def _load_wyckoff() -> dict[int, tuple[WyckoffPosition, ...]]:
+    """Read wyckoff.npz, written by scripts/update_wyckoff.py from pyxtal."""
+    global _WYCKOFF  # pylint: disable=global-statement
+    if _WYCKOFF is not None:
+        return _WYCKOFF
+
+    with resources.files(_PACKAGE).joinpath("wyckoff.npz").open("rb") as f:
+        data = np.load(f)
+        num_positions = data["num_positions"]
+        letters = data["letters"].tolist()
+        multiplicities = data["multiplicities"].tolist()
+        exact = data["operations"].astype(np.float64) / float(data["denominator"])
+
+    affine = np.zeros((len(exact), 4, 4))
+    affine[:, :3] = exact
+    affine[:, 3, 3] = 1.0
+    starts = np.concatenate([[0], np.cumsum(multiplicities)])
+
+    _WYCKOFF = {}
+    position = 0
+    for number, count in enumerate(num_positions.tolist(), start=1):
+        _WYCKOFF[number] = tuple(
+            WyckoffPosition(
+                spacegroup=number,
+                letter=letters[i],
+                multiplicity=multiplicities[i],
+                operations=torch.from_numpy(affine[starts[i] : starts[i + 1]]),
+            )
+            for i in range(position, position + count)
+        )
+        position += count
+
+    return _WYCKOFF
+
+
+def get_wyckoff_positions(identifier: int | str) -> tuple[WyckoffPosition, ...]:
+    """Wyckoff positions of a space group, from the general one to "a".
+
+    The positions and their operations are the ones of pyxtal, in its order,
+    see scripts/update_wyckoff.py. The settings are the standard ones: the
+    unique axis b and the first cell of a monoclinic group, the hexagonal
+    axes of a rhombohedral group, and the origin on a center of inversion
+    (the origin choice 2) of the 24 groups with two origins, whose operations
+    are not the ones of get_symmetry_operations. The first operation of the
+    general position is the identity.
+
+    Args:
+        identifier: Space group number (int) or symbol (str).
+
+    Returns:
+        The positions of the group.
+
+    Examples:
+        >>> positions = get_wyckoff_positions(58)
+        >>> [(p.multiplicity, p.letter) for p in positions]
+        [(8, 'h'), (4, 'g'), (4, 'f'), (4, 'e'), (2, 'd'), (2, 'c'), (2, 'b'), (2, 'a')]
+        >>> positions[1].operations[1]
+        tensor([[-1.,  0.,  0.,  0.],
+                [ 0., -1.,  0.,  0.],
+                [ 0.,  0.,  0.,  0.],
+                [ 0.,  0.,  0.,  1.]], dtype=torch.float64)
+        >>> get_wyckoff_positions("Fm-3m")[-1].multiplicity
+        4
+    """
+    return _load_wyckoff()[get_spacegroup(identifier).number]

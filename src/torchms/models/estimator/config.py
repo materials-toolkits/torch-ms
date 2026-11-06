@@ -78,7 +78,7 @@ def config_files() -> dict[str, Path]:
 
     Examples:
         >>> sorted(config_files())  # doctest: +NORMALIZE_WHITESPACE
-        ['adit', 'alignn', 'cdvae', 'chgnet', 'crystalflow', 'diffcsp', 'flowmm',
+        ['adit', 'alignn', 'cdvae', 'chgnet', 'crystalflow', 'diffcsp', 'diffcsp_pp', 'flowmm',
          'm3gnet', 'mace', 'mattergen', 'mattersim', 'orb']
     """
     directory = Path(__file__).parent.parent

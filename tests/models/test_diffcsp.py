@@ -85,9 +85,11 @@ def test_schedules(model):
     beta, sigma = model.beta_scheduler, model.sigma_scheduler
 
     for values in (beta.betas, beta.alphas, beta.alphas_cumprod, beta.sigmas):
-        assert values.shape == (config.model.timesteps + 1,)
+        assert values.shape == (config.model.schedules.timesteps + 1,)
     assert (
-        sigma.sigmas.shape == sigma.sigmas_norm.shape == (config.model.timesteps + 1,)
+        sigma.sigmas.shape
+        == sigma.sigmas_norm.shape
+        == (config.model.schedules.timesteps + 1,)
     )
 
     # the time 0 has no noise
@@ -101,7 +103,9 @@ def test_schedules(model):
 
     assert torch.allclose(
         sigma.sigmas[[1, -1]],
-        torch.tensor([config.model.sigma_begin, config.model.sigma_end]),
+        torch.tensor(
+            [config.model.schedules.sigma_begin, config.model.schedules.sigma_end]
+        ),
     )
     assert (sigma.sigmas[1:] > sigma.sigmas[:-1]).all()
     ratio = sigma.sigmas[2:] / sigma.sigmas[1:-1]
@@ -315,7 +319,10 @@ def short_diffusion(steps: int = 20) -> Config:
     """Configuration of a diffusion of a few steps: all of them take seconds."""
     config = Config.load()
 
-    return replace(config, model=replace(config.model, timesteps=steps))
+    model = replace(
+        config.model, schedules=replace(config.model.schedules, timesteps=steps)
+    )
+    return replace(config, model=model)
 
 
 def test_a_model_follows_its_configuration():
@@ -445,7 +452,7 @@ def test_pretrained_network_matches_diffcsp(pretrained):
     config = Config.load()
     structures, expected = reference()
     times = expected["times"]
-    assert times[0] == 1 and times[-1] == config.model.timesteps
+    assert times[0] == 1 and times[-1] == config.model.schedules.timesteps
 
     lattice_noise, score = pretrained(pretrained.transform()(structures), times)
     assert_close(lattice_noise, expected["pred_l"], name="pred_l")
@@ -514,7 +521,7 @@ def test_pretrained_steps_match_diffcsp(pretrained):
     config = Config.load()
     _, expected = reference()
     times = expected["dynamics_times"].tolist()
-    assert times[0] == config.model.timesteps and times[-1] == 1
+    assert times[0] == config.model.schedules.timesteps and times[-1] == 1
 
     for step in range(len(times)):
         check_step(pretrained, step)
@@ -531,9 +538,9 @@ def test_pretrained_dynamics_match_diffcsp(pretrained):
     structures, expected = reference()
     times = expected["dynamics_times"].tolist()
     assert times[:3] == [
-        config.model.timesteps,
-        config.model.timesteps - 1,
-        config.model.timesteps - 2,
+        config.model.schedules.timesteps,
+        config.model.schedules.timesteps - 1,
+        config.model.schedules.timesteps - 2,
     ]
 
     current = dynamics(expected, structures, 0)
@@ -792,8 +799,12 @@ def test_generation_load_pretrained_checks_the_parameters(generation, model):
     hparams = upstream_hparams(generation=True)
 
     # the checkpoint has a schedule the model does not have
-    state["type_sigma_scheduler.sigmas"] = torch.zeros(config.model.timesteps + 1)
-    state["type_sigma_scheduler.sigmas_norm"] = torch.ones(config.model.timesteps + 1)
+    state["type_sigma_scheduler.sigmas"] = torch.zeros(
+        config.model.schedules.timesteps + 1
+    )
+    state["type_sigma_scheduler.sigmas_norm"] = torch.ones(
+        config.model.schedules.timesteps + 1
+    )
 
     other = DiffCSPGeneration()
     other.load_pretrained(state, hparams)
@@ -917,7 +928,7 @@ def check_generation_step(pretrained: DiffCSPGeneration, step: int) -> Structure
 
     # the first step divides by 0.01: see scale_after
     scale = float(1 / alphas[time].sqrt())
-    if time < Config.load().model.timesteps:
+    if time < Config.load().model.schedules.timesteps:
         assert scale < 2.1
     for found, key in (
         (moved.lattice, "dynamics_next_l"),
@@ -950,7 +961,7 @@ def test_pretrained_generation_steps_match_diffcsp(pretrained_generation):
     config = Config.load()
     _, expected = generation_reference()
     times = expected["dynamics_times"].tolist()
-    assert times[0] == config.model.timesteps and times[-1] == 1
+    assert times[0] == config.model.schedules.timesteps and times[-1] == 1
 
     for step in range(len(times)):
         moved = check_generation_step(pretrained_generation, step)
@@ -967,7 +978,10 @@ def test_pretrained_generation_dynamics_match_diffcsp(pretrained_generation):
     config = Config.load()
     structures, expected = generation_reference()
     times = expected["dynamics_times"].tolist()
-    assert times[1:3] == [config.model.timesteps - 1, config.model.timesteps - 2]
+    assert times[1:3] == [
+        config.model.schedules.timesteps - 1,
+        config.model.schedules.timesteps - 2,
+    ]
 
     current, elements, _ = generation_dynamics(expected, structures, 1)
     for step in (1, 2):

@@ -68,6 +68,12 @@
 
 ::: torchms.models.diffcsp.config
 
+### DiffCSP++
+
+::: torchms.models.diffcsp_pp.model
+
+::: torchms.models.diffcsp_pp.config
+
 ### FlowMM
 
 ::: torchms.models.flowmm.model
@@ -107,6 +113,10 @@
 ### CSPNet
 
 ::: torchms.models.layers.cspnet
+
+### Schedules of noise
+
+::: torchms.models.layers.schedules
 
 ### DimeNet++
 
