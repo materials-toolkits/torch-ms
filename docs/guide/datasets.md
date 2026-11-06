@@ -45,6 +45,7 @@ Filtering and splitting are optional: a name can go straight to `auto_loader`.
 | `perov-5` | inorganic materials | `train`, `val`, `test` | 18,928 | [Perov-5](../datasets/perov-5.md) |
 | `carbon-24` | inorganic materials | `train`, `val`, `test` | 10,153 | [Carbon-24](../datasets/carbon-24.md) |
 | `mp-20` | inorganic materials | `train`, `val`, `test` | 45,229 | [MP-20](../datasets/mp-20.md) |
+| `mpts-52` | inorganic materials | `train`, `val`, `test` | 40,476 | [MPTS-52](../datasets/mpts-52.md) |
 | `materials-project` | inorganic materials | `all` | 271,325 | [Materials Project](../datasets/materials-project.md) |
 | `oqmd` | inorganic materials | `all`, `unique` | 1,407,269 / 1,259,553 | [OQMD](../datasets/oqmd.md) |
 | `lematerial` | inorganic materials | `all`, `unique` | 5,335,299 / 4,927,038 | [LeMat-Bulk](../datasets/lematerial.md) |

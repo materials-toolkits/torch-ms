@@ -1,9 +1,11 @@
-"""Build the CDVAE datasets (Perov-5, Carbon-24, MP-20) in HDF5 format.
+"""Build the CDVAE datasets (Perov-5, Carbon-24, MP-20) and MPTS-52 in HDF5 format.
 
 Each split is downloaded, converted to CIF, preprocessed without any filter and
-checked against its source. Run inside the project environment:
+checked against its source. MPTS-52 is the release of DiffCSP, in the format
+of the CDVAE datasets. Run inside the project environment:
 
     uv run python scripts/build_cdvae.py datasets
+    uv run python scripts/build_cdvae.py datasets --only mpts_52
 """
 
 import argparse
@@ -23,6 +25,11 @@ from torchms.data.hdf5 import HDF5Dataset
 from torchms.data.preprocessing import Preprocessing, preprocessing
 
 URL = "https://raw.githubusercontent.com/txie-93/cdvae/main/data/{name}/{split}.csv"
+# DiffCSP at the commit of its port in torchms: MPTS-52 is not in CDVAE
+DIFFCSP_URL = (
+    "https://raw.githubusercontent.com/jiaor17/DiffCSP/"
+    "7121d159826efa2ba9500bf299250d96da37f146/data/{name}/{split}.csv"
+)
 SPLITS = ("train", "val", "test")
 LABELS = (
     "total_energy",
@@ -42,6 +49,7 @@ class Source:
     formation_energy_col: str | None = None
     hull_col: str | None = None
     band_gap_col: str | None = None
+    url: str = URL
 
     def columns(self) -> dict[str, str | None]:
         """Source column of each label, None if the label is not available."""
@@ -62,6 +70,13 @@ SOURCES = (
         formation_energy_col="formation_energy_per_atom",
         hull_col="e_above_hull",
         band_gap_col="band_gap",
+    ),
+    Source(
+        "mpts_52",
+        40476,
+        formation_energy_col="formation_energy_per_atom",
+        hull_col="energy_above_hull",
+        url=DIFFCSP_URL,
     ),
 )
 
@@ -144,6 +159,12 @@ def main() -> None:
         default=300,
         help="structures per split compared with pymatgen",
     )
+    parser.add_argument(
+        "--only",
+        nargs="+",
+        choices=[source.name for source in SOURCES],
+        help="datasets to build, all of them by default",
+    )
     args = parser.parse_args()
 
     warnings.filterwarnings("ignore", module="pymatgen")
@@ -153,6 +174,8 @@ def main() -> None:
     summary = []
 
     for source in SOURCES:
+        if args.only and source.name not in args.only:
+            continue
         total = 0
 
         for split in SPLITS:
@@ -164,7 +187,7 @@ def main() -> None:
                 file_name.parent.mkdir(parents=True, exist_ok=True)
 
             if not csv_file.exists():
-                url = URL.format(name=source.name, split=split)
+                url = source.url.format(name=source.name, split=split)
                 print(f"downloading {url}")
                 urllib.request.urlretrieve(url, csv_file)
 
