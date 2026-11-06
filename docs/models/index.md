@@ -36,6 +36,7 @@ Models which generate structures.
 | [CDVAE](cdvae.md) | `CDVAE` | crystals of at most 20 atoms, from a latent vector | cdvae `f857f59`, MIT | **third party** | 4.0e-5 on the latent mean |
 | [DiffCSP](diffcsp.md) | `DiffCSP` | the lattice and the coordinates of a crystal, from its composition | DiffCSP `7121d15`, MIT | official | 7.6e-6 on the noise of the lattice |
 | [DiffCSP](diffcsp.md) | `DiffCSPGeneration` | crystals of given numbers of atoms, with their elements | DiffCSP `7121d15`, MIT | official | 5.7e-6 on the noise of the lattice |
+| [FlowMM](flowmm.md) | `FlowMM` | crystals of given numbers of atoms, with their elements | FlowMM `6a96aec`, **CC BY-NC 4.0** | **third party**, on MP-20 | 2.9e-6 on the velocity of the bits; near the time 1, as near to the original in double precision as the original |
 | [MatterGen](mattergen.md) | `MatterGen` | crystals of given numbers of atoms, with their elements, without condition | MatterGen `9242366`, MIT | official, base model, on Alex-MP-20 or MP-20 | steps identical; the network as near to the original in double precision as the original (1.6e-2) |
 | [MatterGen](mattergen.md#conditioned-on-a-chemical-system) | `MatterGenChemicalSystem` | crystals of given numbers of atoms and given elements | MatterGen `9242366`, MIT | official, fine-tuned on a chemical system | guidance and steps identical; the network within its rounding |
 | [MatterGen](mattergen.md#conditioned-on-a-space-group) | `MatterGenSpaceGroup` | crystals of given numbers of atoms, towards a space group | MatterGen `9242366`, MIT | official, fine-tuned on a space group | guidance and steps identical; the network within its rounding |
@@ -48,7 +49,8 @@ Models which generate structures.
 These are rewrites too, compared with the original code as the supervised models. ADiT
 generates crystals and molecules with one model, reads no graph, and its code is under a
 license which forbids commercial use. The
-weights of CDVAE were not trained by its authors, who publish none: see its page. DiffCSP
+weights of CDVAE and of FlowMM were not trained by their authors, who publish none: see
+their pages. FlowMM is also under a license which forbids commercial use. DiffCSP
 has two models with their own weights, one which is given the elements and one which
 generates them. Of MatterGen every published model is rewritten: the base model, trained on Alex-MP-20
 or on MP-20 alone, and the ones conditioned on a chemical system, a space group, the band
@@ -76,6 +78,7 @@ nearest neighbours, which is not defined when several neighbours are at the same
 | CDVAE, encoder | a graph of bonds given with the structures, then `AddLineGraph(backtrack=True, same_atom=False)` |
 | CDVAE, decoder | `AddRadiusGraph(7.0)`, `KeepNearImages(1)`, `KeepNearestNeighbors(20)`, `MirrorEdges()`, `AddTriplets()`, `AddBonds()` |
 | DiffCSP | `AddCompleteGraph(self_loops=True)` |
+| FlowMM | `AddCompleteGraph(self_loops=False)` |
 | MatterGen and its fine-tuned models | `AddRadiusGraph(7.0, max_image_shift=5)`, `KeepNearestNeighbors(50)`, `MirrorEdges()`, `AddTriplets()`, `AddBonds()` |
 
 Every radius graph has `self_images=True`. See [Graphs](../guide/graphs.md) for the
@@ -107,7 +110,7 @@ from.
 | Layer | Content | Used by |
 |---|---|---|
 | [Bases](bases.md) | radial bases, bases of angles, of fractional coordinates and of a time, spherical harmonics, smooth cutoffs | every model |
-| [CSPNet](cspnet.md) ([arXiv:2309.04475](https://arxiv.org/abs/2309.04475)) | network on every pair of atoms of a structure and their fractional coordinates, one vector per atom and one matrix per structure | DiffCSP |
+| [CSPNet](cspnet.md) ([arXiv:2309.04475](https://arxiv.org/abs/2309.04475)) | network on every pair of atoms of a structure and their fractional coordinates, one vector per atom and one matrix per structure | DiffCSP, FlowMM (its layer) |
 | [DimeNet++](dimenet.md) ([arXiv:2011.14115](https://arxiv.org/abs/2011.14115)) | network on the bonds of a graph and their angles, one vector per structure | CDVAE (encoder) |
 | [GemNet-T](gemnet.md) ([arXiv:2106.08903](https://arxiv.org/abs/2106.08903)) | network on the edges of a symmetric graph and their triplets, one vector per atom and one matrix per structure | CDVAE (decoder), MatterGen |
 | [`LineGraphNetwork`](line-graph-network.md) | network of the energy on pairs, triplets and quadruplets, with their angles and dihedral angles | no model of the library |

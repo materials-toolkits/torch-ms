@@ -56,6 +56,12 @@
 
 ::: torchms.models.diffcsp.config
 
+### FlowMM
+
+::: torchms.models.flowmm.model
+
+::: torchms.models.flowmm.config
+
 ### MatterGen
 
 ::: torchms.models.mattergen.model

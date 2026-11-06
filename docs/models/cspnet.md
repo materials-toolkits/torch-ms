@@ -77,6 +77,14 @@ An edge of the graph of DiffCSP goes from an atom i to an atom j, and the atom i
 mean of its messages: i is the sender, and the messages are aggregated to the sender. The
 difference of the coordinates is the one of j minus the one of i.
 
+## A layer which reads more
+
+`CSPLayer.edge_inputs` gives what the network of the messages reads on an edge: the
+features of the sender, of the receiver, then the features of the edge. A variant of the
+layer overrides it to read them in another order or to add its own: the layer of
+[FlowMM](flowmm.md) reads the cosines of the edge with the lattice vectors first and an
+embedding of the number of atoms last, and keeps the rest of the layer.
+
 ## Cost
 
 A structure of n atoms has n² edges, and a layer reads `2 hidden_dim + 9 + 6 num_freqs`

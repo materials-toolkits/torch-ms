@@ -156,6 +156,37 @@ def lattice_from_parameters(
     return torch.stack([vector_a.t(), vector_b.t(), vector_c.t()], dim=1)
 
 
+def lattice_parameters(
+    lattice: Float[torch.Tensor, "n_struct 3 3"],
+) -> tuple[Float[torch.Tensor, "n_struct 3"], Float[torch.Tensor, "n_struct 3"]]:
+    """Lengths and angles of cells, the inverse of lattice_from_parameters.
+
+    Args:
+        lattice: Lattice vectors as rows, shape (n_struct, 3, 3).
+
+    Returns:
+        Lengths a, b and c in Å, and angles alpha (between b and c), beta
+        (between a and c) and gamma (between a and b) in degrees, each of
+        shape (n_struct, 3).
+
+    Examples:
+        >>> lengths = torch.tensor([[3.0, 4.0, 5.0]])
+        >>> angles = torch.tensor([[80.0, 95.0, 110.0]])
+        >>> found = lattice_parameters(lattice_from_parameters(lengths, angles))
+        >>> [values.round(decimals=3) + 0.0 for values in found]
+        [tensor([[3., 4., 5.]]), tensor([[ 80.,  95., 110.]])]
+    """
+    lengths = lattice.norm(dim=-1)
+
+    # the angle opposite to each vector: between the two other ones
+    others = lattice.roll(-1, dims=1), lattice.roll(-2, dims=1)
+    norms = lengths.roll(-1, dims=1) * lengths.roll(-2, dims=1)
+    cosines = (others[0] * others[1]).sum(dim=-1) / norms
+    angles = torch.rad2deg(torch.arccos(cosines.clamp(-1.0, 1.0)))
+
+    return lengths, angles
+
+
 def symmetric_lattice(
     lattice: Float[torch.Tensor, "n_struct 3 3"],
 ) -> Float[torch.Tensor, "n_struct 3 3"]:

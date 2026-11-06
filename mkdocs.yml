@@ -99,6 +99,7 @@ nav:
           - ADiT: models/adit.md
           - CDVAE: models/cdvae.md
           - DiffCSP: models/diffcsp.md
+          - FlowMM: models/flowmm.md
           - MatterGen: models/mattergen.md
       - Layers:
           - Bases: models/bases.md
