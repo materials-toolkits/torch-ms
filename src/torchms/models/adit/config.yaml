@@ -1,0 +1,87 @@
+# ADiT, the All-atom Diffusion Transformer: weights and hyperparameters, read
+# by model.py. A variational autoencoder maps the atoms of a crystal or of a
+# molecule to latent vectors, one per atom, and a diffusion transformer (DiT)
+# generates such vectors, which the decoder turns into structures.
+
+default_weights: adit-qm9-mp20
+
+# The model trained jointly on QM9 and MP-20, published on Hugging Face by
+# Chaitanya K. Joshi, first author of ADiT ("an independent reproduction of
+# this research", says the README of the weights). The checkpoint of
+# pytorch-lightning of the diffusion holds the frozen autoencoder it was
+# trained with, the one of vae.ckpt in the same repository, bit for bit: it is
+# the only file needed.
+checkpoints:
+  adit-qm9-mp20:
+    - url: https://huggingface.co/chaitjo/all-atom-diffusion-transformer/resolve/49ee17be088855ffed4ab8145f194e7a3c8b8879/ldm.ckpt
+      sha256: 136e99b1e2ad5146bce86c678ece2d49ec4e2ce172cacf3cd2a58dbb68e39577
+
+unused_parameters:
+  # weights of the losses of the training of the autoencoder
+  - autoencoder.loss_weights_
+
+# no graph: every atom of a structure attends to every other one of it
+
+autoencoder:
+  num_elements: 100                     # rows of the embedding, from 0: a masked atom, then hydrogen
+  latent_dim: &latent_dim 8              # size of the latent vector of an atom
+  logvar_min: -30.0                      # the log-variance of the posterior is clamped
+  logvar_max: 20.0
+  # the encoder and the decoder have the same transformer
+  d_model: 512
+  nhead: 8
+  dim_feedforward: 2048
+  num_layers: 8
+  # GELU of the feed-forward networks. Upstream asks for the approximation by
+  # tanh, but the fast path of torch, which runs when the weights have no
+  # gradient as in every sampling and evaluation of ADiT, computes the exact
+  # one: kept, see the documentation.
+  activation: gelu
+  position_max_len: 2048                 # longest period of the embedding of the index of an atom
+  # units of the decoder: positions in nm, lengths of the cell over the cubic
+  # root of the number of atoms, angles in radians
+  position_scale: 10.0                   # Å in a unit of the predicted positions
+
+denoiser:
+  latent_dim: *latent_dim
+  d_model: &dit_d_model 768
+  num_layers: 12
+  nhead: &dit_nhead 12
+  mlp_ratio: 4.0
+  num_datasets: 2                        # classes of the guidance, besides 0, no dataset:
+  crystal_class: 1                       # MP-20, periodic
+  molecule_class: 2                      # QM9
+  num_spacegroups: 230                   # read by the network, always the null class here
+  frequency_embedding_dim: 256           # sines and cosines of the time
+  time_max_period: 10000.0
+  position_max_len: 2048
+  layer_norm_eps: 1.0e-6
+
+# flow matching from normal noise at the time min_t to latent vectors at the
+# time 1, with the defaults of configs/diffusion_module/ldm.yaml of ADiT, which
+# src/eval_diffusion.py samples with
+sampling:
+  min_t: &min_t 0.01
+  num_timesteps: 100                     # times from min_t to 1, both included
+  cfg_scale: 2.0                         # classifier-free guidance by the dataset
+  # number of atoms of the training sets, by number of atoms from 0
+  # (num_nodes_bincount.pt of the datasets MP20_ADiT and QM9_ADiT on Hugging Face)
+  num_atoms_crystals: [0, 131, 1152, 1129, 8341, 2591, 4522, 1218, 4275, 1817, 5224,
+    703, 5322, 1180, 3575, 807, 3639, 490, 2919, 571, 4670]
+  num_atoms_molecules: [0, 0, 0, 2, 4, 5, 12, 20, 65, 172, 483, 1053, 2189, 4027,
+    6758, 10216, 13824, 16969, 17442, 18146, 12403, 13166, 4428, 6362, 712, 1923,
+    59, 356, 0, 35]
+
+upstream:
+  # attributes of the modules pickled with the weights, checked at loading
+  denoiser:
+    d_x: *latent_dim
+    d_model: *dit_d_model
+    nhead: *dit_nhead
+  interpolant:
+    min_t: *min_t
+    corrupt: true
+    self_condition: true
+  conditioning:
+    dataset_idx: true
+    spacegroup: false

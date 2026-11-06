@@ -24,7 +24,9 @@ from torchms.graph.sparse import (
     batched_cartesian_product_2,
     batched_cartesian_product_3,
     batched_join,
+    padding_mask,
     scatter,
+    to_dense,
 )
 from torchms.graph.transforms import (
     AddAtomicRadiusGraph,
@@ -67,7 +69,9 @@ __all__ = [
     "line_graph",
     "quadruplets",
     "reverse_edges",
+    "padding_mask",
     "scatter",
+    "to_dense",
     "pair_cosines",
     "triplet_cosines",
     "triplets",

@@ -95,6 +95,68 @@ def count_by(index: Int[torch.Tensor, "n"], n_out: int) -> Int[torch.Tensor, "n_
     return count.scatter_add_(0, index, torch.ones_like(index))
 
 
+def padding_mask(
+    num_items: Int[torch.Tensor, "n_struct"],
+) -> Bool[torch.Tensor, "n_struct max_items"]:
+    """Mask of the items of each structure in a padded layout.
+
+    A batch of structures of different sizes, padded to the size of the
+    largest one: the layout of a transformer. The row of a structure is True
+    for its items and False for the padding after them.
+
+    Args:
+        num_items: Number of items of each structure, shape (n_struct,).
+
+    Returns:
+        Mask of shape (n_struct, max_items), max_items the largest size, 0 if
+        there is no structure.
+
+    Examples:
+        >>> padding_mask(torch.tensor([2, 0, 3]))
+        tensor([[ True,  True, False],
+                [False, False, False],
+                [ True,  True,  True]])
+    """
+    max_items = int(num_items.max()) if len(num_items) > 0 else 0
+    position = torch.arange(max_items, device=num_items.device)
+
+    return position.unsqueeze(0) < num_items.unsqueeze(1)
+
+
+def to_dense(
+    x: Num[torch.Tensor, "n ..."], num_items: Int[torch.Tensor, "n_struct"]
+) -> tuple[
+    Num[torch.Tensor, "n_struct max_items ..."],
+    Bool[torch.Tensor, "n_struct max_items"],
+]:
+    """Padded layout of the items of a batch, the ones of a structure in a row.
+
+    The inverse is `dense[mask]`, which gives the items back in their order.
+
+    Args:
+        x: Values of the items, the ones of a structure together, in the
+            order of the structures, shape (n, ...).
+        num_items: Number of items of each structure, shape (n_struct,).
+
+    Returns:
+        Values padded with zeros, shape (n_struct, max_items, ...), and the
+        mask of the items, see padding_mask.
+
+    Examples:
+        >>> dense, mask = to_dense(torch.tensor([1.0, 2.0, 3.0]), torch.tensor([1, 2]))
+        >>> dense
+        tensor([[1., 0.],
+                [2., 3.]])
+        >>> dense[mask]
+        tensor([1., 2., 3.])
+    """
+    mask = padding_mask(num_items)
+    dense = x.new_zeros(*mask.shape, *x.shape[1:])
+    dense[mask] = x
+
+    return dense, mask
+
+
 def batched_cartesian_product_2(
     ptr_a: Int[torch.Tensor, "n_struct+1"],
     ptr_b: Int[torch.Tensor, "n_struct+1"],

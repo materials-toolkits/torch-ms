@@ -96,6 +96,7 @@ nav:
           - CHGNet: models/chgnet.md
           - ALIGNN: models/alignn.md
       - Generative models:
+          - ADiT: models/adit.md
           - CDVAE: models/cdvae.md
           - DiffCSP: models/diffcsp.md
           - MatterGen: models/mattergen.md
