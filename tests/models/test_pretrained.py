@@ -178,13 +178,15 @@ def test_checkpoints_are_read_from_the_configurations(tmp_path):
         "cdvae",
         "crystalflow",
         "diffcsp",
+        "diffcsp_pp",
         "flowmm",
         "mattergen",
         "mattersim",
     }
     for model, names in weights.CHECKPOINTS.items():
         for name, files in names.items():
-            assert name.startswith(model)
+            # a name of weights has hyphens where its module has underscores
+            assert name.startswith(model.replace("_", "-"))
             for file in files:
                 assert file.url.startswith("https://") and len(file.sha256) == 64
 

@@ -101,6 +101,7 @@ nav:
           - CDVAE: models/cdvae.md
           - CrystalFlow: models/crystalflow.md
           - DiffCSP: models/diffcsp.md
+          - DiffCSP++: models/diffcsp_pp.md
           - FlowMM: models/flowmm.md
           - MatterGen: models/mattergen.md
       - Layers:

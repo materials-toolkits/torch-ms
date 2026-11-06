@@ -46,6 +46,10 @@
 
 ::: torchms.data.augmentation.sampling
 
+## Symmetry
+
+::: torchms.data.symmetry
+
 ## Convex hull
 
 ::: torchms.data.hull

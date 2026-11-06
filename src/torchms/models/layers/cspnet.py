@@ -5,11 +5,11 @@
 # (diffcsp/pl_modules/cspnet.py), for inference only. The complete graph is
 # read from torchms Structures instead of being built by the network with a
 # loop over the structures, and the basis of the differences of the
-# coordinates is computed once instead of in every layer. Only the variant of
-# the published weights is kept: sines and cosines of the differences, inner
-# products of the lattice vectors, a normalization in every layer and a
-# complete graph. The graph of the nearest neighbours and the prediction of a
-# scalar are removed.
+# coordinates is computed once instead of in every layer. Only the variants of
+# the published weights are kept: sines and cosines of the differences, inner
+# products of the lattice vectors or, as in DiffCSP++, a vector of parameters
+# of the lattice, a normalization in every layer and a complete graph. The
+# graph of the nearest neighbours and the prediction of a scalar are removed.
 # Names of modules and parameters follow DiffCSP to load its weights.
 """CSPNet, a network on the complete graph of fractional coordinates.
 
@@ -20,7 +20,9 @@ coordinates, and gives each atom the mean of its messages. The network reads
 no distance and no angle: its inputs do not change with a rotation of the
 structure or with a translation of its atoms, and the basis has the period of
 the cell. It gives a vector of each atom, in fractional coordinates, and a 3 x 3
-matrix of each structure, which follows the rotations of the lattice. On
+matrix of each structure, which follows the rotations of the lattice. The
+lattice can instead be a vector of parameters, which the network reads as it
+is and for which it gives a vector of the same size, as in DiffCSP++. On
 demand it reads the element of an atom as a vector of weights of the elements,
 and gives such a vector for each atom: a diffusion of the elements.
 
@@ -60,6 +62,12 @@ class Config:
             read in a table.
         predict_elements: If True, the network also gives a vector of
             num_elements values for each atom.
+        lattice_dim: None if the lattice of a structure is a 3 x 3 matrix,
+            read through the 9 inner products of its vectors, for which the
+            network gives a 3 x 3 matrix times the lattice (DiffCSP).
+            Otherwise the size of a vector of parameters of the lattice, read
+            as it is, for which the network gives a vector of this size
+            (DiffCSP++).
     """
 
     latent_dim: int
@@ -69,15 +77,25 @@ class Config:
     num_freqs: int
     soft_elements: bool
     predict_elements: bool
+    lattice_dim: int | None
+
+    @property
+    def lattice_features(self) -> int:
+        """Size of what the network reads of a lattice.
+
+        The 9 inner products of the lattice vectors of a matrix, or the vector
+        of parameters as it is.
+        """
+        return 9 if self.lattice_dim is None else self.lattice_dim
 
     @property
     def edge_dim(self) -> int:
         """Size of what a layer reads on a pair of atoms, besides their features.
 
-        The 9 inner products of the lattice vectors, then a sine and a cosine
-        of each frequency for each of the 3 coordinates.
+        What the network reads of the lattice, then a sine and a cosine of
+        each frequency for each of the 3 coordinates.
         """
-        return 9 + 2 * 3 * self.num_freqs
+        return self.lattice_features + 2 * 3 * self.num_freqs
 
 
 class CSPLayer(nn.Module):
@@ -165,6 +183,7 @@ class CSPNet(nn.Module):
         ...     num_freqs=4,
         ...     soft_elements=False,
         ...     predict_elements=False,
+        ...     lattice_dim=None,
         ... )
         >>> model = CSPNet(config).eval()
         >>> structures = Structures.collate([Structures.diamond(), Structures.water()])
@@ -197,7 +216,7 @@ class CSPNet(nn.Module):
             self.add_module(f"csp_layer_{i}", CSPLayer(hidden_dim, config.edge_dim))
 
         self.coord_out = nn.Linear(hidden_dim, 3, bias=False)
-        self.lattice_out = nn.Linear(hidden_dim, 9, bias=False)
+        self.lattice_out = nn.Linear(hidden_dim, config.lattice_features, bias=False)
         self.final_layer_norm = nn.LayerNorm(hidden_dim)
         if config.predict_elements:
             self.type_out = nn.Linear(hidden_dim, config.num_elements)
@@ -210,9 +229,13 @@ class CSPNet(nn.Module):
         ),
         graph: Graph,
         x: Float[torch.Tensor, "n_atoms 3"],
-        lattice: Float[torch.Tensor, "n_struct 3 3"],
+        lattice: (
+            Float[torch.Tensor, "n_struct 3 3"]
+            | Float[torch.Tensor, "n_struct lattice_dim"]
+        ),
     ) -> tuple[
-        Float[torch.Tensor, "n_struct 3 3"],
+        Float[torch.Tensor, "n_struct 3 3"]
+        | Float[torch.Tensor, "n_struct lattice_dim"],
         Float[torch.Tensor, "n_atoms 3"],
         Float[torch.Tensor, "n_atoms n_elements"] | None,
     ]:
@@ -229,21 +252,26 @@ class CSPNet(nn.Module):
             graph: Complete graph of the atoms, with an edge from each atom to
                 itself, see AddCompleteGraph.
             x: Fractional coordinates of the atoms, inside or outside the cell.
-            lattice: Lattice vectors of the structures, as rows.
+            lattice: Lattice vectors of the structures, as rows, or with
+                lattice_dim the vector of parameters of each lattice.
 
         Returns:
             Matrix of each structure, a 3 x 3 matrix times its lattice, shape
-            (n_struct, 3, 3), vector of each atom, in fractional coordinates,
+            (n_struct, 3, 3), or with lattice_dim a vector of this size, vector
+            of each atom, in fractional coordinates,
             shape (n_atoms, 3), and with predict_elements a value of each
             element for each atom, from hydrogen, shape (n_atoms,
             num_elements), None otherwise.
         """
         # from the sender of an edge to its receiver, modulo the cell
         difference = (graph.unpool_receivers(x) - graph.unpool_senders(x)) % 1.0
-        products = (lattice @ lattice.transpose(-1, -2)).flatten(start_dim=1)
+        if self.config.lattice_dim is None:
+            read = (lattice @ lattice.transpose(-1, -2)).flatten(start_dim=1)
+        else:
+            read = lattice
         edge_features = torch.cat(
             [
-                graph.unpool_senders(graph.unpool_structures(products)),
+                graph.unpool_senders(graph.unpool_structures(read)),
                 periodic_fourier(difference, self.config.num_freqs),
             ],
             dim=1,
@@ -260,7 +288,9 @@ class CSPNet(nn.Module):
         coord_out = self.coord_out(h)
 
         pooled = graph.aggregate_nodes_to_structures(h, "mean")
-        lattice_out = self.lattice_out(pooled).view(-1, 3, 3) @ lattice
+        lattice_out = self.lattice_out(pooled)
+        if self.config.lattice_dim is None:
+            lattice_out = lattice_out.view(-1, 3, 3) @ lattice
 
         type_out = self.type_out(h) if self.config.predict_elements else None
 

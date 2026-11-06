@@ -36,16 +36,17 @@ graph:
   self_loops: true
 
 model:
-  timesteps: 1000                        # steps of the diffusion
   time_dim: &time_dim 256                # embedding of the time
   time_max_period: 10000.0               # inverse of its lowest frequency
-  # noise of the lattice: cosine schedule of arXiv:2102.09672
-  beta_offset: 0.008                     # its offset s
-  beta_min: 1.0e-4                       # the betas are clipped
-  beta_max: 0.9999
-  # noise of the fractional coordinates, in cells, from the first to the last time
-  sigma_begin: &sigma_begin 0.005
-  sigma_end: &sigma_end 0.5
+  schedules:
+    timesteps: 1000                      # steps of the diffusion
+    # noise of the lattice: cosine schedule of arXiv:2102.09672
+    beta_offset: 0.008                   # its offset s
+    beta_min: 1.0e-4                     # the betas are clipped
+    beta_max: 0.9999
+    # noise of the fractional coordinates, in cells, from the first to the last time
+    sigma_begin: &sigma_begin 0.005
+    sigma_end: &sigma_end 0.5
 
 # CSPNet
 decoder:
@@ -56,6 +57,8 @@ decoder:
   # the elements are indices read in a table, and are not predicted
   soft_elements: false
   predict_elements: false
+  # the lattice is a 3 x 3 matrix, read through the inner products of its vectors
+  lattice_dim: null
 
 # predictor and corrector, as in scripts/evaluate.py of DiffCSP
 sampling:

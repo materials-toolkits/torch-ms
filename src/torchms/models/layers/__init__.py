@@ -4,6 +4,8 @@
   smooth cutoffs;
 * cspnet: CSPNet, a network on the complete graph of a structure, which reads
   fractional coordinates;
+* schedules: the schedules of the noise of DiffCSP, of a lattice and of
+  fractional coordinates, and the updates of its predictor-corrector;
 * dimenet: DimeNet++, a network on the bonds of a graph and their angles;
 * gemnet: GemNet-T, a network on the edges of a symmetric graph and their
   triplets;

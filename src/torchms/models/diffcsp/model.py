@@ -35,7 +35,6 @@ Weights are listed in config.yaml: the ones of the authors, trained on MP-20.
 
 from __future__ import annotations
 
-import math
 import os
 from dataclasses import dataclass
 from typing import Mapping
@@ -44,12 +43,11 @@ import torch
 import torch.nn.functional as F
 import yaml
 from jaxtyping import Float, Int
-from torch import nn
 
 from torchms.data.augmentation.transforms import Transform
 from torchms.data.batching import Structures
 from torchms.graph.transforms import AddCompleteGraph, attached_graph
-from torchms.models.diffcsp.config import Config, NetworkConfig
+from torchms.models.diffcsp.config import Config
 from torchms.models.estimator.pretrained import (
     InvalidWeights,
     PretrainedModel,
@@ -60,79 +58,7 @@ from torchms.models.estimator.pretrained import (
 from torchms.models.estimator.weights import download
 from torchms.models.layers.basis import sinusoidal_embedding
 from torchms.models.layers.cspnet import CSPNet
-
-
-class BetaScheduler(nn.Module):  # pylint: disable=abstract-method
-    """Noise of the lattice at each time, with a cosine schedule.
-
-    The time 0 is the structure without noise: its values stand for no noise.
-
-    Attributes:
-        betas: Variance of the noise added at each time, shape (timesteps + 1,).
-        alphas: 1 - betas.
-        alphas_cumprod: Product of the alphas up to each time: the part of the
-            variance of a noisy lattice which is not noise.
-        sigmas: Deviation of the noise a step of the sampling adds at each time.
-    """
-
-    betas: torch.Tensor
-    alphas: torch.Tensor
-    alphas_cumprod: torch.Tensor
-    sigmas: torch.Tensor
-
-    def __init__(self, network: NetworkConfig):
-        super().__init__()
-        timesteps, offset = network.timesteps, network.beta_offset
-        steps = torch.linspace(0, timesteps, timesteps + 1)
-        cumprod = (
-            torch.cos((steps / timesteps + offset) / (1 + offset) * math.pi * 0.5) ** 2
-        )
-        cumprod = cumprod / cumprod[0]
-        betas = torch.clip(
-            1 - cumprod[1:] / cumprod[:-1], network.beta_min, network.beta_max
-        )
-
-        betas = F.pad(betas, (1, 0), value=0.0)
-        alphas = 1.0 - betas
-        alphas_cumprod = torch.cumprod(alphas, dim=0)
-
-        variances = betas[1:] * (1.0 - alphas_cumprod[:-1]) / (1.0 - alphas_cumprod[1:])
-        sigmas = F.pad(torch.sqrt(variances), (1, 0), value=0.0)
-
-        self.register_buffer("betas", betas)
-        self.register_buffer("alphas", alphas)
-        self.register_buffer("alphas_cumprod", alphas_cumprod)
-        self.register_buffer("sigmas", sigmas)
-
-
-class SigmaScheduler(nn.Module):  # pylint: disable=abstract-method
-    """Noise of the fractional coordinates at each time.
-
-    Attributes:
-        sigmas: Level of the noise at each time, in cells, growing
-            geometrically, with 0 at the time 0. Shape (timesteps + 1,).
-        sigmas_norm: Mean of the squared score of the noise wrapped around the
-            cell, at each level. The network gives the score divided by its
-            square root. DiffCSP estimates it from random draws when a model is
-            created: it is read from the weights, and is 1 before.
-    """
-
-    sigmas: torch.Tensor
-    sigmas_norm: torch.Tensor
-
-    def __init__(self, network: NetworkConfig):
-        super().__init__()
-        sigmas = torch.exp(
-            torch.linspace(
-                math.log(network.sigma_begin),
-                math.log(network.sigma_end),
-                network.timesteps,
-                dtype=torch.float64,
-            )
-        ).float()
-
-        self.register_buffer("sigmas", F.pad(sigmas, (1, 0), value=0.0))
-        self.register_buffer("sigmas_norm", torch.ones(network.timesteps + 1))
+from torchms.models.layers.schedules import BetaScheduler, SigmaScheduler
 
 
 class Diffusion(PretrainedModel[Config]):  # pylint: disable=abstract-method
@@ -153,8 +79,8 @@ class Diffusion(PretrainedModel[Config]):  # pylint: disable=abstract-method
     def __init__(self, config: Config | None = None):
         super().__init__(config)
         self.decoder = CSPNet(self.config.decoder_config(self.GENERATION))
-        self.beta_scheduler = BetaScheduler(self.config.model)
-        self.sigma_scheduler = SigmaScheduler(self.config.model)
+        self.beta_scheduler = BetaScheduler(self.config.model.schedules)
+        self.sigma_scheduler = SigmaScheduler(self.config.model.schedules)
 
     @property
     def num_elements(self) -> int:
@@ -164,7 +90,7 @@ class Diffusion(PretrainedModel[Config]):  # pylint: disable=abstract-method
     @property
     def timesteps(self) -> int:
         """Number of steps of the diffusion."""
-        return self.config.model.timesteps
+        return self.config.model.schedules.timesteps
 
     def default_weights(self) -> str:
         if self.GENERATION:
@@ -184,6 +110,10 @@ class Diffusion(PretrainedModel[Config]):  # pylint: disable=abstract-method
             return self.config.generation.step_size
 
         return self.config.sampling.step_size
+
+    def step_size(self, step_size: float | None) -> float:
+        """The step of the corrector given, or the one of the configuration."""
+        return self.default_step_size() if step_size is None else step_size
 
     # weights
 
@@ -253,79 +183,6 @@ class Diffusion(PretrainedModel[Config]):  # pylint: disable=abstract-method
         network = self.config.model
 
         return sinusoidal_embedding(times, network.time_dim, network.time_max_period)
-
-    def correct_coordinates(
-        self,
-        x: Float[torch.Tensor, "n_atoms 3"],
-        score: Float[torch.Tensor, "n_atoms 3"],
-        time: int,
-        noise: Float[torch.Tensor, "n_atoms 3"],
-        step_size: float | None,
-    ) -> Float[torch.Tensor, "n_atoms 3"]:
-        """Langevin move of the coordinates at the level of noise of a time.
-
-        Args:
-            x: Fractional coordinates at this time.
-            score: Score the network gives for them.
-            time: Time of the structures.
-            noise: Standard normal noise.
-            step_size: Step at the lowest level of noise, default_step_size
-                if None: the step grows as
-                the square of the level.
-
-        Returns:
-            Corrected coordinates, not wrapped in the cell.
-        """
-        sigma = self.sigma_scheduler.sigmas[time]
-        score = score * torch.sqrt(self.sigma_scheduler.sigmas_norm[time])
-        if step_size is None:
-            step_size = self.default_step_size()
-        step = step_size * (sigma / self.config.model.sigma_begin) ** 2
-
-        return x - step * score + torch.sqrt(2 * step) * noise
-
-    def predict_coordinates(
-        self,
-        x: Float[torch.Tensor, "n_atoms 3"],
-        score: Float[torch.Tensor, "n_atoms 3"],
-        time: int,
-        noise: Float[torch.Tensor, "n_atoms 3"],
-    ) -> Float[torch.Tensor, "n_atoms 3"]:
-        """Coordinates of the time before, from the ones of a time and their score.
-
-        Returns:
-            Coordinates at the time before, not wrapped in the cell.
-        """
-        sigma = self.sigma_scheduler.sigmas[time]
-        previous_sigma = self.sigma_scheduler.sigmas[time - 1]
-        score = score * torch.sqrt(self.sigma_scheduler.sigmas_norm[time])
-
-        step = sigma**2 - previous_sigma**2
-        deviation = torch.sqrt(previous_sigma**2 * step / sigma**2)
-
-        return x - step * score + deviation * noise
-
-    def predict_normal(
-        self,
-        values: Float[torch.Tensor, "..."],
-        found: Float[torch.Tensor, "..."],
-        time: int,
-        noise: Float[torch.Tensor, "..."],
-    ) -> Float[torch.Tensor, "..."]:
-        """Values of the time before, for what gets normal noise: the lattice.
-
-        Args:
-            values: Noisy values at a time.
-            found: Noise the network finds in them.
-            time: Time of the structures.
-            noise: Standard normal noise.
-        """
-        alpha = self.beta_scheduler.alphas[time]
-        alpha_cumprod = self.beta_scheduler.alphas_cumprod[time]
-
-        return (1.0 / torch.sqrt(alpha)) * (
-            values - (1 - alpha) / torch.sqrt(1 - alpha_cumprod) * found
-        ) + self.beta_scheduler.sigmas[time] * noise
 
 
 class DiffCSP(Diffusion):
@@ -448,12 +305,19 @@ class DiffCSP(Diffusion):
 
         # corrector: the lattice is kept
         _, score, _ = self.decoder(latent, element, graph, x, lattice)
-        x = self.correct_coordinates(x, score, time, corrector_noise, step_size)
+        x = self.sigma_scheduler.correct(
+            x,
+            self.sigma_scheduler.score(score, time),
+            self.sigma_scheduler.langevin_step(time, self.step_size(step_size)),
+            corrector_noise,
+        )
 
         # predictor
         found, score, _ = self.decoder(latent, element, graph, x, lattice)
-        x = self.predict_coordinates(x, score, time, predictor_noise)
-        lattice = self.predict_normal(lattice, found, time, lattice_noise)
+        x = self.sigma_scheduler.predict(
+            x, self.sigma_scheduler.score(score, time), time, predictor_noise
+        )
+        lattice = self.beta_scheduler.predict(lattice, found, time, lattice_noise)
 
         return Structures(
             lattice=lattice,
@@ -716,14 +580,23 @@ class DiffCSPGeneration(Diffusion):
 
         # corrector: the lattice and the elements are kept
         _, score, _ = self.decoder(latent, elements, graph, x, lattice)
-        x = self.correct_coordinates(x, score, time, noise.corrector, step_size)
+        x = self.sigma_scheduler.correct(
+            x,
+            self.sigma_scheduler.score(score, time),
+            self.sigma_scheduler.langevin_step(time, self.step_size(step_size)),
+            noise.corrector,
+        )
 
         # predictor
         found, score, found_elements = self.decoder(latent, elements, graph, x, lattice)
         assert found_elements is not None
-        x = self.predict_coordinates(x, score, time, noise.predictor)
-        lattice = self.predict_normal(lattice, found, time, noise.lattice)
-        elements = self.predict_normal(elements, found_elements, time, noise.elements)
+        x = self.sigma_scheduler.predict(
+            x, self.sigma_scheduler.score(score, time), time, noise.predictor
+        )
+        lattice = self.beta_scheduler.predict(lattice, found, time, noise.lattice)
+        elements = self.beta_scheduler.predict(
+            elements, found_elements, time, noise.elements
+        )
 
         moved = Structures(
             lattice=lattice,

@@ -1,0 +1,181 @@
+# DiffCSP++: weights, graph and hyperparameters, read by model.py. The
+# diffusion of DiffCSP constrained by a space group: the atoms are placed on
+# Wyckoff positions, the lattice has the shape of the crystal family of the
+# group. Two models: DiffCSPPlusPlus, which gives a lattice and coordinates to
+# atoms of given elements, and DiffCSPPlusPlusGeneration, which also generates
+# the element of each site. What is only for the second one is in the section
+# "generation".
+
+default_weights: diffcsp-pp-mp20
+
+# The six models of the authors, in the folder of checkpoints linked by their
+# README on Google Drive: the URL has the identifier of a file, which its
+# owner can replace, and the SHA-256 tells if it was. For each one, the
+# checkpoint of pytorch-lightning and the configuration of the training.
+#
+# * diffcsp-pp-mp20, diffcsp-pp-mpts52, diffcsp-pp-perov5 ("mp_csp",
+#   "mpts_csp", "perov_csp"): prediction of the structure of atoms of given
+#   elements on given Wyckoff positions, trained on MP-20, MPTS-52 and Perov-5;
+# * diffcsp-pp-carbon24 ("carbon_gen"): the same, trained on Carbon-24, whose
+#   atoms are all carbon. The authors generate carbon with it, which their
+#   folder names a model of the generation: its network and its configuration
+#   are the ones of a prediction from the elements;
+# * diffcsp-pp-gen-mp20, diffcsp-pp-gen-perov5 ("mp_gen", "perov_gen"): the
+#   same as the first ones with the elements, trained on MP-20 and Perov-5.
+checkpoints:
+  diffcsp-pp-mp20:
+    - url: https://drive.usercontent.google.com/download?id=1XlV0kntXqkyVoU-wslGQVa28852v2Hpv&export=download&confirm=t
+      sha256: 8d7615c73e4f55e52c310122a0e194057d0ccff252255a6497cbed41ca624142
+      filename: last.ckpt
+    - url: https://drive.usercontent.google.com/download?id=1Tcou2B--P8kPRHjxjoMC6QGkGggrvMXZ&export=download&confirm=t
+      sha256: 5d8d806bffe83498a220cf2b06269e38fcdf5d2ce1eb86892268fa7339d67a85
+      filename: hparams.yaml
+  diffcsp-pp-mpts52:
+    - url: https://drive.usercontent.google.com/download?id=1WtAUBBpq9h702l31aRglMb695xul34Ap&export=download&confirm=t
+      sha256: d8adb54f293748f7b834bd7c8421695577c37a49b162d42afefee83d7543fb55
+      filename: last.ckpt
+    - url: https://drive.usercontent.google.com/download?id=1NhGx-J_yhb-SEHBLtzPOaR2yOT84enfH&export=download&confirm=t
+      sha256: 391583f978b1d1da841ce2075e9693e8c489d848293a8e5cb684d643ad50e5c0
+      filename: hparams.yaml
+  diffcsp-pp-perov5:
+    - url: https://drive.usercontent.google.com/download?id=1qraZ44O3d36f9noe3sCUMnqixNUHmHMV&export=download&confirm=t
+      sha256: 138b8569d85eb713908cd05040ce63d81e5cdf4cfac378f12ede4b086d69bc88
+      filename: last.ckpt
+    - url: https://drive.usercontent.google.com/download?id=12hBaMTphoL-sVnxvY9VfkOQbfCHOSR7d&export=download&confirm=t
+      sha256: ebf459dfd0e7f84a85b89ef59ef2cc3429763d7d6cd0f945ca1bc738ae035cc2
+      filename: hparams.yaml
+  diffcsp-pp-gen-mp20:
+    - url: https://drive.usercontent.google.com/download?id=1uZlO-1-Ddpo7lLNDXKrLtp6WXnUS-nZy&export=download&confirm=t
+      sha256: c2039f37388426de0c3a8d109ac041f7698ebecfa54106b98a31657d7f952a61
+      filename: last.ckpt
+    - url: https://drive.usercontent.google.com/download?id=18EUqut_zcDx4OTVgNuUNvb7thkPrapmQ&export=download&confirm=t
+      sha256: e6c8f07596a2a3cb23c89154f87c1da8dab56fc61ad73dabd7ad94c5951238ec
+      filename: hparams.yaml
+  diffcsp-pp-gen-perov5:
+    - url: https://drive.usercontent.google.com/download?id=1fUktTDmzmNSJZJe2-eZugO08cV1mGgzE&export=download&confirm=t
+      sha256: 81b08faedd087da5c0bb2a5bfb458f5e8bf00a0a5a8c2f9912a836770075bb52
+      filename: last.ckpt
+    - url: https://drive.usercontent.google.com/download?id=1VhNar7XflYPCmZi1xi9X8ETdcpmHoHCc&export=download&confirm=t
+      sha256: 7ba98a9122a69590b36a3aa99300e741b55a074508c00603c53c4c3f52607952
+      filename: hparams.yaml
+  diffcsp-pp-carbon24:
+    - url: https://drive.usercontent.google.com/download?id=17e_T1KgBYZceZNCt37a3Ej2fZSqmFc09&export=download&confirm=t
+      sha256: 6d66747e6dd7111f175ce993c3e5764b1e585df4bd12cb3bf4b02133bc42ab0c
+      filename: last.ckpt
+    - url: https://drive.usercontent.google.com/download?id=1ac4qH-tkLcRWPvjYV2xl-tzraeJfTli1&export=download&confirm=t
+      sha256: a8a1466780cb169804e3ea012bda2c2ed6adcb238a534968211d53f3fd379662
+      filename: hparams.yaml
+
+unused_parameters: []
+
+graph:
+  # every pair of atoms of a structure, and each atom with itself. No radius:
+  # the network reads the differences of the fractional coordinates
+  self_loops: true
+
+model:
+  time_dim: &time_dim 256                # embedding of the time
+  time_max_period: 10000.0               # inverse of its lowest frequency
+  schedules:
+    timesteps: &timesteps 1000           # steps of the diffusion
+    # noise of the lattice: cosine schedule of arXiv:2102.09672
+    beta_offset: 0.008                   # its offset s
+    beta_min: 1.0e-4                     # the betas are clipped
+    beta_max: 0.9999
+    # noise of the fractional coordinates, in cells, from the first to the last time
+    sigma_begin: &sigma_begin 0.005
+    sigma_end: &sigma_end 0.5
+
+# CSPNet
+decoder:
+  num_elements: &num_elements 100        # rows of the embedding, from hydrogen
+  hidden_dim: &hidden_dim 512            # features of the atoms and of the messages
+  num_layers: &num_layers 6
+  num_freqs: &num_freqs 128              # frequencies of the basis of the coordinates
+  # the elements are indices read in a table, and are not predicted
+  soft_elements: false
+  predict_elements: false
+  # the lattice is the vector k of its six numbers, read and given as it is
+  lattice_dim: 6
+
+# A lattice is exp(sum_i k_i B_i), with a vector k of six numbers and the
+# symmetric matrices B_i below, each one divided by its norm: three
+# off-diagonal ones, two of the shape and one of the volume. The lattice of a
+# crystal family has some of its numbers fixed (crystal_family.py).
+lattice:
+  basis:
+    - [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+    - [[0.0, 0.0, 1.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
+    - [[0.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0]]
+    - [[1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 0.0]]
+    - [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -2.0]]
+    - [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+  # the crystal families, from the space group 0 (none) to 230: the last
+  # group of each one, the numbers of k it fixes and their values
+  families:
+    - {last_spacegroup: 2, fixed: [], values: []}                # triclinic
+    - {last_spacegroup: 15, fixed: [0, 2], values: [0.0, 0.0]}  # monoclinic
+    - {last_spacegroup: 74, fixed: [0, 1, 2], values: [0.0, 0.0, 0.0]}  # orthorhombic
+    - {last_spacegroup: 142, fixed: [0, 1, 2, 3], values: [0.0, 0.0, 0.0, 0.0]}  # tetragonal
+    # hexagonal: a = b and gamma = 120 degrees, k_0 = -ln(3) sqrt(2) / 4
+    - {last_spacegroup: 194, fixed: [0, 1, 2, 3], values: [-0.3884180996060467, 0.0, 0.0, 0.0]}
+    - {last_spacegroup: 230, fixed: [0, 1, 2, 3, 4], values: [0.0, 0.0, 0.0, 0.0, 0.0]}  # cubic
+
+# predictor and corrector, as in scripts/evaluate.py, scripts/generation.py
+# and scripts/sample_api.py of DiffCSP++
+sampling:
+  # step of the corrector at the lowest noise, for each weights: the one
+  # recommended for their dataset and task (recommand_step_lr of
+  # scripts/eval_utils.py); for carbon, the one of scripts/generation.py
+  step_sizes:
+    diffcsp-pp-mp20: 1.0e-5
+    diffcsp-pp-mpts52: 1.0e-5
+    diffcsp-pp-perov5: 5.0e-7
+    diffcsp-pp-carbon24: 1.0e-5
+    diffcsp-pp-gen-mp20: 5.0e-6
+    diffcsp-pp-gen-perov5: 1.0e-6
+
+# the model which also generates the elements: the same network, which reads
+# the element of an atom as a vector of weights and gives its noise
+generation:
+  default_weights: diffcsp-pp-gen-mp20
+  decoder:
+    soft_elements: true
+    predict_elements: true
+
+upstream:
+  # configuration of the training the rewrite is written for (hparams.yaml)
+  model_args:
+    _target_: diffcsp.pl_modules.diffusion.CSPDiffusion
+    time_dim: *time_dim
+    latent_dim: 0
+    timesteps: *timesteps
+    # a cost of zero would keep the lattice or the coordinates fixed
+    cost_coord: 1.0
+    cost_lattice: 1.0
+  generation_model_args:
+    _target_: diffcsp.pl_modules.diffusion_w_type.CSPDiffusion
+    time_dim: *time_dim
+    latent_dim: 0
+    timesteps: *timesteps
+    cost_coord: 1.0
+    cost_lattice: 1.0
+  decoder_args:
+    _target_: diffcsp.pl_modules.cspnet.CSPNet
+    hidden_dim: *hidden_dim
+    latent_dim: 0
+    max_atoms: *num_elements
+    num_layers: *num_layers
+    act_fn: silu
+    dis_emb: sin
+    num_freqs: *num_freqs
+    edge_style: fc
+    coord_style: node
+    ln: true
+  beta_scheduler_args:
+    _target_: diffcsp.pl_modules.diff_utils.BetaScheduler
+    scheduler_mode: cosine
+  sigma_scheduler_args:
+    _target_: diffcsp.pl_modules.diff_utils.SigmaScheduler
+    sigma_begin: *sigma_begin
+    sigma_end: *sigma_end
