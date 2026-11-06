@@ -1,13 +1,17 @@
 """Tests for the rewrite of the energy prediction of MACE."""
 
 import pickle
-from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
 
-from torchms.data import Structures, parse_cif
+from helpers.models import predict
+from helpers.references import load_reference
+from helpers.references import reference_structures as orb_structures
+from helpers.structures import generator, make_batch, make_structures
+from helpers.weights import pretrained as load_pretrained
+from torchms.data import Structures
 from torchms.data.augmentation import (
     AtomPermutation,
     AtomTranslation,
@@ -23,32 +27,10 @@ from torchms.models.estimator.reader import Placeholder
 from torchms.models.mace.reader import read_model
 from torchms.models.layers.basis import spherical_harmonics
 
-
-def predict(model, structures: Structures) -> torch.Tensor:
-    """Prediction of a model for structures without graph."""
-    return model(model.transform()(structures))
-
-
-DATA = Path(__file__).parent / "data"
 NAME = "mace-mp-0-small"
 
 # products of three environments of 128 channels: slower than the default timeout
 pytestmark = pytest.mark.timeout(60)
-
-
-def make_structures() -> list[Structures]:
-    with open("tests/cif/triclinic1.cif", "r", encoding="utf-8") as fp:
-        triclinic = parse_cif(fp.read())
-
-    return [Structures.zincblende(), triclinic]
-
-
-def make_batch() -> Structures:
-    return Structures.collate(make_structures())
-
-
-def generator(seed: int = 0) -> torch.Generator:
-    return torch.Generator().manual_seed(seed)
 
 
 def mace_state_dict(model: MACE) -> dict[str, torch.Tensor]:
@@ -211,21 +193,12 @@ def test_load_pretrained_checks_the_parameters():
 
 @pytest.fixture(scope="module")
 def pretrained() -> MACE:
-    if not weights.checkpoint_paths("mace", NAME)[0].exists():
-        pytest.skip(f"weights of {NAME} are not in the cache")
-
-    return MACE.from_pretrained(NAME, device="cpu")
+    return load_pretrained(MACE, "mace", NAME)
 
 
 def reference_structures() -> tuple[Structures, dict[str, np.ndarray]]:
-    data = dict(np.load(DATA / "orb_reference.npz"))
-    structures = Structures(
-        lattice=torch.from_numpy(data["lattice"]),
-        x=torch.from_numpy(data["x"]),
-        z=torch.from_numpy(data["z"]),
-        num_atoms=torch.from_numpy(data["num_atoms"]),
-    )
-    return structures, dict(np.load(DATA / "mace_reference.npz"))
+    """The structures of the references and what mace-torch 0.3.16 computed for them."""
+    return orb_structures(), load_reference("mace_reference.npz").numpy()
 
 
 def test_pretrained_matches_mace(pretrained):

@@ -18,7 +18,7 @@ written for.
         --with "numpy<1.24" --with scikit-learn --with pandas --with networkx \
         --with sympy --with "torchmetrics<0.8" --with "setuptools<60" \
         --with "ruamel.yaml<0.18" --with monty==2021.8.17 \
-        python scripts/reference_cdvae.py cdvae WEIGHTS
+        python tests/references/reference_cdvae.py cdvae WEIGHTS
 
 WEIGHTS is the directory of the three files of the weights listed in
 src/torchms/models/cdvae/config.yaml: the cache of torchms after a first
@@ -26,7 +26,7 @@ CDVAE.from_pretrained(), "~/.cache/torchms/cdvae/cdvae-mp20-cowboys".
 
 The structures are the ones of tests/data/orb_reference.npz, with at most 20
 atoms. The result is written to tests/data/cdvae_reference.npz and read by
-tests/test_cdvae.py.
+tests/models/test_cdvae.py.
 
 The checkpoint and the scaler are pickles of objects of pytorch-lightning,
 omegaconf and cdvae: they are read with an unpickler which only builds tensors
@@ -43,7 +43,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-DATA = Path(__file__).parent.parent / "tests" / "data"
+DATA = Path(__file__).resolve().parent.parent / "data"
 CHECKPOINT = "epoch=745-step=79076.ckpt"
 
 # Langevin dynamics checked step by step: structures, noise levels and steps
@@ -116,8 +116,11 @@ def load_model(cdvae: Path, weights: Path):
     return model.eval()
 
 
-def load_batch(max_atoms: int):
-    """Structures of the tests as a batch of cdvae, with their CrystalNN graphs."""
+def load_batch(max_atoms: int, indices=None):
+    """Structures of the tests as a batch of cdvae, with their CrystalNN graphs.
+
+    The ones of at most max_atoms atoms, or the ones of indices, in this order.
+    """
     from cdvae.common.data_utils import build_crystal_graph
     from pymatgen.core import Lattice, Structure
     from torch_geometric.data import Batch, Data
@@ -126,7 +129,7 @@ def load_batch(max_atoms: int):
     ptr = np.concatenate([[0], np.cumsum(data["num_atoms"])])
 
     index, graphs = [], []
-    for i in range(len(data["num_atoms"])):
+    for i in range(len(data["num_atoms"])) if indices is None else indices:
         if data["num_atoms"][i] > max_atoms:
             continue
 
@@ -260,7 +263,8 @@ def main():
                 n_step_each=NUM_STEPS,
                 step_lr=1e-4,
                 min_sigma=0,
-                save_traj=False,
+                # the state after each step, for the test of a single one
+                save_traj=True,
                 disable_bar=True,
             ),
             num_atoms[:NUM_DYNAMICS],
@@ -272,6 +276,7 @@ def main():
             dynamics_start=drawn[0].numpy(),
             dynamics_noise=torch.stack(drawn[1:]).numpy(),
             dynamics_end=samples["frac_coords"].numpy(),
+            dynamics_states=samples["all_frac_coords"].numpy(),
         )
 
     np.savez_compressed(DATA / "cdvae_reference.npz", **result)

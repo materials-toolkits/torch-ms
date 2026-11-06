@@ -20,7 +20,7 @@ of its sampling.
         --with sympy --with scipy --with pymatgen==2024.6.10 \
         --with emmet-core==0.84.2 --with monty==2024.7.30 --with ase==3.23.0 \
         --with huggingface-hub --with fire --with tqdm --with "setuptools<81" \
-        python scripts/reference_mattergen.py mattergen WEIGHTS
+        python tests/references/reference_mattergen.py mattergen WEIGHTS
 
 torch, pytorch-lightning, hydra-core, omegaconf and monty are the versions of
 the pyproject.toml of MatterGen 1.0.3. The other ones are what its modules
@@ -54,7 +54,7 @@ script is run once for each model, and finds which one it is given:
   other ones without condition, and the sampling with the guidance of the README of MatterGen,
   recording the scores with and without condition of each step.
 
-Both are read by tests/test_mattergen.py.
+Both are read by tests/models/test_mattergen.py.
 
 The structures are the ones of tests/data/orb_reference.npz.
 
@@ -72,7 +72,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-DATA = Path(__file__).resolve().parent.parent / "tests" / "data"
+DATA = Path(__file__).resolve().parent.parent / "data"
 
 # the mask of the elements of mattergen/scripts/generate.py
 ELEMENT_MASK = (

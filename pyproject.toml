@@ -52,6 +52,8 @@ build = "uv build"
 docs = "uv run --group docs mkdocs serve"
 docs-build = "uv run --group docs mkdocs build --strict"
 docs-test = "uv run pytest --markdown-docs docs --timeout=60"
+# the tests and the long ones of the diffusion models (every step of their samplings)
+test-full = "uv run pytest --full"
 
 [tool.pytest.ini_options]
 testpaths = [
@@ -59,7 +61,12 @@ testpaths = [
     "src",
 ]
 addopts = "--doctest-modules --markdown-docs-syntax=superfences"
+# the shared helpers of the tests: from helpers.compare import assert_close
+pythonpath = ["tests"]
 timeout = 3
+markers = [
+    "full: long test of a diffusion model, run only with --full",
+]
 
 [tool.pyright]
 venvPath = "."

@@ -1,14 +1,16 @@
 """Tests for the rewrite of CDVAE."""
 
 from dataclasses import replace
-from pathlib import Path
 
-import numpy as np
 import pytest
 import torch
-import torch.nn.functional as F
 
-from torchms.data import Structures, parse_cif
+from helpers.compare import assert_close, assert_close_in_the_cell
+from helpers.graphs import neighbours_at_the_same_distance as ties
+from helpers.references import load_reference, reference_structures
+from helpers.structures import generator, make_batch, make_structures, noisy
+from helpers.weights import pretrained as load_pretrained
+from torchms.data import Structures
 from torchms.data.augmentation import (
     AtomPermutation,
     AtomTranslation,
@@ -21,44 +23,23 @@ from torchms.models.estimator.reader import Placeholder, read_pickle
 from torchms.graph.geometry import lattice_from_parameters
 from torchms.graph.graph import Graph
 from torchms.graph.line_graph import reverse_edges
-from torchms.graph.sparse import count_by
 from torchms.graph.transforms import (
     AddRadiusGraph,
-    KeepNearestNeighbors,
     KeepNearImages,
 )
 from torchms.models.cdvae import CDVAE, Config, InvalidWeights, sample_composition
 
-DATA = Path(__file__).parent / "data"
 NAME = "cdvae-mp20-cowboys"
 
 # thousands of triplets per structure: slower than the default timeout
 pytestmark = pytest.mark.timeout(60)
 
+# the dynamics of the reference: its structures and its smallest noise levels
+NUM_DYNAMICS = 6
+NUM_LEVELS = 5
+
 # a graph of bonds for the encoder, in place of the one of CrystalNN
 BONDS = Compose([AddRadiusGraph(3.5, self_images=True), CDVAE.transform()])
-
-
-def generator(seed: int = 0) -> torch.Generator:
-    return torch.Generator().manual_seed(seed)
-
-
-def make_structures() -> list[Structures]:
-    with open("tests/cif/triclinic1.cif", "r", encoding="utf-8") as fp:
-        triclinic = parse_cif(fp.read())
-
-    return [Structures.zincblende(), triclinic]
-
-
-def make_batch() -> Structures:
-    return Structures.collate(make_structures())
-
-
-def noisy(structures: Structures, seed: int = 0) -> Structures:
-    """Structures with their atoms moved at random, in the cell."""
-    noise = 0.05 * torch.randn(structures.x.shape, generator=generator(seed))
-
-    return replace(structures.without_graphs(), x=(structures.x + noise) % 1.0)
 
 
 def latent(n_struct: int, seed: int = 0) -> torch.Tensor:
@@ -479,17 +460,8 @@ def test_files_are_read_without_their_classes(tmp_path):
 
 def reference() -> tuple[Structures, dict[str, torch.Tensor]]:
     """Structures of the tests and what cdvae computed for them."""
-    data = dict(np.load(DATA / "orb_reference.npz"))
-    expected = {
-        name: torch.from_numpy(values)
-        for name, values in np.load(DATA / "cdvae_reference.npz").items()
-    }
-    structures = Structures(
-        lattice=torch.from_numpy(data["lattice"]),
-        x=torch.from_numpy(data["x"]),
-        z=torch.from_numpy(data["z"]),
-        num_atoms=torch.from_numpy(data["num_atoms"]),
-    )
+    structures = reference_structures()
+    expected = dict(load_reference("cdvae_reference.npz").arrays)
     assert expected["index"].tolist() == list(range(len(structures.num_atoms)))
 
     return structures, expected
@@ -512,49 +484,25 @@ def with_bonds_of_cdvae(
 
 
 def neighbours_at_the_same_distance(structures: Structures) -> torch.Tensor:
-    """Structures where the choice of the nearest neighbours of an atom is not defined.
+    """Structures where the 20 nearest neighbours of the decoder are not defined.
 
-    The last neighbour kept and the first one left out are at the same
-    distance: for the two images of an atom itself on each side of it. cdvae
-    then keeps one or the other from the rounding of their distances.
-
-    Returns:
-        Mask of these structures, shape (n_struct,).
+    cdvae keeps one or the other of the two images of an atom itself on each
+    side of it, from the rounding of their distances.
     """
-    config = Config.load()
-    near = KeepNearImages(config.graph.decoder.max_image_shift)(
-        AddRadiusGraph(config.graph.decoder.radius, self_images=True)(
-            structures.without_graphs()
-        )
+    config = Config.load().graph.decoder
+    near = Compose(
+        [
+            AddRadiusGraph(config.radius, self_images=True),
+            KeepNearImages(config.max_image_shift),
+        ]
     )
-    graph = KeepNearestNeighbors(config.graph.decoder.max_neighbors + 1)(near).graph
 
-    # edges are sorted by atom then by length: the last two of each atom
-    degree = count_by(graph.senders, len(structures.z))
-    last = F.pad(torch.cumsum(degree, dim=0), (1, 0), value=0)[1:] - 1
-    full = degree == config.graph.decoder.max_neighbors + 1
-    distance = graph.edges_distances()
-    tie = (distance[last[full]] - distance[last[full] - 1]).abs() < 1e-4
-
-    return count_by(structures.batch[full][tie], len(structures.num_atoms)) > 0
-
-
-def close(found: torch.Tensor, expected: torch.Tensor) -> bool:
-    """Whether values are the expected ones up to the rounding of float32.
-
-    The difference is under 1e-5 of the largest expected value, or 1e-5.
-    """
-    scale = max(1.0, float(expected.abs().max()))
-
-    return float((found - expected).abs().max()) < 1e-5 * scale
+    return ties(structures, near, config.max_neighbors)
 
 
 @pytest.fixture(scope="module")
 def pretrained() -> CDVAE:
-    if not all(path.exists() for path in weights.checkpoint_paths("cdvae", NAME)):
-        pytest.skip(f"weights of {NAME} are not in the cache")
-
-    return CDVAE.from_pretrained(NAME, device="cpu")
+    return load_pretrained(CDVAE, "cdvae", NAME)
 
 
 def test_pretrained_encoder_matches_cdvae(pretrained):
@@ -565,8 +513,8 @@ def test_pretrained_encoder_matches_cdvae(pretrained):
     assert structures.line_graph.num_tuples.tolist() == expected["num_pairs"].tolist()
 
     mu, log_var = pretrained(structures)
-    assert close(mu, expected["mu"])
-    assert close(log_var, expected["log_var"])
+    assert_close(mu, expected["mu"], name="mu")
+    assert_close(log_var, expected["log_var"], name="log_var")
     assert (mu - expected["mu"]).abs().mean() < 1e-6
 
     # the spherical Bessel functions of both codes lose digits for short
@@ -583,15 +531,23 @@ def test_pretrained_decoded_quantities_match_cdvae(pretrained):
     structures, expected = reference()
     mu = expected["mu"]
 
-    assert close(pretrained.predict_num_atoms(mu), expected["num_atoms_logits"])
+    assert_close(
+        pretrained.predict_num_atoms(mu),
+        expected["num_atoms_logits"],
+        name="num_atoms_logits",
+    )
 
     lengths, angles = pretrained.predict_lattice(mu, structures.num_atoms)
-    assert close(lengths, expected["decoded_lengths"])
-    assert close(angles, expected["decoded_angles"])
+    assert_close(lengths, expected["decoded_lengths"], name="decoded_lengths")
+    assert_close(angles, expected["decoded_angles"], name="decoded_angles")
 
     # cdvae repeats the composition of a structure for each of its atoms
     composition = pretrained.predict_composition(mu)
-    assert close(composition[structures.batch], expected["composition_logits"])
+    assert_close(
+        composition[structures.batch],
+        expected["composition_logits"],
+        name="composition_logits",
+    )
 
 
 def test_pretrained_decoder_matches_cdvae(pretrained):
@@ -621,8 +577,8 @@ def test_pretrained_decoder_matches_cdvae(pretrained):
 
     move, scores = pretrained.denoise(expected["mu"], moved)
     atoms = defined[moved.batch]
-    assert close(move[atoms], expected["score"][atoms])
-    assert close(scores[atoms], expected["types_logits"][atoms])
+    assert_close(move[atoms], expected["score"][atoms], name="score")
+    assert_close(scores[atoms], expected["types_logits"][atoms], name="types_logits")
     assert (move[atoms] - expected["score"][atoms]).abs().mean() < 1e-5
 
     # elsewhere the graphs differ by a few edges: the outputs stay near
@@ -630,32 +586,60 @@ def test_pretrained_decoder_matches_cdvae(pretrained):
     assert (move - expected["score"]).abs().mean() < 0.02
 
 
-def test_pretrained_dynamics_match_cdvae(pretrained):
-    """Steps of the dynamics of cdvae, with its starting positions and its noise."""
-    structures, expected = reference()
-    noise = expected["dynamics_noise"]
-    n_struct = 6
-    levels = pretrained.sigmas[-5:]
-    assert len(noise) == 2 * len(levels)
+def start_of_the_dynamics(
+    pretrained: CDVAE, structures: Structures, expected: dict[str, torch.Tensor]
+) -> tuple[torch.Tensor, Structures]:
+    """The latent vectors and the random atoms the dynamics of cdvae started from."""
+    num_atoms = structures.num_atoms[:NUM_DYNAMICS]
+    mu = expected["mu"][:NUM_DYNAMICS]
 
-    num_atoms = structures.num_atoms[:n_struct]
-    mu = expected["mu"][:n_struct]
-    current = Structures(
+    return mu, Structures(
         lattice=lattice_from_parameters(*pretrained.predict_lattice(mu, num_atoms)),
         x=expected["dynamics_start"],
         z=structures.z[: int(num_atoms.sum())],
         num_atoms=num_atoms,
     )
 
-    defined = torch.ones(n_struct, dtype=torch.bool)
+
+def test_pretrained_langevin_step_matches_cdvae(pretrained):
+    """The first step of the dynamics of cdvae, from its random atoms and its noise."""
+    structures, expected = reference()
+    mu, start = start_of_the_dynamics(pretrained, structures, expected)
+    sigma = pretrained.sigmas[-NUM_LEVELS]
+
+    after = pretrained.langevin_step(
+        mu, start, sigma, expected["dynamics_noise"][0], update_elements=False
+    )
+
+    defined = ~neighbours_at_the_same_distance(start)
+    assert defined.sum() >= 2
+    atoms = defined[after.batch]
+    assert_close_in_the_cell(after.x[atoms], expected["dynamics_states"][0][atoms])
+
+
+@pytest.mark.full
+def test_pretrained_dynamics_match_cdvae(pretrained):
+    """The ten chained steps of the dynamics of cdvae, from its start and its noise."""
+    structures, expected = reference()
+    noise = expected["dynamics_noise"]
+    levels = pretrained.sigmas[-NUM_LEVELS:]
+    assert len(noise) == 2 * len(levels)
+    mu, current = start_of_the_dynamics(pretrained, structures, expected)
+
+    defined = torch.ones(NUM_DYNAMICS, dtype=torch.bool)
     for step, sigma in enumerate(levels.repeat_interleave(2)):
         defined &= ~neighbours_at_the_same_distance(current)
         current = pretrained.langevin_step(
             mu, current, sigma, noise[step], update_elements=False
         )
+        # each step against the state cdvae reached, where all are defined
+        atoms = defined[current.batch]
+        assert_close_in_the_cell(
+            current.x[atoms],
+            expected["dynamics_states"][step][atoms],
+            name=f"step {step}",
+        )
 
     assert defined.sum() >= 2
-    atoms = defined[current.batch]
     difference = (current.x - expected["dynamics_end"] + 0.5) % 1.0 - 0.5
-    assert difference[atoms].abs().max() < 1e-5
     assert difference.abs().max() < 0.01

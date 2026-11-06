@@ -4,10 +4,10 @@ Run once, outside of the environment of the project, which does not depend on
 matgl:
 
     uv run --isolated --no-project --python 3.12 --with matgl==4.1.0 \
-        python scripts/reference_m3gnet.py
+        python tests/references/reference_m3gnet.py
 
 The structures are the ones of tests/data/orb_reference.npz. The result is
-written to tests/data/m3gnet_reference.npz and read by tests/test_m3gnet.py.
+written to tests/data/m3gnet_reference.npz and read by tests/models/test_m3gnet.py.
 """
 
 from pathlib import Path
@@ -24,7 +24,7 @@ from matgl.graph._compute import (
 from matgl.utils.maths import SPHERICAL_BESSEL_ROOTS
 from pymatgen.core import Lattice, Structure
 
-DATA = Path(__file__).parent.parent / "tests" / "data"
+DATA = Path(__file__).resolve().parent.parent / "data"
 MODEL = "M3GNet-PES-MatPES-PBE-2025.2"
 
 
@@ -64,7 +64,9 @@ def main():
         line_graph = create_line_graph_torch(
             graph.edge_index, distances, vectors, pos.shape[0], model.threebody_cutoff
         )
-        angles = compute_theta_and_phi(vectors, distances, line_graph["line_edge_index"])
+        angles = compute_theta_and_phi(
+            vectors, distances, line_graph["line_edge_index"]
+        )
 
         num_edges.append(graph.edge_index.shape[1])
         num_angles.append(line_graph["line_edge_index"].shape[1])

@@ -18,7 +18,7 @@ written for.
         --with p-tqdm==1.3.3 --with python-dotenv --with "numpy<1.24" \
         --with scikit-learn --with pandas --with networkx --with sympy \
         --with "torchmetrics<0.8" --with setuptools==59.5.0 --with einops \
-        python scripts/reference_diffcsp.py DiffCSP WEIGHTS
+        python tests/references/reference_diffcsp.py DiffCSP WEIGHTS
 
 torch, torch-geometric, pytorch-lightning and pymatgen are the versions of the
 README of DiffCSP. The other ones are what its modules import, at versions
@@ -37,7 +37,7 @@ it is given:
   result is written to tests/data/diffcsp_generation_reference.npz.
 
 The structures are the ones of tests/data/orb_reference.npz. The results are
-read by tests/test_diffcsp.py.
+read by tests/models/test_diffcsp.py.
 
 The checkpoints only hold tensors in an OrderedDict: they are read by
 torch.load as they are.
@@ -51,7 +51,7 @@ import numpy as np
 import torch
 
 # resolved now: importing diffcsp changes the working directory
-DATA = Path(__file__).resolve().parent.parent / "tests" / "data"
+DATA = Path(__file__).resolve().parent.parent / "data"
 CHECKPOINT = "last.ckpt"
 
 # structures of the sampling, which is run whole, and its step at the lowest noise

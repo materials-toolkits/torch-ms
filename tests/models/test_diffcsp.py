@@ -1,13 +1,15 @@
 """Tests for the rewrite of the two models of DiffCSP."""
 
 from dataclasses import replace
-from pathlib import Path
 
-import numpy as np
 import pytest
 import torch
 
-from torchms.data import Structures, parse_cif
+from helpers.compare import assert_close, assert_close_in_the_cell
+from helpers.references import load_reference, reference_structures
+from helpers.structures import generator, make_batch, make_structures
+from helpers.weights import pretrained as load_pretrained
+from torchms.data import Structures
 from torchms.data.augmentation import (
     AtomTranslation,
     LatticeRotation,
@@ -23,29 +25,16 @@ from torchms.models.diffcsp import (
     InvalidWeights,
 )
 from torchms.models.estimator import weights
-from torchms.models.layers import periodic_fourier, sinusoidal_embedding
 
-DATA = Path(__file__).parent / "data"
 NAME = "diffcsp-mp20"
 GENERATION_NAME = "diffcsp-gen-mp20"
 
+# the recorded step checked by default, at the time 500: the other ones with --full
+ONE_STEP = 4
+GENERATION_ONE_STEP = 3
+
 # a network of 512 features on every pair of atoms: slower than the default timeout
 pytestmark = pytest.mark.timeout(60)
-
-
-def generator(seed: int = 0) -> torch.Generator:
-    return torch.Generator().manual_seed(seed)
-
-
-def make_structures() -> list[Structures]:
-    with open("tests/cif/triclinic1.cif", "r", encoding="utf-8") as fp:
-        triclinic = parse_cif(fp.read())
-
-    return [Structures.zincblende(), triclinic]
-
-
-def make_batch() -> Structures:
-    return Structures.collate(make_structures())
 
 
 @pytest.fixture(scope="module")
@@ -86,35 +75,6 @@ def test_pinned_checkpoints(tmp_path):
 
 
 # the bases
-
-
-def test_periodic_fourier():
-    x = torch.rand(7, 3, generator=generator())
-    basis = periodic_fourier(x, 5)
-
-    assert basis.shape == (7, 30)
-    # sines then cosines, by coordinate then by frequency
-    assert torch.allclose(basis[:, 15::5], torch.ones(7, 3))
-    assert torch.allclose(basis[:, 6], torch.sin(2 * torch.pi * x[:, 1]), atol=1e-6)
-    assert torch.allclose(basis[:, 27], torch.cos(4 * torch.pi * x[:, 2]), atol=1e-6)
-
-    # of period 1
-    shift = torch.tensor([[1.0, -2.0, 3.0]])
-    assert torch.allclose(periodic_fourier(x + shift, 5), basis, atol=1e-4)
-
-    assert periodic_fourier(x.double(), 5).dtype == torch.float64
-
-
-def test_sinusoidal_embedding():
-    time = torch.tensor([0, 1, 500])
-    embedding = sinusoidal_embedding(time, 16, 10000.0)
-
-    assert embedding.shape == (3, 16)
-    assert torch.equal(embedding[0], torch.tensor([0.0] * 8 + [1.0] * 8))
-    # frequencies from 1 to 1 / max_period
-    assert torch.allclose(embedding[1, [0, 7]], torch.tensor([1.0, 1e-4]).sin())
-    assert torch.allclose(embedding[:, :8] ** 2 + embedding[:, 8:] ** 2, torch.ones(8))
-    assert torch.equal(sinusoidal_embedding(time.float(), 16, 10000.0), embedding)
 
 
 # the schedules of the noise
@@ -453,44 +413,12 @@ def test_load_pretrained_checks_the_parameters(model):
 
 def reference() -> tuple[Structures, dict[str, torch.Tensor]]:
     """Structures of the tests and what DiffCSP computed for them."""
-    data = dict(np.load(DATA / "orb_reference.npz"))
-    expected = {
-        name: torch.from_numpy(values)
-        for name, values in np.load(DATA / "diffcsp_reference.npz").items()
-    }
-    structures = Structures(
-        lattice=torch.from_numpy(data["lattice"]),
-        x=torch.from_numpy(data["x"]),
-        z=torch.from_numpy(data["z"]),
-        num_atoms=torch.from_numpy(data["num_atoms"]),
-    )
-
-    return structures, expected
-
-
-def close(found: torch.Tensor, expected: torch.Tensor) -> bool:
-    """Whether values are the expected ones up to the rounding of float32.
-
-    The difference is under 1e-5 of the largest expected value, or 1e-5.
-    """
-    scale = max(1.0, float(expected.abs().max()))
-
-    return float((found - expected).abs().max()) < 1e-5 * scale
-
-
-def close_in_the_cell(found: torch.Tensor, expected: torch.Tensor) -> bool:
-    """Whether fractional coordinates are the expected ones, modulo the cell."""
-    difference = (found - expected + 0.5) % 1.0 - 0.5
-
-    return float(difference.abs().max()) < 1e-5
+    return reference_structures(), dict(load_reference("diffcsp_reference.npz").arrays)
 
 
 @pytest.fixture(scope="module")
 def pretrained() -> DiffCSP:
-    if not all(path.exists() for path in weights.checkpoint_paths("diffcsp", NAME)):
-        pytest.skip(f"weights of {NAME} are not in the cache")
-
-    return DiffCSP.from_pretrained(NAME, device="cpu")
+    return load_pretrained(DiffCSP, "diffcsp", NAME)
 
 
 def test_pretrained_schedules_are_the_ones_of_the_configuration(pretrained):
@@ -520,8 +448,8 @@ def test_pretrained_network_matches_diffcsp(pretrained):
     assert times[0] == 1 and times[-1] == config.model.timesteps
 
     lattice_noise, score = pretrained(pretrained.transform()(structures), times)
-    assert close(lattice_noise, expected["pred_l"])
-    assert close(score, expected["pred_x"])
+    assert_close(lattice_noise, expected["pred_l"], name="pred_l")
+    assert_close(score, expected["pred_x"], name="pred_x")
     assert (lattice_noise - expected["pred_l"]).abs().mean() < 1e-6
     assert (score - expected["pred_x"]).abs().mean() < 1e-6
 
@@ -537,8 +465,8 @@ def test_pretrained_network_matches_diffcsp_on_noisy_structures(pretrained):
     )
 
     lattice_noise, score = pretrained(pretrained.transform()(noisy), expected["times"])
-    assert close(lattice_noise, expected["noisy_pred_l"])
-    assert close(score, expected["noisy_pred_x"])
+    assert_close(lattice_noise, expected["noisy_pred_l"], name="noisy_pred_l")
+    assert_close(score, expected["noisy_pred_x"], name="noisy_pred_x")
     assert (score - expected["noisy_pred_x"]).abs().mean() < 1e-6
 
 
@@ -554,30 +482,49 @@ def dynamics(expected: dict[str, torch.Tensor], structures: Structures, step: in
     )
 
 
-def test_pretrained_steps_match_diffcsp(pretrained):
-    """Steps of the sampling of DiffCSP, each from its structures and its noise."""
-    config = Config.load()
+def check_step(pretrained: DiffCSP, step: int) -> None:
+    """A recorded step of the sampling of DiffCSP, from its structures and its noise."""
     structures, expected = reference()
+    time = int(expected["dynamics_times"][step])
+    moved = pretrained.sample_step(
+        dynamics(expected, structures, step),
+        time,
+        expected["corrector_noise_x"][step],
+        expected["predictor_noise_l"][step],
+        expected["predictor_noise_x"][step],
+    )
+
+    assert_close(moved.lattice, expected["dynamics_next_l"][step], name=f"L at {time}")
+    assert_close_in_the_cell(
+        moved.x, expected["dynamics_next_x"][step], name=f"x at {time}"
+    )
+
+
+def test_pretrained_step_matches_diffcsp(pretrained):
+    """A step of the sampling of DiffCSP, halfway: the network and the step."""
+    _, expected = reference()
+    assert int(expected["dynamics_times"][ONE_STEP]) == 500
+
+    check_step(pretrained, ONE_STEP)
+
+
+@pytest.mark.full
+def test_pretrained_steps_match_diffcsp(pretrained):
+    """Every recorded step of the sampling of DiffCSP, each from its own start."""
+    config = Config.load()
+    _, expected = reference()
     times = expected["dynamics_times"].tolist()
     assert times[0] == config.model.timesteps and times[-1] == 1
 
-    for step, time in enumerate(times):
-        moved = pretrained.sample_step(
-            dynamics(expected, structures, step),
-            time,
-            expected["corrector_noise_x"][step],
-            expected["predictor_noise_l"][step],
-            expected["predictor_noise_x"][step],
-        )
-
-        assert close(moved.lattice, expected["dynamics_next_l"][step]), time
-        assert close_in_the_cell(moved.x, expected["dynamics_next_x"][step]), time
+    for step in range(len(times)):
+        check_step(pretrained, step)
 
     # the last step gives the structures DiffCSP returns
     assert torch.equal(expected["dynamics_next_l"][-1], expected["final_l"])
     assert torch.equal(expected["dynamics_next_x"][-1], expected["final_x"])
 
 
+@pytest.mark.full
 def test_pretrained_dynamics_match_diffcsp(pretrained):
     """The first steps of the sampling of DiffCSP, one after the other."""
     config = Config.load()
@@ -599,8 +546,8 @@ def test_pretrained_dynamics_match_diffcsp(pretrained):
             expected["predictor_noise_x"][step],
         )
 
-    assert close(current.lattice, expected["dynamics_next_l"][2])
-    assert close_in_the_cell(current.x, expected["dynamics_next_x"][2])
+    assert_close(current.lattice, expected["dynamics_next_l"][2], name="L")
+    assert_close_in_the_cell(current.x, expected["dynamics_next_x"][2])
 
 
 # the model which also generates the elements, with random weights
@@ -881,34 +828,24 @@ def test_generation_load_pretrained_checks_the_parameters(generation, model):
 
 def generation_reference() -> tuple[Structures, dict[str, torch.Tensor]]:
     """Structures of the tests and what the generation of DiffCSP computed."""
-    structures, _ = reference()
-    expected = {
-        name: torch.from_numpy(values)
-        for name, values in np.load(DATA / "diffcsp_generation_reference.npz").items()
-    }
+    expected = load_reference("diffcsp_generation_reference.npz")
 
-    return structures, expected
+    return reference_structures(), dict(expected.arrays)
 
 
-def close_after(found: torch.Tensor, expected: torch.Tensor, scale: float) -> bool:
-    """Whether values are the expected ones after a step which scales the rounding.
+def scale_after(expected: torch.Tensor, scale: float) -> float:
+    """Scale of values after a step which scales the rounding by a factor.
 
     A step of the sampling divides what it predicts by the square root of the
     alpha of its time, 0.01 at the last time: the difference is under 1e-5 of
-    the largest expected value before this division.
+    the largest expected value before this division, or 1e-5.
     """
-    largest = max(1.0, float(expected.abs().max()))
-
-    return float((found - expected).abs().max()) < 1e-5 * largest * max(1.0, scale)
+    return max(1.0, float(expected.abs().max())) * max(1.0, scale)
 
 
 @pytest.fixture(scope="module")
 def pretrained_generation() -> DiffCSPGeneration:
-    paths = weights.checkpoint_paths("diffcsp", GENERATION_NAME)
-    if not all(path.exists() for path in paths):
-        pytest.skip(f"weights of {GENERATION_NAME} are not in the cache")
-
-    return DiffCSPGeneration.from_pretrained(GENERATION_NAME, device="cpu")
+    return load_pretrained(DiffCSPGeneration, "diffcsp", GENERATION_NAME)
 
 
 def test_pretrained_generation_schedules(pretrained_generation, pretrained):
@@ -940,9 +877,9 @@ def test_pretrained_generation_network_matches_diffcsp(pretrained_generation):
     lattice_noise, score, element_noise = pretrained_generation(
         pretrained_generation.transform()(noisy), expected["noisy_t"], expected["times"]
     )
-    assert close(lattice_noise, expected["noisy_pred_l"])
-    assert close(score, expected["noisy_pred_x"])
-    assert close(element_noise, expected["noisy_pred_t"])
+    assert_close(lattice_noise, expected["noisy_pred_l"], name="noisy_pred_l")
+    assert_close(score, expected["noisy_pred_x"], name="noisy_pred_x")
+    assert_close(element_noise, expected["noisy_pred_t"], name="noisy_pred_t")
     assert (element_noise - expected["noisy_pred_t"]).abs().mean() < 1e-6
     assert (score - expected["noisy_pred_x"]).abs().mean() < 1e-6
 
@@ -969,29 +906,54 @@ def generation_dynamics(
     return start, elements, noise
 
 
-def test_pretrained_generation_steps_match_diffcsp(pretrained_generation):
-    """Steps of the generation of DiffCSP, each from its structures and its noise."""
-    config = Config.load()
+def check_generation_step(pretrained: DiffCSPGeneration, step: int) -> Structures:
+    """A recorded step of the generation of DiffCSP, from its start and its noise."""
     structures, expected = generation_reference()
+    time = int(expected["dynamics_times"][step])
+    alphas = pretrained.beta_scheduler.alphas
+    start, elements, noise = generation_dynamics(expected, structures, step)
+
+    moved, elements = pretrained.sample_step(start, elements, time, noise)
+
+    # the first step divides by 0.01: see scale_after
+    scale = float(1 / alphas[time].sqrt())
+    if time < Config.load().model.timesteps:
+        assert scale < 2.1
+    for found, key in (
+        (moved.lattice, "dynamics_next_l"),
+        (elements, "dynamics_next_t"),
+    ):
+        assert_close(
+            found,
+            expected[key][step],
+            name=f"{key} at {time}",
+            scale=scale_after(expected[key][step], scale),
+        )
+    assert_close_in_the_cell(
+        moved.x, expected["dynamics_next_x"][step], name=f"x at {time}"
+    )
+
+    return moved
+
+
+def test_pretrained_generation_step_matches_diffcsp(pretrained_generation):
+    """A step of the generation of DiffCSP, halfway: the network and the step."""
+    _, expected = generation_reference()
+    assert int(expected["dynamics_times"][GENERATION_ONE_STEP]) == 500
+
+    check_generation_step(pretrained_generation, GENERATION_ONE_STEP)
+
+
+@pytest.mark.full
+def test_pretrained_generation_steps_match_diffcsp(pretrained_generation):
+    """Every recorded step of the generation of DiffCSP, each from its own start."""
+    config = Config.load()
+    _, expected = generation_reference()
     times = expected["dynamics_times"].tolist()
     assert times[0] == config.model.timesteps and times[-1] == 1
-    alphas = pretrained_generation.beta_scheduler.alphas
 
-    for step, time in enumerate(times):
-        start, elements, noise = generation_dynamics(expected, structures, step)
-        moved, elements = pretrained_generation.sample_step(
-            start, elements, time, noise
-        )
-
-        # the first step divides by 0.01: see close_after
-        scale = float(1 / alphas[time].sqrt())
-        assert close_after(
-            moved.lattice, expected["dynamics_next_l"][step], scale
-        ), time
-        assert close_after(elements, expected["dynamics_next_t"][step], scale), time
-        assert close_in_the_cell(moved.x, expected["dynamics_next_x"][step]), time
-        if time < config.model.timesteps:
-            assert scale < 2.1
+    for step in range(len(times)):
+        moved = check_generation_step(pretrained_generation, step)
 
     # the last step gives the structures and the elements DiffCSP returns
     assert torch.equal(moved.z, expected["final_z"])
@@ -999,6 +961,7 @@ def test_pretrained_generation_steps_match_diffcsp(pretrained_generation):
     assert torch.equal(expected["dynamics_next_x"][-1], expected["final_x"])
 
 
+@pytest.mark.full
 def test_pretrained_generation_dynamics_match_diffcsp(pretrained_generation):
     """Two steps of the generation of DiffCSP, one after the other."""
     config = Config.load()
@@ -1013,6 +976,6 @@ def test_pretrained_generation_dynamics_match_diffcsp(pretrained_generation):
             current, elements, times[step], noise
         )
 
-    assert close(current.lattice, expected["dynamics_next_l"][2])
-    assert close(elements, expected["dynamics_next_t"][2])
-    assert close_in_the_cell(current.x, expected["dynamics_next_x"][2])
+    assert_close(current.lattice, expected["dynamics_next_l"][2], name="L")
+    assert_close(elements, expected["dynamics_next_t"][2], name="elements")
+    assert_close_in_the_cell(current.x, expected["dynamics_next_x"][2])

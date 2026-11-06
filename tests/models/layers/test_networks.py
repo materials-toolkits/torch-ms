@@ -1,8 +1,14 @@
-"""Tests for the trainable models of the energy."""
+"""The networks to train of torchms.models.layers: LineGraphNetwork, EquivariantNetwork.
+
+They have no original code and no pretrained weights: what is tested is what
+a network of the energy must be (invariances, extensivity, gradients), with
+random weights. Their bases are in test_basis.py.
+"""
 
 import pytest
 import torch
 
+from helpers.paths import CIF
 from torchms.data import Structures, parse_cif
 from torchms.data.augmentation import (
     AtomPermutation,
@@ -13,16 +19,12 @@ from torchms.data.augmentation import (
     random_orthogonal,
     rotate_lattice,
 )
-from torchms.models.layers.basis import spherical_harmonics
 from torchms.models.layers import (
-    AngleBasis,
     EquivariantNetwork,
     LineGraphNetwork,
     equivariant_network,
-    gaunt_coefficients,
     line_graph_network,
 )
-from torchms.models.layers.basis import DEGREES
 
 pytestmark = pytest.mark.timeout(30)
 
@@ -30,8 +32,7 @@ RADIUS = (4.0, 3.0, 2.6)
 
 
 def make_structures() -> list[Structures]:
-    with open("tests/cif/triclinic1.cif", "r", encoding="utf-8") as fp:
-        triclinic = parse_cif(fp.read())
+    triclinic = parse_cif((CIF / "triclinic1.cif").read_text())
 
     return [Structures.zincblende(), triclinic]
 
@@ -79,71 +80,6 @@ MODELS = [
     pytest.param(lambda: make_equivariant_network(2), id="products-2"),
     pytest.param(lambda: make_equivariant_network(3), id="products-3"),
 ]
-
-
-# bases
-
-
-def test_angle_basis():
-    angle = torch.linspace(-3.0, 3.0, 13)
-
-    cosines = AngleBasis(4)(angle)
-    assert cosines.shape == (13, 4)
-    assert torch.allclose(cosines, AngleBasis(4)(-angle), atol=1e-6)
-
-    both = AngleBasis(4, sine=True)(angle)
-    assert both.shape == (13, 7)
-    assert torch.allclose(both[:, :4], cosines)
-    assert torch.allclose(
-        both[:, 4:], -AngleBasis(4, sine=True)(-angle)[:, 4:], atol=1e-6
-    )
-
-
-def test_gaunt_coefficients_selection_rules():
-    gaunt = gaunt_coefficients().double()
-
-    # symmetric in its three indices
-    for permutation in [(1, 0, 2), (0, 2, 1), (2, 1, 0)]:
-        assert torch.allclose(gaunt, gaunt.permute(permutation), atol=1e-7)
-
-    # the product with the constant harmonic is the identity
-    assert torch.allclose(gaunt[0], torch.eye(16, dtype=torch.float64), atol=1e-6)
-
-    # zero unless the degrees form a triangle and have an even sum
-    degree = torch.tensor(DEGREES)
-    l1, l2, l3 = degree[:, None, None], degree[None, :, None], degree[None, None, :]
-    allowed = ((l1 + l2 + l3) % 2 == 0) & (l3 <= l1 + l2) & (l3 >= (l1 - l2).abs())
-    assert gaunt[~allowed].abs().max() < 1e-6
-    assert gaunt[allowed].abs().max() > 0.1
-
-
-def test_gaunt_coefficients_are_equivariant():
-    gaunt = gaunt_coefficients().double()
-    directions = torch.randn(64, 3, dtype=torch.float64, generator=generator())
-    # orthogonal in double precision
-    rotation = torch.linalg.qr(
-        random_orthogonal(1, torch.device("cpu"), generator())[0].double()
-    ).Q
-
-    # a function on the sphere as coefficients of harmonics, and its rotation:
-    # the harmonics of rotated directions are a linear map of the harmonics
-    harmonics = spherical_harmonics(directions)
-    rotated = spherical_harmonics(directions @ rotation.T)
-    wigner = torch.linalg.lstsq(
-        harmonics, rotated
-    ).solution  # rotated = harmonics @ wigner
-    assert torch.allclose(harmonics @ wigner, rotated, atol=1e-8)
-
-    a = torch.randn(16, dtype=torch.float64, generator=generator(1))
-    b = torch.randn(16, dtype=torch.float64, generator=generator(2))
-
-    product = torch.einsum("ijk,i,j->k", gaunt, a, b)
-    product_of_rotated = torch.einsum("ijk,i,j->k", gaunt, a @ wigner, b @ wigner)
-
-    assert torch.allclose(product_of_rotated, product @ wigner, atol=1e-8)
-
-
-# models
 
 
 def test_arguments():
@@ -221,6 +157,7 @@ def test_line_graph_network_cutoffs_of_tuples():
         (structures.triplets, geometry.triplet_cutoff, RADIUS[1]),
         (structures.quadruplets, geometry.quadruplet_cutoff, RADIUS[2]),
     ):
+        assert tuples is not None and cutoff is not None
         envelope = model.envelope(geometry.distance, radius)
         assert torch.allclose(cutoff, envelope[tuples.index].prod(dim=0))
 

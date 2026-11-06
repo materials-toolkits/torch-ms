@@ -1,4 +1,7 @@
-"""Configuration of the tests of the examples of the documentation.
+"""Configuration of the tests, and of the examples of the documentation.
+
+`--full` also runs the tests marked full: the long tests of the diffusion
+models, which compare every recorded step of a sampling with the original.
 
 `uv run poe docs-test` runs the Python blocks of the pages of docs/. A block is
 a test of its own: it runs alone, in a directory with the placeholder files
@@ -77,6 +80,30 @@ PLACEHOLDER_HDF5 = (
     "datasets/zinc20_3d/small.hdf5",
 )
 PLACEHOLDER_CIF = ("file.cif", "structures.cif")
+
+# the scripts which run the original codes, in their own environments: they
+# import packages torchms does not depend on (alignn, matgl, mace...)
+collect_ignore = ["tests/references"]
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--full",
+        action="store_true",
+        help="also run the long tests of the diffusion models (marked full): "
+        "every recorded step of their samplings, their chained dynamics",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip the tests marked full, unless pytest is given --full."""
+    if config.getoption("--full"):
+        return
+
+    skip = pytest.mark.skip(reason="long test of a diffusion model: run with --full")
+    for item in items:
+        if item.get_closest_marker("full") is not None:
+            item.add_marker(skip)
 
 
 def pytest_markdown_docs_globals():
