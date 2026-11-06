@@ -176,6 +176,7 @@ def test_checkpoints_are_read_from_the_configurations(tmp_path):
         "mace",
         "alignn",
         "cdvae",
+        "crystalflow",
         "diffcsp",
         "flowmm",
         "mattergen",

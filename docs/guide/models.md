@@ -8,7 +8,7 @@ has a page for each one.
 |---|---|---|
 | Supervised | total energy, pretrained | [orb-v3](../models/orb.md), [MACE](../models/mace.md), [M3GNet](../models/m3gnet.md), [MatterSim](../models/mattersim.md), [CHGNet](../models/chgnet.md) |
 | | formation energy, pretrained | [ALIGNN](../models/alignn.md) |
-| Generative | crystals, pretrained | [CDVAE](../models/cdvae.md), [DiffCSP](../models/diffcsp.md), [FlowMM](../models/flowmm.md), [MatterGen](../models/mattergen.md) |
+| Generative | crystals, pretrained | [CDVAE](../models/cdvae.md), [CrystalFlow](../models/crystalflow.md), [DiffCSP](../models/diffcsp.md), [FlowMM](../models/flowmm.md), [MatterGen](../models/mattergen.md) |
 | | crystals and molecules, pretrained | [ADiT](../models/adit.md) |
 | Layers | bases and networks | [bases](../models/bases.md), [DimeNet++](../models/dimenet.md), [GemNet-T](../models/gemnet.md), [CSPNet](../models/cspnet.md) |
 | | networks of the energy, to train | [`LineGraphNetwork`](../models/line-graph-network.md), [`EquivariantNetwork`](../models/equivariant-network.md) |
@@ -126,6 +126,20 @@ num_atoms = torch.tensor([2, 5], device="cuda")
 structures = model.sample(z, num_atoms)     # 1000 steps of diffusion
 
 generation = DiffCSPGeneration.from_pretrained(device="cuda")
+structures = generation.sample(generation.sample_num_atoms(64))
+```
+
+[CrystalFlow](../models/crystalflow.md) has the two models of DiffCSP, by flow matching:
+`CrystalFlow` from a composition, `CrystalFlowGeneration` with the elements. Some of their
+weights are conditioned on a property, given to `sample` as `conditions`.
+
+```{.python notest}
+from torchms.models import CrystalFlow, CrystalFlowGeneration
+
+model = CrystalFlow.from_pretrained(device="cuda")
+structures = model.sample(z, num_atoms)     # 100 steps
+
+generation = CrystalFlowGeneration.from_pretrained(device="cuda")
 structures = generation.sample(generation.sample_num_atoms(64))
 ```
 

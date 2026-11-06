@@ -99,6 +99,7 @@ nav:
       - Generative models:
           - ADiT: models/adit.md
           - CDVAE: models/cdvae.md
+          - CrystalFlow: models/crystalflow.md
           - DiffCSP: models/diffcsp.md
           - FlowMM: models/flowmm.md
           - MatterGen: models/mattergen.md

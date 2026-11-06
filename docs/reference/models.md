@@ -56,6 +56,12 @@
 
 ::: torchms.models.cdvae.config
 
+### CrystalFlow
+
+::: torchms.models.crystalflow.model
+
+::: torchms.models.crystalflow.config
+
 ### DiffCSP
 
 ::: torchms.models.diffcsp.model
