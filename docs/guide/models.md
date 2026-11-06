@@ -6,7 +6,7 @@ has a page for each one.
 
 | | | Models |
 |---|---|---|
-| Supervised | total energy, pretrained | [orb-v3](../models/orb.md), [MACE](../models/mace.md), [M3GNet](../models/m3gnet.md), [CHGNet](../models/chgnet.md) |
+| Supervised | total energy, pretrained | [orb-v3](../models/orb.md), [MACE](../models/mace.md), [M3GNet](../models/m3gnet.md), [MatterSim](../models/mattersim.md), [CHGNet](../models/chgnet.md) |
 | | formation energy, pretrained | [ALIGNN](../models/alignn.md) |
 | Generative | crystals, pretrained | [CDVAE](../models/cdvae.md), [DiffCSP](../models/diffcsp.md), [FlowMM](../models/flowmm.md), [MatterGen](../models/mattergen.md) |
 | | crystals and molecules, pretrained | [ADiT](../models/adit.md) |

@@ -21,6 +21,7 @@ compared once with the original code, on the same 40 structures (253 for orb-v3)
 | [MACE](mace.md) | `MACE` | total energy | mace 0.3.16, MIT | official | 5e-15 eV/atom, double precision |
 | [M3GNet](m3gnet.md) | `M3GNet` | total energy | matgl 4.1.0, BSD 3-Clause | official | 1.6e-6 eV/atom |
 | [CHGNet](chgnet.md) | `CHGNet` | total energy | chgnet 0.4.2, modified BSD | official | 4.1e-6 eV/atom |
+| [MatterSim](mattersim.md) | `MatterSim` | total energy | mattersim 1.2.5, MIT | official, 1M | 9.5e-7 eV/atom |
 | [ALIGNN](alignn.md) | `ALIGNN` | formation energy | alignn 2026.8.11, NIST | official | 4.8e-7 eV/atom with the same 12 neighbours |
 
 Forces, stress, magnetic moments and training are not included. orb-v3 is the model of the
@@ -72,6 +73,7 @@ nearest neighbours, which is not defined when several neighbours are at the same
 | orb-v3 | `AddRadiusGraph(6.0)`, `KeepNearestNeighbors(120)` |
 | MACE | `AddRadiusGraph(6.0)` |
 | M3GNet | `AddRadiusGraph(5.0)`, `AddTriplets(radius=4.0)` |
+| MatterSim | `AddRadiusGraph(5.0)`, `AddTriplets(radius=4.0)` |
 | CHGNet | `AddRadiusGraph(6.0)`, `AddTriplets(radius=3.0, strict=True)`, `AddBonds()` |
 | ALIGNN | `AddRadiusGraph(5.0)`, `KeepNearestNeighbors(12)`, `AddLineGraph(radius=3.5, backtrack=True)` |
 | ADiT | none: its transformers read every atom of a structure |

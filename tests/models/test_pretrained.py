@@ -179,6 +179,7 @@ def test_checkpoints_are_read_from_the_configurations(tmp_path):
         "diffcsp",
         "flowmm",
         "mattergen",
+        "mattersim",
     }
     for model, names in weights.CHECKPOINTS.items():
         for name, files in names.items():

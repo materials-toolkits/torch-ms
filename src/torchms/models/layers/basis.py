@@ -12,6 +12,10 @@
 # models/m3gnet/model.py. The roots are found here by bisection, where matgl
 # stores a table of them.
 #
+# SmoothBesselBasis is derived from MatterSim
+# (https://github.com/microsoft/mattersim), Copyright (c) Microsoft Corporation,
+# MIT license (see models/mattersim/LICENSE).
+#
 # periodic_fourier and sinusoidal_embedding are derived from DiffCSP
 # (https://github.com/jiaor17/DiffCSP), Copyright (c) 2023 Rui Jiao, MIT
 # license (see models/diffcsp/LICENSE).
@@ -302,6 +306,83 @@ class SphericalBesselBasis(nn.Module):
             ],
             dim=1,
         )
+
+
+class SmoothBesselBasis(nn.Module):
+    """Smooth radial basis of Kocer, Mason and Erturk (arXiv:1907.02374).
+
+    Orthogonal functions g_n of a distance, combinations of sin(x) / x at
+    (n + 1) pi r / r_max and (n + 2) pi r / r_max, whose value and first two
+    derivatives are zero at r_max. Its buffers are named as in MatterSim,
+    which stores them in its weights.
+
+    Args:
+        r_max: Radius in Å.
+        max_n: Number of functions.
+
+    Examples:
+        >>> basis = SmoothBesselBasis(r_max=5.0, max_n=4)
+        >>> basis(torch.tensor([1.0, 5.0])).shape
+        torch.Size([2, 4])
+        >>> bool(basis(torch.tensor([5.0])).abs().max() < 1e-6)
+        True
+    """
+
+    dn: torch.Tensor
+    en: torch.Tensor
+    fnr_weights: torch.Tensor
+    n_1_pi_cutoff: torch.Tensor
+    n_2_pi_cutoff: torch.Tensor
+    r_max: torch.Tensor
+
+    def __init__(self, r_max: float, max_n: int):
+        super().__init__()
+        self.max_n = max_n
+        n = torch.arange(max_n, dtype=torch.float64).unsqueeze(0)
+
+        fnr = (
+            (-1) ** n
+            * math.sqrt(2)
+            * math.pi
+            / r_max**1.5
+            * (n + 1)
+            * (n + 2)
+            / torch.sqrt(2 * n**2 + 6 * n + 5)
+        )
+        en = n**2 * (n + 2) ** 2 / (4 * (n + 1) ** 4 + 1)
+        # d_n = 1 - e_n / d_(n-1), from d_0 = 1: a recurrence over the
+        # functions, not over the data
+        dn = [torch.tensor(1.0, dtype=torch.float64)]
+        for i in range(1, max_n):
+            dn.append(1 - en[0, i] / dn[-1])
+
+        self.register_buffer("dn", torch.stack(dn).float())
+        self.register_buffer("en", en.float())
+        self.register_buffer("fnr_weights", fnr.float())
+        self.register_buffer("n_1_pi_cutoff", ((n + 1) * math.pi / r_max).float())
+        self.register_buffer("n_2_pi_cutoff", ((n + 2) * math.pi / r_max).float())
+        self.register_buffer("r_max", torch.tensor(r_max))
+
+    def forward(
+        self, distance: Float[torch.Tensor, "n"]
+    ) -> Float[torch.Tensor, "n max_n"]:
+        """The functions at each distance, shape (n, max_n)."""
+        x_1 = distance.unsqueeze(-1) * self.n_1_pi_cutoff
+        x_2 = distance.unsqueeze(-1) * self.n_2_pi_cutoff
+        fnr = self.fnr_weights * (torch.sin(x_1) / x_1 + torch.sin(x_2) / x_2)
+
+        functions = [fnr[:, 0]]
+        for i in range(1, self.max_n):
+            functions.append(
+                1
+                / torch.sqrt(self.dn[i])
+                * (
+                    fnr[:, i]
+                    + torch.sqrt(self.en[0, i] / self.dn[i - 1]) * functions[-1]
+                )
+            )
+
+        return torch.stack(functions, dim=1)
 
 
 class GaussianBasis(nn.Module):

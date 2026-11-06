@@ -79,7 +79,7 @@ def config_files() -> dict[str, Path]:
     Examples:
         >>> sorted(config_files())  # doctest: +NORMALIZE_WHITESPACE
         ['adit', 'alignn', 'cdvae', 'chgnet', 'diffcsp', 'flowmm', 'm3gnet',
-         'mace', 'mattergen', 'orb']
+         'mace', 'mattergen', 'mattersim', 'orb']
     """
     directory = Path(__file__).parent.parent
 

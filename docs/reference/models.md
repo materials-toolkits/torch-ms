@@ -22,6 +22,12 @@
 
 ::: torchms.models.m3gnet.config
 
+### MatterSim
+
+::: torchms.models.mattersim.model
+
+::: torchms.models.mattersim.config
+
 ### CHGNet
 
 ::: torchms.models.chgnet.model
