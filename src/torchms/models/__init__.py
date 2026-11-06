@@ -1,7 +1,7 @@
 """Models of crystal structures and of molecules.
 
-Supervised models predict a property of a structure: OrbV3, MACE, M3GNet and
-CHGNet its total energy, ALIGNN its formation energy.
+Supervised models predict a property of a structure: OrbV3, MACE, M3GNet,
+MatterSim and CHGNet its total energy, ALIGNN its formation energy.
 
 Generative models generate structures: ADiT crystals and molecules, CDVAE,
 DiffCSPGeneration, FlowMM and MatterGen crystals, MatterGenChemicalSystem for
@@ -41,6 +41,7 @@ from torchms.models.mattergen import (
     MatterGenMagneticDensityHHIScore,
     MatterGenSpaceGroup,
 )
+from torchms.models.mattersim import MatterSim
 from torchms.models.orb import OrbV3
 
 __all__ = [
@@ -61,5 +62,6 @@ __all__ = [
     "MatterGenMagneticDensity",
     "MatterGenMagneticDensityHHIScore",
     "MatterGenSpaceGroup",
+    "MatterSim",
     "OrbV3",
 ]

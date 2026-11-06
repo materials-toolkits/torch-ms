@@ -220,6 +220,19 @@ class PretrainedModel(nn.Module, Generic[ConfigT]):
             )
 
     @classmethod
+    def for_weights(cls: type[Model], name: str | None = None) -> Model:
+        """Model built for some weights, before they are loaded.
+
+        The model of the configuration by default. A model whose weights are of
+        several sizes overrides it, to build the network of each one.
+
+        Args:
+            name: Name of the weights, the default ones if None.
+        """
+        del name
+        return cls()
+
+    @classmethod
     def from_pretrained(
         cls: type[Model],
         name: str | None = None,
@@ -239,7 +252,7 @@ class PretrainedModel(nn.Module, Generic[ConfigT]):
         Raises:
             InvalidWeights: If the weights are not the ones of the model.
         """
-        model = cls()
+        model = cls.for_weights(name)
         model.load_checkpoint(name or model.default_weights(), cache)
 
         return model.to(device).eval().requires_grad_(False)
