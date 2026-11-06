@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from typing import Any
 
 from torchms.models.estimator.config import YamlConfig
 
@@ -76,8 +77,46 @@ class Config(YamlConfig):
         graph: Bonds and angles of the model.
         model: Hyperparameters of the network.
         upstream: What is checked in the weights of MatterSim.
+        variants: What the network of other weights changes, by name of the
+            weights: values of the section model ("model") and arguments
+            stored with these weights ("model_args"). See for_weights.
     """
 
     graph: GraphConfig
     model: NetworkConfig
     upstream: UpstreamConfig
+    variants: dict[str, dict[str, dict[str, Any]]]
+
+    def for_weights(self, name: str) -> Config:
+        """Configuration of the network of some weights, the default ones of name.
+
+        Args:
+            name: Name of weights: the default ones, or a key of variants.
+
+        Raises:
+            KeyError: If the weights are neither.
+
+        Examples:
+            >>> config = Config.load().for_weights("mattersim-v1.0.0-5m")
+            >>> config.default_weights, config.model.units, config.model.num_blocks
+            ('mattersim-v1.0.0-5m', 256, 4)
+            >>> config.upstream.model_args["units"]
+            256
+            >>> Config.load().for_weights("mattersim-v1.0.0-1m") == Config.load()
+            True
+        """
+        if name == self.default_weights:
+            return self
+        if name not in self.variants:
+            raise KeyError(f'no network for the weights "{name}"')
+
+        variant = self.variants[name]
+        model = replace(self.model, **variant.get("model", {}))
+        model_args = {**self.upstream.model_args, **variant.get("model_args", {})}
+
+        return replace(
+            self,
+            default_weights=name,
+            model=model,
+            upstream=replace(self.upstream, model_args=model_args),
+        )

@@ -8,10 +8,15 @@ default_weights: mattersim-v1.0.0-1m
 # parameters, trained on 3M structures), the one MatterSim loads by default,
 # in their repository at the tag v1.2.5. It holds a state dict, the arguments
 # of the model and the state of the training, all tensors.
+# The larger one ("mattersim-v1.0.0-5M", 4.5M parameters, trained on 6M
+# structures) is the same network with more blocks and features, see variants.
 checkpoints:
   mattersim-v1.0.0-1m:
     - url: https://raw.githubusercontent.com/microsoft/mattersim/40a1eb8f1189a53af310957b4f2c5dfbfe68d647/pretrained_models/mattersim-v1.0.0-1M.pth
       sha256: 28b0b0b0f13efefee06b47ea4c9105a26bd3e2c8396da193430da96b3b49a8be
+  mattersim-v1.0.0-5m:
+    - url: https://raw.githubusercontent.com/microsoft/mattersim/40a1eb8f1189a53af310957b4f2c5dfbfe68d647/pretrained_models/mattersim-v1.0.0-5M.pth
+      sha256: e3df9fa708725e3d453140646c7d1838324b347a3d1214cf1440522146f872b5
 
 # atoms closer than the radius are bonded, the periodic images of an atom
 # included; angles are between two bonds of at most the three-body radius
@@ -39,3 +44,14 @@ upstream:
     cutoff: *radius
     max_z: *max_z
     threebody_cutoff: *three_body_radius
+
+# what the network of other weights changes, by name of the weights: values of
+# the section model, and the arguments stored with these weights
+variants:
+  mattersim-v1.0.0-5m:
+    model:
+      units: 256
+      num_blocks: 4
+    model_args:
+      units: 256
+      num_blocks: 4

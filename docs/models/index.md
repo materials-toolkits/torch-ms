@@ -21,7 +21,7 @@ compared once with the original code, on the same 40 structures (253 for orb-v3)
 | [MACE](mace.md) | `MACE` | total energy | mace 0.3.16, MIT | official | 5e-15 eV/atom, double precision |
 | [M3GNet](m3gnet.md) | `M3GNet` | total energy | matgl 4.1.0, BSD 3-Clause | official | 1.6e-6 eV/atom |
 | [CHGNet](chgnet.md) | `CHGNet` | total energy | chgnet 0.4.2, modified BSD | official | 4.1e-6 eV/atom |
-| [MatterSim](mattersim.md) | `MatterSim` | total energy | mattersim 1.2.5, MIT | official, 1M | 9.5e-7 eV/atom |
+| [MatterSim](mattersim.md) | `MatterSim` | total energy | mattersim 1.2.5, MIT | official, 1M and 5M | 1.9e-6 eV/atom |
 | [ALIGNN](alignn.md) | `ALIGNN` | formation energy | alignn 2026.8.11, NIST | official | 4.8e-7 eV/atom with the same 12 neighbours |
 
 Forces, stress, magnetic moments and training are not included. orb-v3 is the model of the

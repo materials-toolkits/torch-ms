@@ -1,6 +1,6 @@
 # MatterSim
 
-`MatterSim` is the M3GNet potential of MatterSim `mattersim-v1.0.0-1M`
+`MatterSim` is the M3GNet potential of MatterSim, `mattersim-v1.0.0-1M` and `-5M`
 ([mattersim](https://github.com/microsoft/mattersim) 1.2.5, MIT,
 [arXiv:2405.04967](https://arxiv.org/abs/2405.04967)), in `torchms/models/mattersim/`.
 MatterSim is a universal potential of Microsoft Research AI for Science, trained on
@@ -15,9 +15,9 @@ in one another. Forces and stress are not included.
 | Source | [mattersim](https://github.com/microsoft/mattersim) 1.2.5 (tag `v1.2.5`, commit `40a1eb8`) |
 | License | MIT |
 | Paper | [arXiv:2405.04967](https://arxiv.org/abs/2405.04967) |
-| Weights | `mattersim-v1.0.0-1m`, official, 880K parameters, 18 MB |
+| Weights | `mattersim-v1.0.0-1m` (default), official, 880K parameters, 18 MB; `mattersim-v1.0.0-5m`, official, 4.5M parameters, 91 MB |
 | Transform | `AddRadiusGraph(5.0, self_images=True)`, `AddTriplets(radius=4.0)` |
-| Largest difference with the original | 9.5e-7 eV/atom |
+| Largest difference with the original | 9.5e-7 eV/atom (1M), 1.9e-6 eV/atom (5M) |
 
 ```{.python notest}
 from torchms.data import load_dataset
@@ -27,7 +27,17 @@ dataset = load_dataset("mp-20", "test", transform=MatterSim.transform())
 model = MatterSim.from_pretrained(device="cuda")
 energy = model(dataset[:32].to("cuda"))        # (32,), eV
 per_atom = model.atom_energies(dataset[:32].to("cuda"))
+
+# the larger model: the same graph, a larger network
+large = MatterSim.from_pretrained("mattersim-v1.0.0-5m", device="cuda")
 ```
+
+**Two sizes.** The authors publish two models of the same architecture: `1M`, 3 blocks of
+128 features trained on 3M structures, the one MatterSim loads by default, and `5M`, 4 blocks
+of 256 features trained on 6M structures. The section `variants` of `config.yaml` lists what
+the larger one changes; `MatterSim.for_weights(name)`, which `from_pretrained` calls, builds
+the network of the size of the weights, and the arguments stored with them are checked: the
+weights of one size are refused by the network of the other one.
 
 ## The rewrite
 
@@ -50,13 +60,13 @@ from 1 to 4 Å.
 
 ## Comparison with the original
 
-| Against mattersim 1.2.5 with torch 2.8.0, 40 structures (225 atoms) | |
-|---|---|
-| Bonds and angles of each structure (8,252 bonds, 128,348 angles) | identical |
-| Sum of the lengths of the bonds of each structure | 8e-5 Å, the rounding of float32 |
-| Energy of each atom (values up to 14.7 eV) | 5.7e-6 eV largest, 6.9e-7 mean |
-| Energy | 9.5e-7 eV/atom largest, 3.5e-7 mean |
-| Energy, against MatterSim in double precision | 3.1e-6 eV/atom, as MatterSim in single precision (3.1e-6) |
+| Against mattersim 1.2.5 with torch 2.8.0, 40 structures (225 atoms) | `1M` | `5M` |
+|---|---|---|
+| Bonds and angles of each structure (8,252 bonds, 128,348 angles) | identical | identical |
+| Sum of the lengths of the bonds of each structure | 8e-5 Å, the rounding of float32 | the same |
+| Energy of each atom (values up to 14.7 and 16.5 eV): largest, mean | 5.7e-6, 6.9e-7 eV | 5.7e-6, 6.4e-7 eV |
+| Energy: largest, mean | 9.5e-7, 3.5e-7 eV/atom | 1.9e-6, 4.0e-7 eV/atom |
+| Energy, against MatterSim in double precision | 3.1e-6 eV/atom, as MatterSim in single precision (3.1e-6) | 4.0e-6 eV/atom, MatterSim 4.2e-6 |
 
 MatterSim builds its graph with `find_points_in_spheres` of pymatgen, as matgl does: the
 transforms give the same bonds and the same angles. A change of 0.1 % of one tensor of
@@ -81,8 +91,6 @@ computed one structure at a time; the rewrite has no such limit.
 
 ## Limits
 
-- `mattersim-v1.0.0-5M`, the larger model of the authors (4.5M parameters), has the same
-  architecture and other hyperparameters; it is not listed yet;
 - MatterSim places a molecule in a large periodic box. The rewrite reads it without
   periodicity, which gives the same bonds as long as the box is larger than the radius, as
   MatterSim makes it.

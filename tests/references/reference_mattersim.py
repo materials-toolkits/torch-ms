@@ -15,21 +15,25 @@ mattersim 1.2.5 is its last release (tag v1.2.5, commit
 40a1eb8f1189a53af310957b4f2c5dfbfe68d647); it needs torch 2.8 or later through
 torch-sim. pymatgen builds the graph (find_points_in_spheres).
 
-WEIGHTS is the file listed in src/torchms/models/mattersim/config.yaml,
-"~/.cache/torchms/mattersim/mattersim-v1.0.0-1M.pth" after a first
-from_pretrained(): the one MatterSim loads by default. The model is loaded by
+WEIGHTS is a file listed in src/torchms/models/mattersim/config.yaml, in
+"~/.cache/torchms/mattersim/" after a first from_pretrained(). The script is
+run once for each one, and finds which one it is given:
+
+* "mattersim-v1.0.0-1M.pth", the one MatterSim loads by default: the result
+  is written to tests/data/mattersim_reference.npz;
+* "mattersim-v1.0.0-5M.pth": written to tests/data/mattersim_5m_reference.npz.
+ The model is loaded by
 Potential.from_checkpoint and run as its calculator runs it, on graphs built
 by build_dataloader and batch_to_dict, the default path of MatterSimCalculator,
 one structure per batch as the calculator: mattersim 1.2.5 does not offset
 three_body_indices when it batches several structures, which gives wrong
 energies.
 
-The structures are the 40 crystals of tests/data/orb_reference.npz. The result
-is written to tests/data/mattersim_reference.npz and read by
-tests/models/test_mattersim.py: the energy of each structure in float32 and in
-float64 (the model and its inputs converted), the energy of each atom, the
-number of bonds and of triplets of each structure, and the sum of the lengths
-of its bonds.
+The structures are the 40 crystals of tests/data/orb_reference.npz. The
+results are read by tests/models/test_mattersim.py: the energy of each
+structure in float32 and in float64 (the model and its inputs converted), the
+energy of each atom, the number of bonds and of triplets of each structure,
+and the sum of the lengths of its bonds.
 """
 
 import sys
@@ -135,7 +139,12 @@ def main():
         )
         for name, value in result.items()
     }
-    np.savez_compressed(DATA / "mattersim_reference.npz", **arrays)
+    output = (
+        "mattersim_5m_reference.npz"
+        if "5M" in weights.name
+        else "mattersim_reference.npz"
+    )
+    np.savez_compressed(DATA / output, **arrays)
     print({name: value.shape for name, value in arrays.items()})
     print(arrays["energy"][:5], arrays["num_edges"][:5], arrays["num_triplets"][:5])
 

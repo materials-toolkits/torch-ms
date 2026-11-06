@@ -404,6 +404,18 @@ class MatterSim(PretrainedModel[Config]):
 
     # weights
 
+    @classmethod
+    def for_weights(cls, name: str | None = None) -> MatterSim:
+        """Model of the size of some weights, before they are loaded.
+
+        Args:
+            name: Name of the weights, see Config.for_weights. The default
+                ones if None.
+        """
+        config = Config.load()
+
+        return cls(config if name is None else config.for_weights(name))
+
     def load_checkpoint(
         self, name: str, cache: str | os.PathLike | None = None
     ) -> None:

@@ -24,6 +24,13 @@ from torchms.models.mattersim import Config, InvalidWeights, MatterSim
 from torchms.models.mattersim.model import SphericalBasisLayer
 
 NAME = "mattersim-v1.0.0-1m"
+LARGE = "mattersim-v1.0.0-5m"
+
+# the weights and the file of their reference
+REFERENCES = {
+    NAME: "mattersim_reference.npz",
+    LARGE: "mattersim_5m_reference.npz",
+}
 
 # thousands of angles per structure: slower than the default timeout
 pytestmark = pytest.mark.timeout(30)
@@ -40,19 +47,45 @@ def model() -> MatterSim:
 
 
 def test_pinned_checkpoints(tmp_path):
-    assert set(weights.CHECKPOINTS["mattersim"]) == {NAME}
+    assert set(weights.CHECKPOINTS["mattersim"]) == {NAME, LARGE}
     assert Config.load().default_weights == NAME
 
-    (checkpoint,) = weights.CHECKPOINTS["mattersim"][NAME]
-    # a commit of the repository of the authors, not a branch
-    assert checkpoint.url.startswith(
-        "https://raw.githubusercontent.com/microsoft/mattersim/"
-    )
-    assert "/main/" not in checkpoint.url
-    assert len(checkpoint.sha256) == 64
+    for name, filename in (
+        (NAME, "mattersim-v1.0.0-1M.pth"),
+        (LARGE, "mattersim-v1.0.0-5M.pth"),
+    ):
+        (checkpoint,) = weights.CHECKPOINTS["mattersim"][name]
+        # a commit of the repository of the authors, not a branch
+        assert checkpoint.url.startswith(
+            "https://raw.githubusercontent.com/microsoft/mattersim/"
+        )
+        assert "/main/" not in checkpoint.url
+        assert len(checkpoint.sha256) == 64
 
-    (path,) = weights.checkpoint_paths("mattersim", NAME, tmp_path)
-    assert path == tmp_path / "mattersim" / "mattersim-v1.0.0-1M.pth"
+        (path,) = weights.checkpoint_paths("mattersim", name, tmp_path)
+        assert path == tmp_path / "mattersim" / filename
+
+
+def test_network_of_each_weights():
+    config = Config.load()
+    small, large = MatterSim.for_weights(), MatterSim.for_weights(LARGE)
+
+    assert small.config is config and MatterSim.for_weights(NAME).config == config
+    assert len(small.graph_conv) == 3 and small.final.g[0].linear.in_features == 128
+    assert len(large.graph_conv) == 4 and large.final.g[0].linear.in_features == 256
+    assert large.default_weights() == LARGE
+    assert large.config.upstream.model_args["units"] == 256
+    # the graph does not change
+    assert MatterSim.transform(large.config) == MatterSim.transform()
+
+    with pytest.raises(KeyError, match="no network"):
+        MatterSim.for_weights("mattersim-v9")
+
+    # the weights of one size are refused by the network of the other one
+    with pytest.raises(InvalidWeights):
+        large.load_pretrained(small.state_dict(), config.upstream.model_args)
+    with pytest.raises(InvalidWeights, match="other arguments"):
+        small.load_pretrained(large.state_dict(), large.config.upstream.model_args)
 
 
 # the basis of the angles
@@ -201,14 +234,19 @@ def test_load_pretrained_checks_the_parameters(model):
 # the pretrained model against MatterSim
 
 
-@pytest.fixture(scope="module")
-def pretrained() -> MatterSim:
-    return load_pretrained(MatterSim, "mattersim", NAME)
+@pytest.fixture(scope="module", params=list(REFERENCES))
+def weights_name(request) -> str:
+    return request.param
 
 
 @pytest.fixture(scope="module")
-def reference():
-    return load_reference("mattersim_reference.npz")
+def pretrained(weights_name) -> MatterSim:
+    return load_pretrained(MatterSim, "mattersim", weights_name)
+
+
+@pytest.fixture(scope="module")
+def reference(weights_name):
+    return load_reference(REFERENCES[weights_name])
 
 
 @pytest.mark.timeout(120)

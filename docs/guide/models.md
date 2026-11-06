@@ -71,7 +71,9 @@ transform = m3gnet.M3GNet.transform(small)
 ```
 
 The pretrained weights are the ones of `config.yaml`: a model with other sizes refuses
-them. A file with a key the dataclass does not have, or without one it needs, is refused
+them. When a model has weights of several sizes, as [MatterSim](../models/mattersim.md),
+`from_pretrained(name)` builds the network of the size of these weights:
+`Model.for_weights(name)` gives it before they are loaded. A file with a key the dataclass does not have, or without one it needs, is refused
 when it is read.
 
 ## Graphs are attached by a transform
