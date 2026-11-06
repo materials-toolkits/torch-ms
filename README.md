@@ -40,6 +40,7 @@ a file, and `HDF5Dataset.from_hub(repo_id, filename)` loads a file of any reposi
 | `perov-5` | Perov-5 | [materials-toolkits/perov-5](https://huggingface.co/datasets/materials-toolkits/perov-5) | `train`, `val`, `test` | 18,928 | formation energy, band gap |
 | `carbon-24` | Carbon-24 | [materials-toolkits/carbon-24](https://huggingface.co/datasets/materials-toolkits/carbon-24) | `train`, `val`, `test` | 10,153 | total energy |
 | `mp-20` | MP-20 | [materials-toolkits/mp-20](https://huggingface.co/datasets/materials-toolkits/mp-20) | `train`, `val`, `test` | 45,229 | formation energy, energy above hull, band gap |
+| `mpts-52` | MPTS-52, split by year | [materials-toolkits/mpts-52](https://huggingface.co/datasets/materials-toolkits/mpts-52) | `train`, `val`, `test` | 40,476 | formation energy, energy above hull |
 | `materials-project` | Materials Project (2026.09.28) | [materials-toolkits/materials-project](https://huggingface.co/datasets/materials-toolkits/materials-project) | `all` | 271,325 | total energy, formation energy, energy above hull, band gap |
 | `oqmd` | OQMD (v1.8) | [materials-toolkits/oqmd](https://huggingface.co/datasets/materials-toolkits/oqmd) | `all`, `unique` | 1,407,269 / 1,259,553 | total energy, formation energy, stability, band gap |
 | `lematerial` | LeMat-Bulk (PBE) | [materials-toolkits/lematerial](https://huggingface.co/datasets/materials-toolkits/lematerial) | `all`, `unique` | 5,335,299 / 4,927,038 | total energy, energy above hull |

@@ -23,6 +23,7 @@ def test_available_datasets():
         "lematerial": ("all", "unique"),
         "materials-project": ("all",),
         "mp-20": ("train", "val", "test"),
+        "mpts-52": ("train", "val", "test"),
         "oqmd": ("all", "unique"),
         "perov-5": ("train", "val", "test"),
         "qm9": ("all",),
