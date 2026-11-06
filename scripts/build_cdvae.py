@@ -110,12 +110,15 @@ def verify(source: Source, csv_file: Path, hdf5_file: Path, num_samples: int) ->
             check(bool(values.isnan().all()), f"{where}: {label} must be unknown")
             continue
 
-        expected = torch.tensor([float(row[column]) for row in rows]).double()
+        # an empty cell is an unknown value
+        expected = torch.tensor(
+            [float(row[column]) if row[column] != "" else float("nan") for row in rows]
+        ).double()
         if label == "total_energy":
             values = values / structures.num_atoms
 
         check(
-            torch.allclose(values, expected, rtol=1e-6, atol=5e-5),
+            torch.allclose(values, expected, rtol=1e-6, atol=5e-5, equal_nan=True),
             f"{where}: {label} differs from column {column}",
         )
 

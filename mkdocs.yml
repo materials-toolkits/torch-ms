@@ -77,6 +77,7 @@ nav:
           - Carbon-24: datasets/carbon-24.md
           - MP-20: datasets/mp-20.md
           - MPTS-52: datasets/mpts-52.md
+          - Alex-MP-20: datasets/alex-mp-20.md
           - Materials Project: datasets/materials-project.md
           - OQMD: datasets/oqmd.md
           - LeMat-Bulk: datasets/lematerial.md

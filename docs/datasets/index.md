@@ -16,6 +16,7 @@ Crystals, periodic along their three lattice vectors.
 | [`carbon-24`](carbon-24.md) | CDVAE | 10,153 | 6–24 | total energy |
 | [`mp-20`](mp-20.md) | CDVAE | 45,229 | 1–20 | formation energy, energy above hull, band gap |
 | [`mpts-52`](mpts-52.md) | DiffCSP (Materials Project time split) | 40,476 | 1–52 | formation energy, energy above hull |
+| [`alex-mp-20`](alex-mp-20.md) | MatterGen (Alexandria and MP-20) | 675,204 | 1–60 | energy above hull, band gap, 5 properties |
 | [`materials-project`](materials-project.md) | Materials Project 2026.09.28 | 271,325 | 1–444 | all four |
 | [`oqmd`](oqmd.md) | OQMD v1.8 | 1,407,269 | 1–312 | all four |
 | [`lematerial`](lematerial.md) | LeMat-Bulk `compatible_pbe` | 5,335,299 | 1–444 | total energy, energy above hull |
@@ -59,7 +60,7 @@ dataset = load_dataset("qm9", filter=Filter(equal={"uncharacterized": 0}))
 
 | Dataset | Recommended filter | Keeps | Why |
 |---|---|---|---|
-| `perov-5`, `carbon-24`, `mp-20`, `mpts-52` | none | everything | already selected, every label known |
+| `perov-5`, `carbon-24`, `mp-20`, `mpts-52`, `alex-mp-20` | none | everything | already selected, every label known |
 | `materials-project` | `Filter(max_energy_above_hull=0.1)` | 216,917 of 271,325 | stable and meta-stable |
 | `oqmd/unique` | `Filter(maximum={"total_energy": 0.0, "energy_above_hull": 5.0})` | 1,258,843 of 1,259,553 | failed calculations |
 | `lematerial/unique` | `Filter(maximum={"total_energy": 0.0})` | 4,926,943 of 4,927,038 | failed calculations |
