@@ -1,0 +1,118 @@
+# FlowMM: weights, graph and hyperparameters, read by model.py. Riemannian flow
+# matching of crystals, de novo: the elements as analog bits, the fractional
+# coordinates on a flat torus and the cell as lattice parameters, all generated
+# together by a CSPNet.
+
+default_weights: flowmm-mp20-essflow
+
+# The authors of FlowMM publish no weights: they are not allowed to (issues 8,
+# 13 and 15 of their repository). These are of a THIRD PARTY, the authors of
+# ESS-Flow (https://github.com/Adhithyan8/essflow), who trained FlowMM on MP-20
+# with its default configuration of de novo generation
+# (`data=mp_20 model=abits_params`), up to the epoch 1894, and publish it on
+# Hugging Face under CC BY-NC 4.0. Their quality was not measured here. The
+# checkpoint of pytorch-lightning and the configuration of the training.
+checkpoints:
+  flowmm-mp20-essflow:
+    - url: https://huggingface.co/Adhi94/essflow-flowmm-mp20/resolve/316034827c9f4296391f4d9307b993e058afee09/checkpoints/flowmm_mp20.ckpt
+      sha256: 4dbbdcb033a37b9eb577153cad5aa5de2f2076116ac3c205ce4f5e1eb3a26ce9
+    - url: https://huggingface.co/Adhi94/essflow-flowmm-mp20/resolve/316034827c9f4296391f4d9307b993e058afee09/.hydra/config.yaml
+      sha256: 5625b7aaee8cf137b520155e2c86fbe54b2c3a98f0c8fd79c95788662ccb5e52
+
+graph:
+  # every pair of atoms of a structure, an atom is not its own neighbour
+  self_loops: false
+
+model:
+  hidden_dim: &hidden_dim 512            # features of the atoms and of the messages
+  time_dim: &time_dim 256                # embedding of the time, a linear map of it
+  num_layers: &num_layers 6
+  num_freqs: &num_freqs 128              # frequencies of the basis of the coordinates
+  num_bits: 7                            # analog bits of an element, from hydrogen
+  # length of the one-hot vector of the number of atoms of a structure: FlowMM
+  # represents up to 99 atoms
+  max_num_atoms: 100
+
+flow:
+  analog_bits_scale: &analog_bits_scale 1.0   # a bit is -scale or +scale
+  # the angles of a cell, in degrees, are in this interval: the flow moves
+  # them in an unconstrained space, through a sigmoid
+  angle_min: 59.9
+  angle_max: 120.1
+  # base distribution of the lengths of a cell: log-normal, with the mean and
+  # the deviation of the logarithms of the lengths of MP-20, in Å
+  # (lattice_params_stats.yaml of FlowMM)
+  length_log_mean: [1.575442910194397, 1.7017393112182617, 1.9781638383865356]
+  length_log_std: [0.24437622725963593, 0.26526379585266113, 0.3535512685775757]
+
+# Euler steps from the time 0 to 1, as scripts_model/evaluate.py generate, with
+# the integrate section of the configuration of the training
+sampling:
+  num_steps: 1000
+  # the velocity of the coordinates is multiplied by
+  # 1 + slope * max(t - offset, 0); 0 is no annealing, the default of FlowMM
+  inference_anneal_slope: 0.0
+  inference_anneal_offset: 0.0
+  # probability of each number of atoms, from 0: the one of the training set
+  # of MP-20 (train_dist of diffcsp/script_utils.py, which FlowMM samples from)
+  num_atoms_distribution:
+    - 0.0
+    - 0.0021742334905660377
+    - 0.021079009433962265
+    - 0.019826061320754717
+    - 0.15271226415094338
+    - 0.047132959905660375
+    - 0.08464770047169812
+    - 0.021079009433962265
+    - 0.07808814858490566
+    - 0.03434551886792453
+    - 0.0972877358490566
+    - 0.013303360849056603
+    - 0.09669811320754718
+    - 0.02155807783018868
+    - 0.06522700471698113
+    - 0.014372051886792452
+    - 0.06703272405660378
+    - 0.00972877358490566
+    - 0.053176591981132074
+    - 0.010576356132075472
+    - 0.08995430424528301
+
+upstream:
+  # the checkpoint holds the network under model_prefix and the moving average
+  # of its parameters, which FlowMM puts in the network for every evaluation,
+  # as the list ema_prefix0, ema_prefix1, ... in the order of its parameters
+  model_prefix: model.model.
+  ema_prefix: model.shadow_params.
+  # the base distribution is the one of the manifolds, not structures of data
+  base_distribution_from_data: false
+  # configuration of the training the rewrite is written for (.hydra/config.yaml)
+  sections:
+    vectorfield:
+      _target_: flowmm.model.arch.CSPNet
+      hidden_dim: *hidden_dim
+      time_dim: *time_dim
+      num_layers: *num_layers
+      act_fn: silu
+      dis_emb: sin
+      num_freqs: *num_freqs
+      edge_style: fc
+      ln: true
+      use_log_map: true
+      concat_sum_pool: true
+      represent_num_atoms: true
+      represent_angle_edge_to_lattice: true
+      self_edges: false
+      # self_cond is ${model.self_cond}, checked below
+    model:
+      target_distribution: unconditional
+      self_cond: false
+    model.manifold_getter:
+      atom_type_manifold: analog_bits
+      coord_manifold: flat_torus_01
+      lattice_manifold: lattice_params
+      analog_bits_scale: *analog_bits_scale
+    data:
+      dataset_name: mp_20
+    integrate:
+      method: euler

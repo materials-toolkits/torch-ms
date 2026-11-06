@@ -360,7 +360,9 @@ def periodic_fourier(
     frequencies = (
         2 * math.pi * torch.arange(num_frequencies, dtype=x.dtype, device=x.device)
     )
-    angle = (x.unsqueeze(-1) * frequencies).reshape(len(x), -1)
+    angle = (x.unsqueeze(-1) * frequencies).reshape(
+        len(x), x.shape[1] * num_frequencies
+    )
 
     return torch.cat([angle.sin(), angle.cos()], dim=-1)
 

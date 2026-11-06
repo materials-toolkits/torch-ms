@@ -104,6 +104,27 @@ class CSPLayer(nn.Module):
         )
         self.layer_norm = nn.LayerNorm(hidden_dim)
 
+    def edge_inputs(
+        self,
+        graph: Graph,
+        normalized: Float[torch.Tensor, "n_atoms d"],
+        edge_features: Float[torch.Tensor, "n_edges edge_dim"],
+    ) -> Float[torch.Tensor, "n_edges 2*d+edge_dim"]:
+        """What the network of the messages reads on each edge.
+
+        The normalized features of the sender and of the receiver, then the
+        features of the edge. A variant of the layer which reads them in
+        another order overrides this method.
+        """
+        return torch.cat(
+            [
+                graph.unpool_senders(normalized),
+                graph.unpool_receivers(normalized),
+                edge_features,
+            ],
+            dim=1,
+        )
+
     def forward(
         self,
         graph: Graph,
@@ -120,16 +141,7 @@ class CSPLayer(nn.Module):
         """
         normalized = self.layer_norm(node_features)
 
-        messages = self.edge_mlp(
-            torch.cat(
-                [
-                    graph.unpool_senders(normalized),
-                    graph.unpool_receivers(normalized),
-                    edge_features,
-                ],
-                dim=1,
-            )
-        )
+        messages = self.edge_mlp(self.edge_inputs(graph, normalized, edge_features))
         # an atom gets the mean of the messages of the edges it sends
         received = graph.aggregate_edges_to_nodes(messages, "mean", to="sender")
 

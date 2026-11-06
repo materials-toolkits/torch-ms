@@ -8,7 +8,7 @@ has a page for each one.
 |---|---|---|
 | Supervised | total energy, pretrained | [orb-v3](../models/orb.md), [MACE](../models/mace.md), [M3GNet](../models/m3gnet.md), [CHGNet](../models/chgnet.md) |
 | | formation energy, pretrained | [ALIGNN](../models/alignn.md) |
-| Generative | crystals, pretrained | [CDVAE](../models/cdvae.md), [DiffCSP](../models/diffcsp.md), [MatterGen](../models/mattergen.md) |
+| Generative | crystals, pretrained | [CDVAE](../models/cdvae.md), [DiffCSP](../models/diffcsp.md), [FlowMM](../models/flowmm.md), [MatterGen](../models/mattergen.md) |
 | | crystals and molecules, pretrained | [ADiT](../models/adit.md) |
 | Layers | bases and networks | [bases](../models/bases.md), [DimeNet++](../models/dimenet.md), [GemNet-T](../models/gemnet.md), [CSPNet](../models/cspnet.md) |
 | | networks of the energy, to train | [`LineGraphNetwork`](../models/line-graph-network.md), [`EquivariantNetwork`](../models/equivariant-network.md) |
@@ -159,6 +159,17 @@ These are followed, not imposed. `MatterGenChemicalSystemEnergyAboveHull` takes 
 chemical system and an energy above the hull per crystal, either one `None`:
 `model.guidance(["Li-O"] * 64, [0.0] * 64)`, and `MatterGenMagneticDensityHHIScore` a
 magnetic density and an HHI score: `model.guidance([0.15] * 64, [1000.0] * 64)`.
+
+[FlowMM](../models/flowmm.md) generates crystals of given numbers of atoms with their
+elements, by flow matching. Its weights are of a third party and its code is under CC
+BY-NC 4.0: read its page first.
+
+```{.python notest}
+from torchms.models import FlowMM
+
+model = FlowMM.from_pretrained(device="cuda")
+structures = model.sample(model.sample_num_atoms(64))   # 1000 steps
+```
 
 [ADiT](../models/adit.md) generates crystals and molecules with one model, from numbers
 of atoms it can draw as the ones of MP-20 or of QM9. It reads no graph: its transformers
