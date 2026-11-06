@@ -8,6 +8,7 @@ Each dataset has a name and one HDF5 file per split:
 | carbon-24 | materials-toolkits/carbon-24 | train, val, test |
 | mp-20 | materials-toolkits/mp-20 | train, val, test |
 | mpts-52 | materials-toolkits/mpts-52 | train, val, test |
+| alex-mp-20 | materials-toolkits/alex-mp-20 | train, val |
 | materials-project | materials-toolkits/materials-project | all |
 | oqmd | materials-toolkits/oqmd | all, unique |
 | lematerial | materials-toolkits/lematerial | all, unique |
@@ -17,7 +18,7 @@ Each dataset has a name and one HDF5 file per split:
 | qm9 | materials-toolkits/qm9 | all |
 | zinc250k | materials-toolkits/zinc250k | all |
 
-The first seven are inorganic crystals, qmof, core-mof and core-mof-2024 hold
+The first eight are inorganic crystals, qmof, core-mof and core-mof-2024 hold
 metal-organic frameworks, qm9 and zinc250k organic molecules, which are not periodic. They
 all have the same format and can be loaded together, see auto_loader.
 
@@ -89,6 +90,15 @@ DATASETS: dict[str, DatasetAlias] = {
         "40,476 experimental structures of the Materials Project with at most 52 "
         "atoms, split by the year of their first publication (MPTS-52, as "
         "released with DiffCSP): formation energy, energy above hull",
+    ),
+    "alex-mp-20": DatasetAlias(
+        "materials-toolkits/alex-mp-20",
+        ("train", "val"),
+        "675,204 structures of Alexandria and MP-20 with at most 20 atoms and at "
+        "most 0.1 eV/atom above the hull, relaxed with PBE: the training set of "
+        "MatterGen (Alex-MP-20); energy above hull, band gap; properties: space "
+        "group, bulk moduli, magnetic density, HHI score",
+        "CC BY 4.0",
     ),
     "materials-project": DatasetAlias(
         "materials-toolkits/materials-project",

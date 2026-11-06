@@ -75,7 +75,7 @@ Converters exist for the sources of the published datasets:
 
 | Script | Source |
 |---|---|
-| `csv_to_cif.py` | CSV with a CIF column: MP-20, Carbon-24, Perov-5, Alex-MP-20 |
+| `csv_to_cif.py` | CSV with a CIF column: MP-20, Carbon-24, Perov-5, MPTS-52, Alex-MP-20 |
 | `materials_project_to_cif.py` | summary collection of the Materials Project open data |
 | `oqmd_extract.py`, `oqmd_to_cif.py` | SQL dump of OQMD, without MySQL server |
 | `lematerial_to_cif.py` | LeMat-Bulk on Hugging Face |

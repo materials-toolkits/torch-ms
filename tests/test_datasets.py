@@ -17,6 +17,7 @@ from torchms.data.datasets import (
 
 def test_available_datasets():
     assert available_datasets() == {
+        "alex-mp-20": ("train", "val"),
         "carbon-24": ("train", "val", "test"),
         "core-mof": ("asr", "fsr"),
         "core-mof-2024": ("asr", "fsr", "ion", "ncr"),
